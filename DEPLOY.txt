@@ -1,0 +1,180 @@
+PECUP - CARA INSTALASI / DEPLOY KE VERCEL (Neon + Vercel Blob)
+==========================================
+
+Ikuti urutan di bawah ini dari atas ke bawah. Semua langkah bisa dikerjakan
+tanpa install apa pun di komputer selain Node.js/npm dan (opsional) Vercel
+CLI.
+
+
+1. SIAPKAN PROJECT NEON (DATABASE)
+-------------------------------------------------
+1. Daftar/masuk di https://neon.com -> klik "Create a project"
+   (pilih region terdekat, misalnya Singapore).
+2. Setelah project jadi, buka menu "SQL Editor" di dashboard Neon.
+3. Buka file schema.sql (satu folder dengan file ini), salin SEMUA isinya,
+   tempel di SQL Editor, lalu klik "Run".
+   Ini otomatis membuat:
+     - tabel products, orders, order_items
+     - fungsi create_order (menjaga stok tetap aman walau ada dua orang
+       checkout bersamaan)
+     - 8 produk contoh
+4. Buka "Connection Details" di dashboard project. Catat nilai ini:
+     - Connection string yang PAKAI POOLING (biasanya sudah default, atau
+       berlabel "Pooled connection") -> jadi DATABASE_URL
+       (PENTING: pakai yang "pooled", BUKAN "direct connection")
+
+
+2. BUAT DUA VERCEL BLOB STORE (FOTO PRODUK + BUKTI TRANSFER)
+-----------------------------------------------------------------
+Foto produk & bukti transfer disimpan di Vercel Blob, bukan di database.
+Perlu DUA store terpisah karena foto produk harus publik, sedangkan bukti
+transfer harus privat.
+
+1. Buka dashboard Vercel -> project ini -> tab "Storage" -> "Create
+   Database" -> pilih "Blob".
+2. Buat store pertama:
+     - Akses: Public
+     - Nama: bebas, misalnya "pecup-products"
+     - Di "Advanced Options", set prefix Environment Variable ke:
+       PRODUCTS
+       (supaya nanti token-nya otomatis bernama PRODUCTS_BLOB_READ_WRITE_TOKEN)
+3. Buat store kedua:
+     - Akses: Private
+     - Nama: bebas, misalnya "pecup-proofs"
+     - Prefix Environment Variable: PROOFS
+       (token: PROOFS_BLOB_READ_WRITE_TOKEN)
+4. Pastikan keduanya ter-"Connect" ke project ini (biasanya otomatis kalau
+   dibuat dari dalam project) -> variabel tokennya otomatis muncul di
+   Project Settings -> Environment Variables.
+
+
+3. SIAPKAN GMAIL APP PASSWORD (UNTUK EMAIL NOTIFIKASI PESANAN)
+-----------------------------------------------------------------
+1. Aktifkan verifikasi 2 langkah di akun Gmail yang mau dipakai kirim
+   notifikasi: https://myaccount.google.com/security
+2. Buka https://myaccount.google.com/apppasswords, buat App Password baru
+   (nama bebas, misalnya "Pecup"), lalu catat 16 digit yang muncul.
+   Ini jadi EMAIL_APP_PASSWORD.
+3. EMAIL_USER  = alamat Gmail itu sendiri.
+   SELLER_EMAIL = alamat tujuan notifikasi pesanan (boleh sama dengan
+   EMAIL_USER, boleh beda).
+
+
+4. GENERATE SECRET UNTUK SESI ADMIN
+-------------------------------------
+Jalankan di terminal (Mac/Linux, atau Git Bash / WSL di Windows):
+
+    openssl rand -hex 32
+
+Hasilnya jadi nilai ADMIN_SESSION_SECRET. Ini string acak wajib diisi,
+jangan dikosongkan -- kalau kosong aplikasi akan sengaja menolak jalan.
+
+
+5. INSTALL DEPENDENCY
+--------------------------
+Dari folder pecup-app-vercel:
+
+    npm install
+
+Ini men-download dua dependency yang dipakai: @neondatabase/serverless
+(driver Postgres ke Neon) dan @vercel/blob (SDK Vercel Blob). Keduanya
+otomatis ikut ter-install lagi saat Vercel build/deploy nanti, tapi
+jalankan ini dulu supaya "vercel dev" (langkah 8) bisa jalan lokal.
+
+
+6. PUSH KE GITHUB (CARA PALING GAMPANG UNTUK DEPLOY)
+--------------------------------------------------------
+Dari folder pecup-app-vercel:
+
+    git init
+    git add .
+    git commit -m "Initial commit - Pecup serverless (Neon + Vercel Blob)"
+
+Buat repo baru di GitHub (disarankan PRIVATE), lalu:
+
+    git remote add origin https://github.com/<username>/<repo>.git
+    git push -u origin main
+
+
+7. IMPORT KE VERCEL
+-----------------------
+1. Buka https://vercel.com/new, sign in (bisa langsung pakai akun GitHub),
+   lalu klik "Import" pada repo yang barusan dibuat.
+2. Vercel otomatis mendeteksi ini sebagai project Node.js -- tidak perlu
+   ubah build settings apa pun (tidak ada build step; dua dependency di
+   package.json otomatis ter-install saat deploy).
+3. SEBELUM klik Deploy, buka bagian "Environment Variables" dan isi semua
+   ini satu per satu (kalau langkah 2 sudah menghubungkan kedua Blob
+   store ke project ini, dua variabel *_BLOB_READ_WRITE_TOKEN mungkin
+   sudah otomatis terisi -- tinggal cek saja):
+
+     DATABASE_URL                    = (dari langkah 1)
+     PRODUCTS_BLOB_READ_WRITE_TOKEN   = (dari langkah 2, store publik)
+     PROOFS_BLOB_READ_WRITE_TOKEN     = (dari langkah 2, store privat)
+     ADMIN_USERNAME         = terserah kamu
+     ADMIN_PASSWORD         = terserah kamu (ganti dari default)
+     ADMIN_SESSION_SECRET   = (dari langkah 4)
+     EMAIL_USER              = (dari langkah 3)
+     EMAIL_APP_PASSWORD      = (dari langkah 3)
+     SELLER_EMAIL             = (dari langkah 3)
+
+4. Klik "Deploy". Tunggu sekitar 30-60 detik, selesai -- kamu dapat URL
+   seperti pecup-app-vercel.vercel.app
+
+
+8. (ALTERNATIF) DEPLOY LEWAT VERCEL CLI TANPA GITHUB
+---------------------------------------------------------
+Kalau tidak mau pakai GitHub:
+
+    npm install -g vercel
+    cd pecup-app-vercel
+    vercel login
+    vercel          (deploy ke preview URL dulu; akan tanya-tanya setup
+                      project dan bisa isi environment variables di sini)
+
+Setelah yakin oke, deploy ke production:
+
+    vercel --prod
+
+Environment variables juga bisa diisi/diubah belakangan lewat dashboard:
+Project Settings -> Environment Variables (sama seperti langkah 7.3).
+
+Sebelum deploy, kamu juga bisa coba dulu secara lokal dengan:
+
+    vercel dev
+
+(otomatis membaca file .env -- salin dulu dari .env.example dan isi
+semua variabel di atas).
+
+
+9. TES SEBELUM DIPAKAI SUNGGUHAN (PENTING)
+----------------------------------------------
+Kode ini dites secara menyeluruh secara LOGIKA (pakai data tiruan), tapi
+belum pernah benar-benar dicoba melawan akun Neon/Vercel Blob asli. Jadi
+setelah deploy (atau lewat "vercel dev" secara lokal dulu), cek satu per
+satu:
+
+  [ ] Buka halaman utama -> 8 produk contoh muncul
+  [ ] Tambah produk ke keranjang -> checkout -> upload bukti transfer
+      (JPG/PNG/PDF, maksimal 4MB)
+  [ ] Cek email di SELLER_EMAIL -> notifikasi pesanan baru masuk lengkap
+      dengan lampiran bukti transfer
+  [ ] Login ke /admin/login pakai ADMIN_USERNAME / ADMIN_PASSWORD
+  [ ] Tambah produk baru dengan foto -> foto tampil (berarti upload ke
+      Vercel Blob store publik berhasil)
+  [ ] Buka /admin/pesanan -> lihat pesanan tadi -> klik detail -> bukti
+      transfer tampil (lewat signed URL dari store privat)
+  [ ] Download CSV pesanan harian -> buka di Excel -> data rapi
+
+Kalau salah satu gagal, penyebab paling umum:
+  - DATABASE_URL salah tempel (kepakai yang "direct connection", bukan
+    yang "pooled" -- lihat langkah 1.4)
+  - schema.sql belum di-run di SQL Editor Neon
+  - PRODUCTS_BLOB_READ_WRITE_TOKEN / PROOFS_BLOB_READ_WRITE_TOKEN
+    tertukar (token store publik dipasang di variabel proofs, atau
+    sebaliknya)
+  - ada environment variable yang lupa diisi di Vercel
+
+
+Referensi lebih lengkap (struktur folder, catatan keamanan, daftar yang
+sudah/belum dites): lihat README.md di folder yang sama dengan file ini.

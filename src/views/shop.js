@@ -1,0 +1,343 @@
+const { page, customerHeader, customerFooter } = require('./layout');
+const { productThumb } = require('./productIcon');
+const { formatRupiah, escapeHtml, escapeAttr } = require('../utils');
+
+function renderBeranda({ products, cartCount, category }) {
+  const categories = ['Semua', 'Buah Tunggal', 'Mix Buah', 'Paket Spesial'];
+  const chips = categories
+    .map((c) => {
+      const isActive = (category || 'Semua') === c;
+      const href = c === 'Semua' ? '/' : `/?kategori=${encodeURIComponent(c)}`;
+      return `<a class="chip ${isActive ? 'chip-active' : ''}" href="${href}" style="padding:11px 22px;border-radius:99px;font-size:14px;font-weight:600;display:inline-block;${
+        isActive ? '' : 'color:var(--text);'
+      }">${escapeHtml(c)}</a>`;
+    })
+    .join('');
+
+  const cards = products.length
+    ? products
+        .map(
+          (p) => `
+      <div class="p-card" style="border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
+        <a href="/produk/${p.id}" style="aspect-ratio:1;display:block;">${productThumb(p)}</a>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <a href="/produk/${p.id}" style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</a>
+          <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;">
+          <span style="font-size:16.5px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
+          <form method="post" action="/keranjang/tambah">
+            <input type="hidden" name="productId" value="${p.id}">
+            <input type="hidden" name="qty" value="1">
+            <button class="add-btn" type="submit" style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;" title="Tambah ke keranjang">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </form>
+        </div>
+      </div>`
+        )
+        .join('')
+    : `<p style="color:var(--text-muted);font-size:14px;">Belum ada produk pada kategori ini.</p>`;
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount)}
+
+  <section style="display:flex;align-items:center;justify-content:space-between;gap:64px;padding:88px 96px 72px;flex-wrap:wrap;">
+    <div style="flex:1 1 420px;display:flex;flex-direction:column;gap:26px;">
+      <div style="display:inline-flex;align-items:center;gap:8px;background:var(--green-soft);color:var(--green-dark);padding:8px 16px;border-radius:99px;font-size:13px;font-weight:600;width:fit-content;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        100% Buah Segar Pilihan Hari Ini
+      </div>
+      <h1 style="font-size:48px;line-height:1.15;font-weight:800;letter-spacing:-1px;max-width:560px;">Buah Potong Segar, Siap Santap Tanpa Ribet</h1>
+      <p style="font-size:17px;line-height:1.7;color:var(--text-muted);max-width:480px;">Dipotong higienis dan dikemas rapi dalam cup, langsung dari Pecup ke meja kamu. Pesan sekarang, transfer, tinggal tunggu paket buah segar sampai.</p>
+      <div style="display:flex;gap:14px;margin-top:6px;">
+        <a href="#menu" class="btn-primary" style="padding:16px 30px;border-radius:14px;font-size:15px;font-weight:700;display:inline-block;">Lihat Menu Buah</a>
+      </div>
+    </div>
+    <div style="flex:0 0 340px;height:340px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;">
+      <svg width="180" height="180" viewBox="0 0 120 120">
+        <ellipse cx="60" cy="40" rx="34" ry="9" fill="#ffffff" stroke="#00000018" stroke-width="2"/>
+        <path d="M28 41 L92 41 L82 104 L38 104 Z" fill="#ffffff" fill-opacity="0.95" stroke="#00000018" stroke-width="2"/>
+        <circle cx="48" cy="58" r="8" fill="#e88a3a"/><rect x="62" y="52" width="13" height="13" rx="3" fill="#c94f4f"/>
+        <circle cx="70" cy="75" r="7" fill="#58a05c"/><rect x="44" y="76" width="11" height="11" rx="3" fill="#e0b23c"/>
+        <path d="M88 36 L100 12" stroke="#3a3a3f" stroke-width="3.4" stroke-linecap="round"/>
+        <ellipse cx="102" cy="9" rx="5.5" ry="7.5" fill="#3a3a3f" transform="rotate(22 102 9)"/>
+      </svg>
+    </div>
+  </section>
+
+  <section id="menu" style="padding:0 96px;display:flex;gap:12px;flex-wrap:wrap;">${chips}</section>
+
+  <section style="padding:40px 96px 100px;">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:32px;">
+      <div>
+        <h2 style="font-size:28px;font-weight:800;letter-spacing:-0.5px;">Menu Hari Ini</h2>
+        <p style="color:var(--text-muted);font-size:14.5px;margin-top:6px;">${products.length} produk tersedia</p>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:28px;">${cards}</div>
+  </section>
+
+  <section id="cara-pesan" style="background:var(--surface-2);padding:72px 96px;">
+    <h2 style="text-align:center;font-size:26px;font-weight:800;margin-bottom:48px;">Cara Pesan di Pecup</h2>
+    <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:36px;max-width:1100px;margin:0 auto;">
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">1</div>
+        <h4 style="font-size:16px;font-weight:700;">Pilih &amp; Tambah ke Keranjang</h4>
+        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Pilih buah potong favoritmu dan atur jumlahnya.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">2</div>
+        <h4 style="font-size:16px;font-weight:700;">Checkout &amp; Transfer</h4>
+        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Isi data pemesan, tambahkan catatan bila perlu, lalu transfer.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">3</div>
+        <h4 style="font-size:16px;font-weight:700;">Upload Bukti &amp; Tunggu Konfirmasi</h4>
+        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Kami verifikasi dan konfirmasi via WhatsApp.</p>
+      </div>
+    </div>
+  </section>
+
+  ${customerFooter()}
+</div></div>`;
+
+  return page({ title: 'Pecup — Buah Potong Segar', bodyHtml: body });
+}
+
+function renderProdukDetail({ product, related, cartCount }) {
+  const relatedCards = related
+    .map(
+      (p) => `
+      <div class="mini-card" style="border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;">
+        <a href="/produk/${p.id}" style="aspect-ratio:1;display:block;">${productThumb(p, { size: 64 })}</a>
+        <a href="/produk/${p.id}" style="font-size:14.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</a>
+        <span style="font-size:15px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
+      </div>`
+    )
+    .join('');
+
+  const inStock = product.stock > 0;
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount)}
+  <div style="padding:24px 96px 0;font-size:13.5px;color:var(--text-muted);">
+    <a href="/">Beranda</a> &nbsp;/&nbsp; <a href="/#menu">Menu</a> &nbsp;/&nbsp; <span style="color:var(--text);">${escapeHtml(product.name)}</span>
+  </div>
+
+  <section style="display:flex;gap:64px;padding:32px 96px 72px;flex-wrap:wrap;">
+    <div style="flex:0 0 420px;height:420px;">${productThumb(product, { size: 200, radius: 28 })}</div>
+
+    <div style="flex:1 1 380px;display:flex;flex-direction:column;gap:20px;padding-top:8px;">
+      <span style="font-size:13px;font-weight:700;color:var(--green-dark);background:var(--green-soft);padding:5px 12px;border-radius:99px;width:fit-content;">${escapeHtml(product.category)}</span>
+      <h1 style="font-size:34px;font-weight:800;letter-spacing:-0.5px;">${escapeHtml(product.name)} Cup</h1>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <span style="font-size:28px;font-weight:800;color:var(--green-dark);">${formatRupiah(product.price)}</span>
+        <span style="font-size:13.5px;color:var(--text-muted);">/ cup ${escapeHtml(product.weight)}</span>
+        <span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:${inStock ? '#58a05c' : '#a13f3f'};background:${inStock ? 'var(--green-soft)' : '#f6dcdc'};padding:5px 12px;border-radius:99px;">
+          <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="${inStock ? '#58a05c' : '#a13f3f'}"/></svg>
+          ${inStock ? `Stok Tersedia (${product.stock})` : 'Stok Habis'}
+        </span>
+      </div>
+      <p style="font-size:15px;line-height:1.8;color:var(--text-muted);max-width:480px;">${escapeHtml(product.description)}</p>
+
+      <form method="post" action="/keranjang/tambah" style="display:flex;align-items:center;gap:18px;margin-top:8px;flex-wrap:wrap;">
+        <input type="hidden" name="productId" value="${product.id}">
+        <select name="qty" style="width:90px;padding:12px 10px;">
+          ${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}
+        </select>
+        <button class="btn-primary" type="submit" ${inStock ? '' : 'disabled'} style="flex:1;padding:16px 24px;border-radius:12px;font-size:15px;font-weight:700;max-width:280px;">
+          ${inStock ? 'Tambah ke Keranjang' : 'Stok Habis'}
+        </button>
+      </form>
+
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;background:var(--surface-2);padding:14px 18px;border-radius:12px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 2"/></svg>
+        <span style="font-size:13px;color:var(--text-muted);">Dikemas dingin pagi hari — paling enak dikonsumsi dalam 24 jam.</span>
+      </div>
+    </div>
+  </section>
+
+  ${
+    related.length
+      ? `<section style="padding:0 96px 96px;">
+    <h3 style="font-size:20px;font-weight:800;margin-bottom:24px;">Produk Lainnya</h3>
+    <div style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:24px;">${relatedCards}</div>
+  </section>`
+      : ''
+  }
+  ${customerFooter()}
+</div></div>`;
+
+  return page({ title: `${product.name} — Pecup`, bodyHtml: body });
+}
+
+function stepHeader(activeIndex) {
+  const steps = ['Keranjang', 'Checkout', 'Selesai'];
+  const html = steps
+    .map((s, i) => {
+      const n = i + 1;
+      const color = n === activeIndex ? 'var(--green-dark)' : n < activeIndex ? 'var(--green-dark)' : 'var(--text-muted)';
+      return `<span style="color:${color};">${n}. ${s}</span>${i < steps.length - 1 ? '<span style="color:var(--border);">—</span>' : ''}`;
+    })
+    .join('');
+  return html;
+}
+
+function renderKeranjang({ items, subtotal, cartCount }) {
+  const rows = items.length
+    ? items
+        .map(
+          (it) => `
+      <div style="display:flex;align-items:center;gap:20px;padding:24px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+        <div style="width:84px;height:84px;flex-shrink:0;">${productThumb(it.product, { size: 48, radius: 14 })}</div>
+        <div style="flex:1 1 180px;">
+          <div style="font-size:16px;font-weight:700;">${escapeHtml(it.product.name)}</div>
+          <div style="font-size:13px;color:var(--text-muted);margin-top:3px;">Cup ${escapeHtml(it.product.weight)}</div>
+        </div>
+        <form method="post" action="/keranjang/update" style="display:flex;align-items:center;gap:8px;">
+          <input type="hidden" name="productId" value="${it.product.id}">
+          <input type="number" name="qty" value="${it.qty}" min="0" max="${it.product.stock}" style="width:64px;padding:8px;text-align:center;">
+          <button class="btn-outline" type="submit" style="padding:9px 14px;border-radius:10px;font-size:12.5px;font-weight:700;">Update</button>
+        </form>
+        <div style="width:110px;text-align:right;font-size:16px;font-weight:800;color:var(--green-dark);">${formatRupiah(it.subtotal)}</div>
+        <form method="post" action="/keranjang/hapus">
+          <input type="hidden" name="productId" value="${it.product.id}">
+          <button class="trash-btn" type="submit" style="padding:6px;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#9a9a9f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg></button>
+        </form>
+      </div>`
+        )
+        .join('')
+    : `<p style="color:var(--text-muted);font-size:14px;padding:40px 0;">Keranjang kamu masih kosong. <a href="/">Mulai belanja →</a></p>`;
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount, stepHeader(1))}
+  <section style="padding:48px 96px 100px;">
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:6px;">Keranjang Belanja</h1>
+    <p style="color:var(--text-muted);font-size:14px;margin-bottom:30px;">${items.length} produk di keranjang</p>
+    <div style="display:flex;gap:48px;align-items:flex-start;flex-wrap:wrap;">
+      <div style="flex:1 1 480px;display:flex;flex-direction:column;">
+        ${rows}
+        <a href="/" style="font-size:14px;font-weight:600;margin-top:24px;">← Lanjut Belanja</a>
+      </div>
+      <div style="flex:0 0 360px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;">
+        <h3 style="font-size:18px;font-weight:800;margin-bottom:22px;">Ringkasan Pesanan</h3>
+        <div style="display:flex;justify-content:space-between;font-size:14.5px;color:var(--text-muted);margin-bottom:12px;"><span>Subtotal (${items.length} produk)</span><span style="color:var(--text);font-weight:600;">${formatRupiah(subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:16px;border-top:1px solid var(--border);margin-bottom:24px;"><span>Total</span><span style="color:var(--green-dark);">${formatRupiah(subtotal)}</span></div>
+        ${
+          items.length
+            ? `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
+            : `<button class="btn-primary" disabled style="width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</button>`
+        }
+      </div>
+    </div>
+  </section>
+  ${customerFooter()}
+</div></div>`;
+
+  return page({ title: 'Keranjang — Pecup', bodyHtml: body });
+}
+
+function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = {} }) {
+  const summaryRows = items
+    .map(
+      (it) => `
+    <div style="display:flex;justify-content:space-between;font-size:14px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <span style="color:var(--text-muted);">${escapeHtml(it.product.name)} <span style="color:var(--text);font-weight:600;">×${it.qty}</span></span>
+      <span style="font-weight:600;">${formatRupiah(it.subtotal)}</span>
+    </div>`
+    )
+    .join('');
+
+  const errorHtml = errors.length
+    ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>`
+    : '';
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount, stepHeader(2))}
+  <section style="padding:48px 96px 100px;">
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:30px;">Checkout Pesanan</h1>
+    ${errorHtml}
+    <form method="post" action="/checkout" enctype="multipart/form-data">
+      <div style="display:flex;gap:48px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:1 1 480px;display:flex;flex-direction:column;gap:24px;">
+          <div class="card">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
+            <div class="field"><label>Nama Lengkap *</label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
+            <div class="field"><label>Nomor WhatsApp *</label><input type="text" name="whatsapp" required value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 0812xxxxxxx"></div>
+            <div style="margin-bottom:0;"><label>Catatan Pesanan (opsional)</label><textarea name="notes" rows="3" placeholder="Contoh: tolong pepaya-nya diganti semangka, kurangi manis">${escapeHtml(formValues.notes || '')}</textarea></div>
+          </div>
+
+          <div class="card">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Info Pembayaran</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Transfer sesuai total pesanan ke rekening berikut, lalu unggah buktinya di bawah.</p>
+            <div style="background:var(--surface-2);border-radius:12px;padding:16px 18px;">
+              <div style="font-size:12.5px;color:var(--text-muted);">Bank [NAMA BANK]</div>
+              <div style="font-size:18px;font-weight:800;letter-spacing:0.5px;margin-top:4px;">[NOMOR REKENING]</div>
+              <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">a.n. [NAMA PEMILIK TOKO]</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Upload Bukti Transfer *</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Format JPG, PNG, atau PDF, maksimal 4MB.</p>
+            <div class="dropzone" style="padding:24px;">
+              <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" required style="border:none;padding:0;background:transparent;">
+            </div>
+          </div>
+
+          <button class="btn-primary" type="submit" style="width:100%;padding:17px;border-radius:12px;font-size:15.5px;font-weight:700;">Kirim Pesanan Sekarang</button>
+          <p style="font-size:12.5px;color:var(--text-muted);text-align:center;line-height:1.6;">Dengan mengirim pesanan, data di atas beserta bukti transfer akan otomatis terkirim melalui email ke tim Pecup untuk diverifikasi.</p>
+        </div>
+
+        <div style="flex:0 0 360px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;">
+          <h3 style="font-size:18px;font-weight:800;margin-bottom:20px;">Ringkasan Pesanan</h3>
+          ${summaryRows}
+          <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:18px;margin-bottom:20px;"><span>Total</span><span style="color:var(--green-dark);">${formatRupiah(subtotal)}</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;background:var(--surface-2);padding:14px;border-radius:12px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8" style="flex-shrink:0;margin-top:2px;"><path d="M4 4h16v12H8l-4 4z"/></svg>
+            <span style="font-size:12.5px;color:var(--text-muted);line-height:1.6;">Pesanan otomatis terkirim ke email toko begitu kamu klik "Kirim Pesanan".</span>
+          </div>
+        </div>
+      </div>
+    </form>
+  </section>
+  ${customerFooter()}
+</div></div>`;
+
+  return page({ title: 'Checkout — Pecup', bodyHtml: body });
+}
+
+function renderSukses({ order, items, emailOk }) {
+  const emailNote = emailOk
+    ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
+    : `Pesananmu sudah tersimpan, tapi email notifikasi ke toko belum berhasil terkirim otomatis — tim kami tetap bisa melihatnya lewat panel admin.`;
+
+  const body = `
+<div class="frame-scroll"><div class="frame" style="min-height:820px;display:flex;align-items:center;justify-content:center;position:relative;">
+  <div style="position:absolute;top:0;left:0;right:0;">${customerHeader(0)}</div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:28px;padding:56px 60px;max-width:560px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;margin-top:110px;">
+    <div style="width:80px;height:80px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#3f7a42" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+    </div>
+    <h1 style="font-size:26px;font-weight:800;letter-spacing:-0.3px;">Pesanan Berhasil Dikirim!</h1>
+    <p style="font-size:15px;color:var(--text-muted);line-height:1.75;max-width:420px;">
+      Terima kasih, <strong style="color:var(--text);">${escapeHtml(order.customer_name)}</strong>! ${emailNote} Kami akan konfirmasi pesananmu lewat WhatsApp.
+    </p>
+    <div style="width:100%;background:var(--surface-2);border-radius:14px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;text-align:left;">
+      <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">No. Pesanan</span><span style="font-weight:700;">${escapeHtml(order.order_number)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Jumlah Produk</span><span style="font-weight:700;">${items.length} produk</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Total Pembayaran</span><span style="font-weight:700;color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
+    </div>
+    <a href="/" class="btn-primary" style="display:block;width:100%;text-align:center;padding:15px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:8px;">Kembali ke Beranda</a>
+  </div>
+</div></div>`;
+
+  return page({ title: 'Pesanan Berhasil — Pecup', bodyHtml: body });
+}
+
+module.exports = { renderBeranda, renderProdukDetail, renderKeranjang, renderCheckout, renderSukses };
