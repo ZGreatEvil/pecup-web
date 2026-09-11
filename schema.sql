@@ -19,8 +19,16 @@ create table if not exists products (
   stock integer not null default 0,
   image text,                      -- full public Vercel Blob URL
   active boolean not null default true,
+  is_bestseller boolean not null default false,
+  is_recommended boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- Re-running this file on a database created before these two flags
+-- existed picks them up here (CREATE TABLE IF NOT EXISTS above is a no-op
+-- once the table already exists).
+alter table products add column if not exists is_bestseller boolean not null default false;
+alter table products add column if not exists is_recommended boolean not null default false;
 
 create table if not exists orders (
   id bigint generated always as identity primary key,

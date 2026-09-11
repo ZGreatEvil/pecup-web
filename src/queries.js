@@ -20,10 +20,21 @@ async function getProduct(id) {
 
 async function createProduct(data) {
   const rows = await db.query(
-    `insert into products (name, description, category, weight, price, stock, image, active)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+    `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      returning id`,
-    [data.name, data.description, data.category, data.weight, data.price, data.stock, data.image, Boolean(data.active)]
+    [
+      data.name,
+      data.description,
+      data.category,
+      data.weight,
+      data.price,
+      data.stock,
+      data.image,
+      Boolean(data.active),
+      Boolean(data.isBestseller),
+      Boolean(data.isRecommended),
+    ]
   );
   return Number(rows[0].id);
 }
@@ -34,16 +45,39 @@ async function updateProduct(id, data) {
   if (data.image) {
     await db.query(
       `update products set name = $1, description = $2, category = $3, weight = $4,
-              price = $5, stock = $6, active = $7, image = $8
-       where id = $9`,
-      [data.name, data.description, data.category, data.weight, data.price, data.stock, Boolean(data.active), data.image, id]
+              price = $5, stock = $6, active = $7, image = $8, is_bestseller = $9, is_recommended = $10
+       where id = $11`,
+      [
+        data.name,
+        data.description,
+        data.category,
+        data.weight,
+        data.price,
+        data.stock,
+        Boolean(data.active),
+        data.image,
+        Boolean(data.isBestseller),
+        Boolean(data.isRecommended),
+        id,
+      ]
     );
   } else {
     await db.query(
       `update products set name = $1, description = $2, category = $3, weight = $4,
-              price = $5, stock = $6, active = $7
-       where id = $8`,
-      [data.name, data.description, data.category, data.weight, data.price, data.stock, Boolean(data.active), id]
+              price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9
+       where id = $10`,
+      [
+        data.name,
+        data.description,
+        data.category,
+        data.weight,
+        data.price,
+        data.stock,
+        Boolean(data.active),
+        Boolean(data.isBestseller),
+        Boolean(data.isRecommended),
+        id,
+      ]
     );
   }
 }

@@ -2,6 +2,19 @@ const { page, customerHeader, customerFooter } = require('./layout');
 const { productThumb } = require('./productIcon');
 const { formatRupiah, escapeHtml, escapeAttr } = require('../utils');
 
+// Best Seller takes priority if a product is somehow flagged as both.
+function productBadge(p) {
+  if (p.is_bestseller) return { text: 'Best Seller', bg: 'var(--orange)' };
+  if (p.is_recommended) return { text: 'Direkomendasikan', bg: 'var(--green)' };
+  return null;
+}
+
+function badgeHtml(p, { top = 8, left = 8 } = {}) {
+  const badge = productBadge(p);
+  if (!badge) return '';
+  return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;white-space:nowrap;">${badge.text}</span>`;
+}
+
 function renderBeranda({ products, cartCount, category }) {
   const categories = ['Semua', 'Buah Tunggal', 'Mix Buah', 'Salad Buah', 'Rujak', 'Paket Spesial'];
   const chips = categories
@@ -30,7 +43,7 @@ function renderBeranda({ products, cartCount, category }) {
           return `
       <div class="p-card" style="position:relative;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
         <a href="/produk/${p.id}" style="position:absolute;inset:0;z-index:1;" aria-label="${escapeAttr(p.name)}"></a>
-        <div style="aspect-ratio:1;">${productThumb(p)}</div>
+        <div style="aspect-ratio:1;position:relative;">${badgeHtml(p)}${productThumb(p)}</div>
         <div style="display:flex;flex-direction:column;gap:4px;">
           <span style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</span>
           <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
@@ -189,10 +202,17 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [] }) 
   </div>
 
   <section class="detail-layout px-page" style="padding-top:32px;padding-bottom:72px;">
-    <div class="detail-img">${productThumb(product, { size: 200, radius: 28 })}</div>
+    <div class="detail-img" style="position:relative;">${badgeHtml(product, { top: 12, left: 12 })}${productThumb(product, { size: 200, radius: 28 })}</div>
 
     <div class="detail-info">
-      <span style="font-size:13px;font-weight:700;color:var(--green-dark);background:var(--green-soft);padding:5px 12px;border-radius:99px;width:fit-content;">${escapeHtml(product.category)}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:700;color:var(--green-dark);background:var(--green-soft);padding:5px 12px;border-radius:99px;width:fit-content;">${escapeHtml(product.category)}</span>
+        ${
+          productBadge(product)
+            ? `<span style="font-size:13px;font-weight:700;color:#fff;background:${productBadge(product).bg};padding:5px 12px;border-radius:99px;width:fit-content;">${productBadge(product).text}</span>`
+            : ''
+        }
+      </div>
       <h1 style="font-size:clamp(24px, 4vw, 34px);font-weight:800;letter-spacing:-0.5px;">${escapeHtml(product.name)} Cup</h1>
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <span style="font-size:26px;font-weight:800;color:var(--green-dark);">${formatRupiah(product.price)}</span>
@@ -257,8 +277,7 @@ function renderKeranjang({ items, subtotal, cartCount }) {
         </div>
         <form method="post" action="/keranjang/update" class="cart-row-qty">
           <input type="hidden" name="key" value="${escapeAttr(it.key)}">
-          <input type="number" name="qty" value="${it.qty}" min="0" max="${it.product.stock}" style="width:64px;padding:8px;text-align:center;">
-          <button class="btn-outline" type="submit" style="padding:9px 14px;border-radius:10px;font-size:12.5px;font-weight:700;">Update</button>
+          <input type="number" name="qty" value="${it.qty}" min="0" max="${it.product.stock}" class="qty-auto-submit" style="width:64px;padding:8px;text-align:center;">
         </form>
         <div class="cart-row-total">${formatRupiah(it.subtotal)}</div>
         <form method="post" action="/keranjang/hapus">

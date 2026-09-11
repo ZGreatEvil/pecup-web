@@ -84,7 +84,11 @@ const SHARED_STYLE = `
   .cart-row-total{width:110px;text-align:right;font-size:16px;font-weight:800;color:var(--green-dark);}
   .footer-cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px;padding-bottom:40px;border-bottom:1px solid var(--border);}
   .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;flex-wrap:wrap;}
-  .site-nav{display:flex;gap:40px;flex-wrap:wrap;}
+  /* 3-column grid (logo / nav / cart) so the nav links land truly centered
+     regardless of the logo and cart icon having different widths — plain
+     flex space-between can't center a middle item between unequal siblings. */
+  .site-header-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;}
+  .site-nav{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;}
   .success-card{padding:56px 60px;}
   .admin-shell{display:flex;align-items:flex-start;flex-wrap:wrap;}
   .admin-sidebar{flex:0 0 240px;background:var(--sidebar);min-height:1000px;padding:28px 20px;display:flex;flex-direction:column;}
@@ -94,21 +98,27 @@ const SHARED_STYLE = `
 
   @media (max-width: 1180px){
     .px-page{padding-left:56px;padding-right:56px;}
-    .site-header{padding-left:56px;padding-right:56px;}
+    .site-header, .site-header-grid{padding-left:56px;padding-right:56px;}
     .grid-4{grid-template-columns:repeat(3, minmax(0,1fr));}
   }
   @media (max-width: 860px){
     .px-page{padding-left:32px;padding-right:32px;}
-    .site-header{padding:18px 32px;}
+    .site-header, .site-header-grid{padding:18px 32px;}
     .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));gap:20px;}
     .grid-3{grid-template-columns:1fr;gap:28px;}
     .site-nav{gap:24px;}
     .admin-sidebar{flex:1 1 100%;min-height:auto;}
     .admin-main{padding:24px 20px;}
   }
+  @media (max-width: 640px){
+    /* Below this width, drop back to a wrapping flex row — with limited
+       horizontal space, letting the nav wrap onto its own line matters more
+       than keeping it perfectly centered between logo and cart icon. */
+    .site-header-grid{display:flex;flex-wrap:wrap;justify-content:space-between;}
+  }
   @media (max-width: 560px){
     .px-page{padding-left:18px;padding-right:18px;}
-    .site-header{padding:16px 18px;}
+    .site-header, .site-header-grid{padding:16px 18px;}
     .grid-4{grid-template-columns:1fr;}
     .hero-art{display:none;}
     .split-side{flex-basis:100%;max-width:100%;}
@@ -154,8 +164,8 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
   </header>`;
   }
   return `
-  <header class="site-header">
-    <a href="/" style="display:flex;align-items:center;gap:12px;">
+  <header class="site-header-grid">
+    <a href="/" style="display:flex;align-items:center;gap:12px;justify-self:start;">
       ${logoMark(38)}
       <div style="display:flex;flex-direction:column;">
         <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;letter-spacing:-0.3px;color:var(--text);">Pecup</span>
@@ -167,7 +177,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
       <a class="nav-link" href="/#menu">Menu</a>
       <a class="nav-link" href="/#cara-pesan">Cara Pesan</a>
     </nav>
-    <a href="/keranjang" style="position:relative;display:flex;align-items:center;">
+    <a href="/keranjang" style="position:relative;display:flex;align-items:center;justify-self:end;">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/><circle cx="18" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/></svg>
       <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
     </a>
@@ -192,6 +202,12 @@ const CART_SCRIPT = `
     var form = e.target;
     if(!form || form.getAttribute('action') !== '/keranjang/tambah') return;
     e.preventDefault();
+    // Form-level guard (not just button.disabled) so a fast double-click or
+    // double-tap can never fire the request twice, even if the button
+    // lookup below fails for some reason — this is what actually stops
+    // "click twice, accidentally order 2".
+    if(form.dataset.submitting === '1') return;
+    form.dataset.submitting = '1';
     var btn = form.querySelector('button[type="submit"]');
     var originalText = btn ? btn.textContent : '';
     if(btn){ btn.disabled = true; btn.textContent = '...'; }
@@ -204,15 +220,24 @@ const CART_SCRIPT = `
         if(result.ok && result.data && result.data.ok){
           updateBadge(result.data.cartCount);
           if(btn){ btn.textContent = 'Ditambahkan \\u2713'; }
-          setTimeout(function(){ if(btn){ btn.disabled = false; btn.textContent = originalText; } }, 900);
-        } else if(btn){
-          btn.disabled = false;
-          btn.textContent = originalText;
+          setTimeout(function(){ if(btn){ btn.disabled = false; btn.textContent = originalText; } form.dataset.submitting = ''; }, 900);
+        } else {
+          if(btn){ btn.disabled = false; btn.textContent = originalText; }
+          form.dataset.submitting = '';
         }
       })
       .catch(function(){
         if(btn){ btn.disabled = false; btn.textContent = originalText; }
+        form.dataset.submitting = '';
       });
+  });
+  // Cart quantity fields: submit automatically once the shopper finishes
+  // editing (blur / Enter / stepper arrows), no separate "Update" button.
+  document.addEventListener('change', function(e){
+    var input = e.target;
+    if(!input || !input.classList || !input.classList.contains('qty-auto-submit')) return;
+    var form = input.closest('form');
+    if(form) form.requestSubmit();
   });
 })();
 </script>`;
@@ -230,8 +255,8 @@ function customerFooter() {
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <span style="font-size:13px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;">HUBUNGI KAMI</span>
-        <span style="font-size:14px;">WhatsApp: [NOMOR WHATSAPP]</span>
-        <span style="font-size:14px;">Instagram: [@pecup.id]</span>
+        <a href="https://wa.me/6281245684104" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">WhatsApp: +62 812-4568-4104</a>
+        <a href="https://instagram.com/pecupchu" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">Instagram: @pecupchu</a>
       </div>
     </div>
     <p style="text-align:center;font-size:12.5px;color:var(--text-muted);padding-top:24px;">© ${new Date().getFullYear()} Pecup. Semua hak dilindungi.</p>

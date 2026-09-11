@@ -294,6 +294,8 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     stock: Number(fields.stock),
     image,
     active: fields.active ? 1 : 0,
+    isBestseller: fields.is_bestseller ? 1 : 0,
+    isRecommended: fields.is_recommended ? 1 : 0,
   });
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk baru berhasil ditambahkan.'));
 }));
@@ -324,6 +326,8 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     stock: Number(fields.stock),
     image,
     active: fields.active ? 1 : 0,
+    isBestseller: fields.is_bestseller ? 1 : 0,
+    isRecommended: fields.is_recommended ? 1 : 0,
   });
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk berhasil diperbarui.'));
 }));

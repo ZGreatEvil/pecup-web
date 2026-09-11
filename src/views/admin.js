@@ -98,7 +98,17 @@ function renderProdukList({ products, stats, flash }) {
 
 function renderProdukForm({ product, error }) {
   const isEdit = Boolean(product && product.id);
-  const p = product || { name: '', description: '', category: 'Buah Tunggal', weight: '', price: '', stock: '', active: 1 };
+  const p = product || {
+    name: '',
+    description: '',
+    category: 'Buah Tunggal',
+    weight: '',
+    price: '',
+    stock: '',
+    active: 1,
+    is_bestseller: 0,
+    is_recommended: 0,
+  };
   const categories = ['Buah Tunggal', 'Mix Buah', 'Salad Buah', 'Rujak', 'Paket Spesial'];
 
   const body = `
@@ -158,6 +168,24 @@ function renderProdukForm({ product, error }) {
             </div>
             <label style="display:flex;align-items:center;gap:8px;margin:0;">
               <input type="checkbox" name="active" value="1" ${Number(p.active) ? 'checked' : ''} style="width:20px;height:20px;">
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:var(--surface-2);border-radius:12px;margin-top:12px;">
+            <div>
+              <div style="font-size:14px;font-weight:700;">Best Seller</div>
+              <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">Tampilkan label "Best Seller" pada produk ini</div>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin:0;">
+              <input type="checkbox" name="is_bestseller" value="1" ${Number(p.is_bestseller) ? 'checked' : ''} style="width:20px;height:20px;">
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:var(--surface-2);border-radius:12px;margin-top:12px;">
+            <div>
+              <div style="font-size:14px;font-weight:700;">Direkomendasikan</div>
+              <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">Tampilkan label "Direkomendasikan" pada produk ini</div>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin:0;">
+              <input type="checkbox" name="is_recommended" value="1" ${Number(p.is_recommended) ? 'checked' : ''} style="width:20px;height:20px;">
             </label>
           </div>
         </div>
