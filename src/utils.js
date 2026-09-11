@@ -32,12 +32,6 @@ function generateOrderNumber(id, date = new Date()) {
   return `PC-${y}${m}${d}-${String(id).padStart(4, '0')}`;
 }
 
-// SQLite's datetime('now') stores 'YYYY-MM-DD HH:MM:SS' in UTC with no
-// timezone marker. This turns that into a real Date object.
-function sqliteToDate(sqliteDateStr) {
-  return new Date(sqliteDateStr.replace(' ', 'T') + 'Z');
-}
-
 function formatDateID(dateInput) {
   // Treat a bare 'YYYY-MM-DD' as a local calendar date (not UTC midnight),
   // so the weekday/day shown always matches the date key it was built from.
@@ -80,6 +74,5 @@ module.exports = {
   formatDateID,
   formatTimeID,
   toDateKey,
-  sqliteToDate,
   slugify,
 };

@@ -58,9 +58,65 @@ const SHARED_STYLE = `
   .flash{padding:14px 18px;border-radius:12px;font-size:13.5px;margin-bottom:20px;}
   .flash-error{background:#f6dcdc;color:#a13f3f;}
   .flash-ok{background:var(--green-soft);color:var(--green-dark);}
-  .frame{width:1440px;max-width:none;background:var(--bg);}
-  .frame-scroll{overflow-x:auto;}
+  .frame{width:100%;max-width:1440px;margin:0 auto;background:var(--bg);}
+  .frame-scroll{overflow-x:hidden;}
+
+  /* ---- responsive helpers ---- */
+  .px-page{padding-left:96px;padding-right:96px;}
+  .grid-4{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:28px;}
+  .grid-3{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:36px;}
+  .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;}
+  .hero-copy{flex:1 1 420px;display:flex;flex-direction:column;gap:26px;}
+  .hero-title{font-size:clamp(30px, 4.6vw, 48px);line-height:1.15;font-weight:800;letter-spacing:-1px;max-width:560px;}
+  .hero-art{flex:0 1 340px;width:min(340px, 60vw);height:min(340px, 60vw);border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;}
+  .hero-art svg{width:60%;height:60%;}
+  .detail-layout{display:flex;gap:64px;flex-wrap:wrap;}
+  .detail-img{flex:1 1 340px;max-width:420px;aspect-ratio:1;}
+  .detail-info{flex:1 1 380px;display:flex;flex-direction:column;gap:20px;padding-top:8px;min-width:0;}
+  .split-layout{display:flex;gap:48px;align-items:flex-start;flex-wrap:wrap;}
+  .split-main{flex:1 1 480px;display:flex;flex-direction:column;min-width:0;}
+  .split-side{flex:1 1 320px;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;}
+  .cart-row{display:flex;align-items:center;gap:20px;padding:24px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  .cart-row-thumb{width:84px;height:84px;flex-shrink:0;}
+  .cart-row-name{flex:1 1 180px;min-width:140px;}
+  .cart-row-qty{display:flex;align-items:center;gap:8px;}
+  .cart-row-total{width:110px;text-align:right;font-size:16px;font-weight:800;color:var(--green-dark);}
+  .footer-cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px;padding-bottom:40px;border-bottom:1px solid var(--border);}
+  .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;flex-wrap:wrap;}
+  .site-nav{display:flex;gap:40px;flex-wrap:wrap;}
+  .success-card{padding:56px 60px;}
+  .admin-shell{display:flex;align-items:flex-start;flex-wrap:wrap;}
+  .admin-sidebar{flex:0 0 240px;background:var(--sidebar);min-height:1000px;padding:28px 20px;display:flex;flex-direction:column;}
+  .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
   table.admin-table{width:100%;border-collapse:collapse;}
+  .table-scroll{overflow-x:auto;}
+
+  @media (max-width: 1180px){
+    .px-page{padding-left:56px;padding-right:56px;}
+    .site-header{padding-left:56px;padding-right:56px;}
+    .grid-4{grid-template-columns:repeat(3, minmax(0,1fr));}
+  }
+  @media (max-width: 860px){
+    .px-page{padding-left:32px;padding-right:32px;}
+    .site-header{padding:18px 32px;}
+    .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));gap:20px;}
+    .grid-3{grid-template-columns:1fr;gap:28px;}
+    .site-nav{gap:24px;}
+    .admin-sidebar{flex:1 1 100%;min-height:auto;}
+    .admin-main{padding:24px 20px;}
+  }
+  @media (max-width: 560px){
+    .px-page{padding-left:18px;padding-right:18px;}
+    .site-header{padding:16px 18px;}
+    .grid-4{grid-template-columns:1fr;}
+    .hero-art{display:none;}
+    .split-side{flex-basis:100%;max-width:100%;}
+    .cart-row{gap:12px;padding:18px 0;}
+    .cart-row-thumb{width:64px;height:64px;}
+    .cart-row-total{width:auto;margin-left:auto;}
+    .detail-img{max-width:100%;}
+    .success-card{padding:32px 22px;}
+  }
 `;
 
 function page({ title, bodyHtml, extraHead = '' }) {
@@ -87,16 +143,16 @@ function logoMark(size = 38) {
 function customerHeader(cartCount = 0, activeStepLabel = null) {
   if (activeStepLabel) {
     return `
-  <header style="display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);">
+  <header class="site-header">
     <a href="/" style="display:flex;align-items:center;gap:12px;">
       ${logoMark(38)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;color:var(--text);">Pecup</span>
     </a>
-    <div style="display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;">${activeStepLabel}</div>
+    <div style="display:flex;align-items:center;gap:14px;font-size:13.5px;font-weight:600;flex-wrap:wrap;">${activeStepLabel}</div>
   </header>`;
   }
   return `
-  <header style="display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);">
+  <header class="site-header">
     <a href="/" style="display:flex;align-items:center;gap:12px;">
       ${logoMark(38)}
       <div style="display:flex;flex-direction:column;">
@@ -104,7 +160,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
         <span style="font-size:11px;color:var(--text-muted);letter-spacing:0.4px;">POTONGAN BUAH SEGAR</span>
       </div>
     </a>
-    <nav style="display:flex;gap:40px;">
+    <nav class="site-nav">
       <a class="nav-link" href="/">Beranda</a>
       <a class="nav-link" href="/#menu">Menu</a>
       <a class="nav-link" href="/#cara-pesan">Cara Pesan</a>
@@ -122,8 +178,8 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
 
 function customerFooter() {
   return `
-  <footer style="padding:64px 96px 40px;">
-    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px;padding-bottom:40px;border-bottom:1px solid var(--border);">
+  <footer class="px-page" style="padding-top:64px;padding-bottom:40px;">
+    <div class="footer-cols">
       <div style="flex:1 1 260px;max-width:320px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
           ${logoMark(30)}
@@ -148,7 +204,7 @@ function adminSidebar(active) {
       ${label}
     </a>`;
   return `
-  <aside style="flex:0 0 240px;background:var(--sidebar);min-height:1000px;padding:28px 20px;display:flex;flex-direction:column;">
+  <aside class="admin-sidebar">
     <a href="/admin/produk" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>

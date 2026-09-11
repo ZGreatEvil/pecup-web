@@ -1,6 +1,6 @@
 const { page, adminSidebar, logoMark } = require('./layout');
 const { productThumb } = require('./productIcon');
-const { formatRupiah, escapeHtml, escapeAttr, formatDateID, formatTimeID, sqliteToDate } = require('../utils');
+const { formatRupiah, escapeHtml, escapeAttr, formatDateID, formatTimeID } = require('../utils');
 
 function renderLogin({ error }) {
   const body = `
@@ -66,9 +66,9 @@ function renderProdukList({ products, stats, flash }) {
     : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">Belum ada produk. Klik "Tambah Produk Baru" untuk mulai mengisi inventori.</div>`;
 
   const body = `
-<div style="display:flex;">
+<div class="admin-shell">
   ${adminSidebar('produk')}
-  <main style="flex:1 1 0;padding:36px 48px;">
+  <main class="admin-main">
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
       <div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Produk</div><h1 style="font-size:24px;font-weight:800;">Kelola Produk</h1></div>
@@ -78,17 +78,17 @@ function renderProdukList({ products, stats, flash }) {
       </a>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:20px;margin:28px 0;">
+    <div class="grid-3" style="margin:28px 0;">
       ${statCard('Total Produk', stats.total, 'var(--green-soft)', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/>')}
       ${statCard('Produk Aktif', stats.active, 'var(--orange-soft)', '<path d="M20 6L9 17l-5-5"/>', '#a15a1f')}
       ${statCard('Stok Menipis (≤5)', stats.lowStock, '#f6dcdc', '<path d="M12 9v4m0 4h.01M10.3 3.9L2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>', '#a13f3f')}
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:2.4fr 1.2fr 1fr 0.8fr 1fr 1.2fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;">
+    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
+      <div style="display:grid;grid-template-columns:2.4fr 1.2fr 1fr 0.8fr 1fr 1.2fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:640px;">
         <span>PRODUK</span><span>KATEGORI</span><span>HARGA</span><span>STOK</span><span>STATUS</span><span>AKSI</span>
       </div>
-      ${rows}
+      <div style="min-width:640px;">${rows}</div>
     </div>
   </main>
 </div>`;
@@ -99,12 +99,12 @@ function renderProdukList({ products, stats, flash }) {
 function renderProdukForm({ product, error }) {
   const isEdit = Boolean(product && product.id);
   const p = product || { name: '', description: '', category: 'Buah Tunggal', weight: '', price: '', stock: '', active: 1 };
-  const categories = ['Buah Tunggal', 'Mix Buah', 'Paket Spesial'];
+  const categories = ['Buah Tunggal', 'Mix Buah', 'Salad Buah', 'Rujak', 'Paket Spesial'];
 
   const body = `
-<div style="display:flex;">
+<div class="admin-shell">
   ${adminSidebar('produk')}
-  <main style="flex:1 1 0;padding:36px 48px;">
+  <main class="admin-main">
     <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px;">
         <div>
@@ -178,7 +178,7 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloa
             : `<span style="font-size:11.5px;font-weight:700;color:#a15a1f;background:var(--orange-soft);padding:5px 11px;border-radius:99px;">Menunggu</span>`;
           return `
       <div class="row-hover" style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);">
-        <span style="font-size:13px;color:var(--text-muted);">${formatTimeID(sqliteToDate(o.created_at))}</span>
+        <span style="font-size:13px;color:var(--text-muted);">${formatTimeID(o.created_at)}</span>
         <div><div style="font-size:13.5px;font-weight:700;">${escapeHtml(o.customer_name)}</div><div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(o.whatsapp)}</div></div>
         <span style="font-size:12.5px;color:var(--text-muted);">${escapeHtml(o.order_number)}</span>
         <span style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
@@ -190,9 +190,9 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloa
     : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">Belum ada pesanan pada tanggal ini.</div>`;
 
   const body = `
-<div style="display:flex;">
+<div class="admin-shell">
   ${adminSidebar('pesanan')}
-  <main style="flex:1 1 0;padding:36px 48px;">
+  <main class="admin-main">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
       <div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div><h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1></div>
       <a href="${downloadUrl}" class="btn-primary" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;">
@@ -210,17 +210,17 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloa
       <a href="/admin/pesanan?tanggal=${nextDate}" style="display:flex;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></a>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:20px;margin-bottom:28px;">
+    <div class="grid-3" style="margin-bottom:28px;">
       ${statCard('Pesanan Hari Ini', stats.total, 'var(--green-soft)', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
       ${statCard('Menunggu Verifikasi', stats.pending, 'var(--orange-soft)', '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>', '#a15a1f')}
       ${statCard('Terkonfirmasi', stats.confirmed, 'var(--green-soft)', '<path d="M20 6L9 17l-5-5"/>')}
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;">
+    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
+      <div style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:600px;">
         <span>WAKTU</span><span>PEMESAN</span><span>NO. PESANAN</span><span>TOTAL</span><span>STATUS</span><span>AKSI</span>
       </div>
-      ${rows}
+      <div style="min-width:600px;">${rows}</div>
     </div>
   </main>
 </div>`;
@@ -252,9 +252,9 @@ function renderPesananDetail({ order, items, proofUrl }) {
     : `<span style="color:#a13f3f;font-weight:600;">Belum terkirim otomatis${order.email_error ? ` — ${escapeHtml(order.email_error)}` : ''}</span>`;
 
   const body = `
-<div style="display:flex;">
+<div class="admin-shell">
   ${adminSidebar('pesanan')}
-  <main style="flex:1 1 0;padding:36px 48px;max-width:900px;">
+  <main class="admin-main" style="max-width:900px;">
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Detail Pesanan ${escapeHtml(order.order_number)}</h1>
 

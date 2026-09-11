@@ -4,6 +4,8 @@
 // and the admin session is a signed, stateless token (see src/cart.js and
 // src/adminSession.js).
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 
 const { loadEnv } = require('../src/env');
 loadEnv(); // no-op on Vercel (env vars are injected directly); useful for `vercel dev` with a local .env
@@ -25,6 +27,15 @@ const adminViews = require('../src/views/admin');
 
 const router = new Router();
 
+// Read once at cold start (literal path so Vercel's build-time file tracer
+// bundles it) and keep in memory — it's a small, unchanging static asset.
+const qrisPaymentImage = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'qris-payment.jpg'));
+
+router.get('/assets/qris-payment.jpg', (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' });
+  res.end(qrisPaymentImage);
+});
+
 // ---------------------------------------------------------------------
 // storefront
 // ---------------------------------------------------------------------
@@ -43,7 +54,11 @@ router.get('/produk/:id', async (req, res) => {
   if (!product) return notFound(res);
   const all = await queries.listProducts({ onlyActive: true });
   const related = all.filter((p) => p.id !== product.id).slice(0, 4);
-  sendHtml(res, shopViews.renderProdukDetail({ product, related, cartCount: cartLib.cartCount(req.cart) }));
+  const singleFruits = all.filter((p) => p.category === 'Buah Tunggal');
+  sendHtml(
+    res,
+    shopViews.renderProdukDetail({ product, related, cartCount: cartLib.cartCount(req.cart), singleFruits })
+  );
 });
 
 router.post('/keranjang/tambah', async (req, res) => {
@@ -52,7 +67,27 @@ router.post('/keranjang/tambah', async (req, res) => {
   const qty = Math.max(1, Number(fields.qty) || 1);
   const product = await queries.getProduct(productId);
   if (product) {
-    cartLib.addToCart(req.cart, productId, qty);
+    let fruits;
+    if (product.category === 'Mix Buah' && fields.fruitIds) {
+      const requestedIds = fields.fruitIds
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const singles = await queries.listProducts({ onlyActive: true });
+      // Product ids come back from the Neon driver as strings (bigint
+      // columns), so normalize to Number before comparing against the
+      // parsed request ids — otherwise the Set lookup never matches.
+      const validIds = new Set(singles.filter((p) => p.category === 'Buah Tunggal').map((p) => Number(p.id)));
+      const uniqueValid = Array.from(new Set(requestedIds)).filter((id) => validIds.has(id));
+      // Only accept a proper 2-or-3-fruit selection; otherwise skip the mix
+      // composition rather than silently adding an ill-formed cart line.
+      if (uniqueValid.length === 2 || uniqueValid.length === 3) fruits = uniqueValid;
+      else {
+        redirect(res, `/produk/${productId}`);
+        return;
+      }
+    }
+    cartLib.addToCart(req.cart, productId, qty, fruits);
     saveCartCookie(res, req.cart);
   }
   redirect(res, req.headers.referer && req.headers.referer.includes('/produk/') ? `/produk/${productId}` : '/');
@@ -65,16 +100,15 @@ router.get('/keranjang', async (req, res) => {
 
 router.post('/keranjang/update', async (req, res) => {
   const { fields } = await parseBody(req);
-  const productId = Number(fields.productId);
   const qty = Math.max(0, Number(fields.qty) || 0);
-  cartLib.setCartQty(req.cart, productId, qty);
+  cartLib.setCartQty(req.cart, fields.key, qty);
   saveCartCookie(res, req.cart);
   redirect(res, '/keranjang');
 });
 
 router.post('/keranjang/hapus', async (req, res) => {
   const { fields } = await parseBody(req);
-  cartLib.removeFromCart(req.cart, Number(fields.productId));
+  cartLib.removeFromCart(req.cart, fields.key);
   saveCartCookie(res, req.cart);
   redirect(res, '/keranjang');
 });
@@ -140,7 +174,13 @@ router.post('/checkout', async (req, res) => {
   let order;
   try {
     proofFilename = await saveProofFile(files.proof);
-    const orderItems = items.map((it) => ({ productId: it.product.id, name: it.product.name, price: it.product.price, qty: it.qty }));
+    const orderItems = items.map((it) => ({
+      productId: it.product.id,
+      name: it.product.name,
+      price: it.product.price,
+      qty: it.qty,
+      label: it.fruits && it.fruits.length ? `${it.product.name} (${it.fruits.map((f) => f.name).join(', ')})` : undefined,
+    }));
     // The real stock check happens atomically inside this call (see
     // schema.sql's create_order function) — the loop above is just a fast
     // pre-check so we don't upload a proof file for an obviously-doomed order.

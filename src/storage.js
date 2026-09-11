@@ -53,6 +53,7 @@ async function signedProofUrl(objectPath, expiresInSeconds = 3600) {
     pathname: objectPath,
     operation: 'get',
     validUntil,
+    access: 'private',
   });
   return presignedUrl;
 }

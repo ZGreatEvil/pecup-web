@@ -78,7 +78,7 @@ async function createOrder({ customerName, whatsapp, notes, items, proofFilename
     customerName,
     whatsapp,
     notes || '',
-    JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty }))),
+    JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty, label: it.label || null }))),
     proofFilename || null,
     toDateKey(new Date()),
   ]);

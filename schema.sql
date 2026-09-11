@@ -67,7 +67,11 @@ create index if not exists idx_order_items_order_id on order_items(order_id);
 -- transaction, so two customers checking out the last unit at the same
 -- moment can never both succeed.
 --
--- p_items shape: [{"productId": 1, "qty": 2}, ...]
+-- p_items shape: [{"productId": 1, "qty": 2, "label": null}, ...]
+-- "label" is optional and, when present, overrides the stored order_items
+-- product_name for that line — used for fruit-mix cart entries, e.g.
+-- "Mix Buah (Mangga, Semangka, Nanas)", since a mix is one product row with
+-- a customer-chosen composition rather than its own DB row per combination.
 
 create or replace function create_order(
   p_customer_name text,
@@ -89,6 +93,7 @@ declare
   v_price integer;
   v_stock integer;
   v_name text;
+  v_label text;
 begin
   if jsonb_array_length(p_items) = 0 then
     raise exception 'Keranjang kosong.';
@@ -130,11 +135,12 @@ begin
   for v_item in select * from jsonb_array_elements(p_items) loop
     v_product_id := (v_item->>'productId')::bigint;
     v_qty := (v_item->>'qty')::integer;
+    v_label := v_item->>'label';
 
     select price, name into v_price, v_name from products where id = v_product_id;
 
     insert into order_items (order_id, product_id, product_name, price, qty, subtotal)
-    values (v_order_id, v_product_id, v_name, v_price, v_qty, v_price * v_qty);
+    values (v_order_id, v_product_id, coalesce(v_label, v_name), v_price, v_qty, v_price * v_qty);
 
     update products set stock = greatest(0, stock - v_qty) where id = v_product_id;
   end loop;
@@ -165,6 +171,8 @@ select * from (values
   ('Nanas Madu', 'Nanas madu manis, sudah dibuang mata dan intinya.', 'Buah Tunggal', '250 gr', 16000, 20, null::text, true),
   ('Pepaya California', 'Pepaya california matang pohon, tekstur lembut.', 'Buah Tunggal', '300 gr', 14000, 22, null::text, true),
   ('Melon Golden', 'Melon golden segar, manis dan renyah.', 'Buah Tunggal', '250 gr', 19000, 18, null::text, true),
+  ('Jambu Biji', 'Jambu biji merah segar, dipotong dadu, renyah dan manis.', 'Buah Tunggal', '250 gr', 15000, 20, null::text, true),
+  ('Mix Buah Pilihan Sendiri', 'Pilih sendiri 2 atau 3 buah favoritmu dari 6 pilihan buah segar kami.', 'Mix Buah', '300 gr', 20000, 20, null::text, true),
   ('Salad Buah Campur', 'Campuran mangga, semangka, melon, nanas, dan anggur.', 'Salad Buah', '350 gr', 25000, 15, null::text, true),
   ('Rujak Buah Bumbu Kacang', 'Campuran buah segar dengan bumbu rujak kacang khas.', 'Rujak', '350 gr', 22000, 12, null::text, true),
   ('Jus Buah Mix Segar', 'Buah potong campur cocok untuk jus, tanpa gula tambahan.', 'Salad Buah', '400 gr', 28000, 10, null::text, true)
