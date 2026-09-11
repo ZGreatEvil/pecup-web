@@ -6,10 +6,17 @@
 // driver for exactly this kind of deployment.
 const { neon } = require('@neondatabase/serverless');
 
+// Cached across warm invocations of the same serverless instance — no need
+// to rebuild the query function (and re-parse the connection string) on
+// every single call.
+let cachedSql;
 function sql() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error('DATABASE_URL belum diatur di environment variables.');
-  return neon(url);
+  if (!cachedSql) {
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error('DATABASE_URL belum diatur di environment variables.');
+    cachedSql = neon(url);
+  }
+  return cachedSql;
 }
 
 /** Runs a parameterized query ($1, $2, ...) and returns the rows array. */

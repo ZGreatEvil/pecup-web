@@ -14,6 +14,7 @@ const SHARED_STYLE = `
   a:hover{color:var(--green);}
   button{font-family:inherit;cursor:pointer;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
+  .req{color:#c94f4f;}
   input, textarea, select{
     width:100%;border:1.5px solid var(--border);border-radius:11px;padding:13px 15px;
     font-family:'Work Sans',sans-serif;font-size:14.5px;color:var(--text);background:var(--surface);outline:none;
@@ -132,6 +133,7 @@ ${extraHead}
 </head>
 <body>
 ${bodyHtml}
+${CART_SCRIPT}
 </body>
 </html>`;
 }
@@ -167,14 +169,53 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
     </nav>
     <a href="/keranjang" style="position:relative;display:flex;align-items:center;">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/><circle cx="18" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/></svg>
-      ${
-        cartCount > 0
-          ? `<span style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;">${cartCount}</span>`
-          : ''
-      }
+      <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
     </a>
   </header>`;
 }
+
+// Progressive enhancement: intercepts submits of any add-to-cart form
+// (action="/keranjang/tambah") and sends them via fetch instead of a full
+// page POST+redirect, so clicking "Tambah ke Keranjang" doesn't reload the
+// whole page — it just updates the cart badge in place. Forms still work
+// with plain HTML submission if JS is unavailable or the request fails.
+const CART_SCRIPT = `
+<script>
+(function(){
+  function updateBadge(count){
+    var badge = document.getElementById('cartBadge');
+    if(!badge) return;
+    badge.textContent = count;
+    badge.style.display = count > 0 ? 'flex' : 'none';
+  }
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if(!form || form.getAttribute('action') !== '/keranjang/tambah') return;
+    e.preventDefault();
+    var btn = form.querySelector('button[type="submit"]');
+    var originalText = btn ? btn.textContent : '';
+    if(btn){ btn.disabled = true; btn.textContent = '...'; }
+    fetch(form.getAttribute('action'), {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: new FormData(form)
+    }).then(function(res){ return res.json().then(function(data){ return { ok: res.ok, data: data }; }); })
+      .then(function(result){
+        if(result.ok && result.data && result.data.ok){
+          updateBadge(result.data.cartCount);
+          if(btn){ btn.textContent = 'Ditambahkan \\u2713'; }
+          setTimeout(function(){ if(btn){ btn.disabled = false; btn.textContent = originalText; } }, 900);
+        } else if(btn){
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      })
+      .catch(function(){
+        if(btn){ btn.disabled = false; btn.textContent = originalText; }
+      });
+  });
+})();
+</script>`;
 
 function customerFooter() {
   return `

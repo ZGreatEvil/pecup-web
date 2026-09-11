@@ -63,16 +63,14 @@ foto produk perlu publik sementara bukti transfer harus privat.
    ter-hubung saat dibuat — env variable token-nya akan otomatis muncul
    di Project Settings → Environment Variables.
 
-### 3. Siapkan Gmail App Password (untuk email notifikasi pesanan)
+### 3. Siapkan Resend (untuk email notifikasi pesanan)
 
-1. Aktifkan verifikasi 2 langkah di akun Gmail yang akan dipakai kirim
-   notifikasi: [myaccount.google.com/security](https://myaccount.google.com/security).
-2. Buka [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords),
-   buat App Password baru (nama bebas, mis. "Pecup"), lalu salin 16 digit
-   yang muncul.
-3. Simpan sebagai `EMAIL_APP_PASSWORD`. `EMAIL_USER` adalah alamat Gmail
-   itu sendiri. `SELLER_EMAIL` adalah alamat tujuan notifikasi pesanan
-   (boleh sama dengan `EMAIL_USER`, boleh beda).
+1. Daftar/masuk di [resend.com](https://resend.com), lalu buka
+   [resend.com/api-keys](https://resend.com/api-keys) dan buat API key baru.
+2. `SELLER_EMAIL` adalah alamat tujuan notifikasi pesanan (email toko).
+3. Pengirim default (`onboarding@resend.dev`) langsung berfungsi tanpa
+   setup tambahan. Untuk kirim dari domain sendiri, verifikasi domainnya
+   di dashboard Resend lalu isi `RESEND_FROM`.
 
 ### 4. Isi environment variables
 
@@ -85,8 +83,7 @@ PROOFS_BLOB_READ_WRITE_TOKEN=...      # dari langkah 2 (store privat)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=ganti-ini
 ADMIN_SESSION_SECRET=...   # hasil dari: openssl rand -hex 32
-EMAIL_USER=...
-EMAIL_APP_PASSWORD=...
+RESEND_API_KEY=...
 SELLER_EMAIL=...
 ```
 
@@ -148,8 +145,7 @@ src/
   adminAuth.js        cek username/password admin
   body.js              parser body (urlencoded + multipart/form-data), tanpa dependency luar
   router.js            router kecil (method + path dengan :param)
-  mailer.js             klien SMTP mentah ke Gmail (App Password), tanpa dependency luar
-  orderEmail.js         susun & kirim email notifikasi pesanan baru
+  orderEmail.js         susun & kirim email notifikasi pesanan baru lewat Resend API
   csvExport.js           bangun file CSV daftar pesanan harian
   utils.js               format Rupiah, escape HTML, format tanggal Indonesia, dst.
   views/                 semua tampilan HTML (server-rendered, tanpa framework front-end)
@@ -207,5 +203,5 @@ memakai modul database/storage/email tiruan (mock), mencakup:
 
 Yang **belum** dites (butuh akun asli): koneksi sungguhan ke Neon (lewat
 `@neondatabase/serverless`) & Vercel Blob, kirim email sungguhan lewat
-Gmail dari lingkungan Vercel, dan perilaku Vercel yang sebenarnya soal
+Resend dari lingkungan Vercel, dan perilaku Vercel yang sebenarnya soal
 timeout/pembekuan fungsi.

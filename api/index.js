@@ -65,32 +65,46 @@ router.post('/keranjang/tambah', async (req, res) => {
   const { fields } = await parseBody(req);
   const productId = Number(fields.productId);
   const qty = Math.max(1, Number(fields.qty) || 1);
+  // The add-to-cart forms are progressively enhanced client-side (see the
+  // inline script in layout.js) to fetch() with this header instead of doing
+  // a full-page POST+redirect — avoids a whole extra page render per click.
+  const wantsJson = (req.headers.accept || '').includes('application/json');
+  const fallbackRedirect = () =>
+    redirect(res, req.headers.referer && req.headers.referer.includes('/produk/') ? `/produk/${productId}` : '/');
+
   const product = await queries.getProduct(productId);
-  if (product) {
-    let fruits;
-    if (product.category === 'Mix Buah' && fields.fruitIds) {
-      const requestedIds = fields.fruitIds
-        .split(',')
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      const singles = await queries.listProducts({ onlyActive: true });
-      // Product ids come back from the Neon driver as strings (bigint
-      // columns), so normalize to Number before comparing against the
-      // parsed request ids — otherwise the Set lookup never matches.
-      const validIds = new Set(singles.filter((p) => p.category === 'Buah Tunggal').map((p) => Number(p.id)));
-      const uniqueValid = Array.from(new Set(requestedIds)).filter((id) => validIds.has(id));
-      // Only accept a proper 2-or-3-fruit selection; otherwise skip the mix
-      // composition rather than silently adding an ill-formed cart line.
-      if (uniqueValid.length === 2 || uniqueValid.length === 3) fruits = uniqueValid;
-      else {
-        redirect(res, `/produk/${productId}`);
-        return;
-      }
-    }
-    cartLib.addToCart(req.cart, productId, qty, fruits);
-    saveCartCookie(res, req.cart);
+  if (!product) {
+    if (wantsJson) return sendJson(res, { ok: false, error: 'Produk tidak ditemukan.' }, 404);
+    return fallbackRedirect();
   }
-  redirect(res, req.headers.referer && req.headers.referer.includes('/produk/') ? `/produk/${productId}` : '/');
+
+  let fruits;
+  if (product.category === 'Mix Buah' && fields.fruitIds) {
+    const requestedIds = fields.fruitIds
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const singles = await queries.listProducts({ onlyActive: true });
+    // Product ids come back from the Neon driver as strings (bigint
+    // columns), so normalize to Number before comparing against the
+    // parsed request ids — otherwise the Set lookup never matches.
+    const validIds = new Set(singles.filter((p) => p.category === 'Buah Tunggal').map((p) => Number(p.id)));
+    const uniqueValid = Array.from(new Set(requestedIds)).filter((id) => validIds.has(id));
+    // Only accept a proper 2-or-3-fruit selection; otherwise skip the mix
+    // composition rather than silently adding an ill-formed cart line.
+    if (uniqueValid.length === 2 || uniqueValid.length === 3) fruits = uniqueValid;
+    else {
+      if (wantsJson) return sendJson(res, { ok: false, error: 'Pilih 2 atau 3 buah.' }, 400);
+      redirect(res, `/produk/${productId}`);
+      return;
+    }
+  }
+
+  cartLib.addToCart(req.cart, productId, qty, fruits);
+  saveCartCookie(res, req.cart);
+
+  if (wantsJson) return sendJson(res, { ok: true, cartCount: cartLib.cartCount(req.cart) });
+  fallbackRedirect();
 });
 
 router.get('/keranjang', async (req, res) => {
@@ -418,6 +432,11 @@ function extractPgErrorMessage(err) {
 function sendHtml(res, html, status = 200) {
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(html);
+}
+
+function sendJson(res, data, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(data));
 }
 
 function redirect(res, location) {

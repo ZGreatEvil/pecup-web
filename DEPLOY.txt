@@ -48,16 +48,16 @@ transfer harus privat.
    Project Settings -> Environment Variables.
 
 
-3. SIAPKAN GMAIL APP PASSWORD (UNTUK EMAIL NOTIFIKASI PESANAN)
+3. SIAPKAN RESEND (UNTUK EMAIL NOTIFIKASI PESANAN)
 -----------------------------------------------------------------
-1. Aktifkan verifikasi 2 langkah di akun Gmail yang mau dipakai kirim
-   notifikasi: https://myaccount.google.com/security
-2. Buka https://myaccount.google.com/apppasswords, buat App Password baru
-   (nama bebas, misalnya "Pecup"), lalu catat 16 digit yang muncul.
-   Ini jadi EMAIL_APP_PASSWORD.
-3. EMAIL_USER  = alamat Gmail itu sendiri.
-   SELLER_EMAIL = alamat tujuan notifikasi pesanan (boleh sama dengan
-   EMAIL_USER, boleh beda).
+1. Daftar/masuk di https://resend.com, lalu buka
+   https://resend.com/api-keys dan buat API key baru. Ini jadi
+   RESEND_API_KEY.
+2. SELLER_EMAIL = alamat tujuan notifikasi pesanan (email toko).
+3. Pengirimnya pakai domain bawaan Resend (onboarding@resend.dev) dan
+   langsung berfungsi tanpa setup tambahan. Kalau nanti mau kirim dari
+   domain sendiri (mis. no-reply@pecup.id), verifikasi domainnya di
+   dashboard Resend lalu isi RESEND_FROM.
 
 
 4. GENERATE SECRET UNTUK SESI ADMIN
@@ -114,8 +114,7 @@ Buat repo baru di GitHub (disarankan PRIVATE), lalu:
      ADMIN_USERNAME         = terserah kamu
      ADMIN_PASSWORD         = terserah kamu (ganti dari default)
      ADMIN_SESSION_SECRET   = (dari langkah 4)
-     EMAIL_USER              = (dari langkah 3)
-     EMAIL_APP_PASSWORD      = (dari langkah 3)
+     RESEND_API_KEY           = (dari langkah 3)
      SELLER_EMAIL             = (dari langkah 3)
 
 4. Klik "Deploy". Tunggu sekitar 30-60 detik, selesai -- kamu dapat URL

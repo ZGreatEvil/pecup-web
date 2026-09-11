@@ -1,4 +1,3 @@
-const { sendMail } = require('./mailer');
 const { formatRupiah, escapeHtml } = require('./utils');
 
 function buildOrderEmailHtml({ order, items }) {
@@ -48,29 +47,48 @@ function buildOrderEmailHtml({ order, items }) {
   </div>`;
 }
 
-// Sends the order-notification email. Returns { ok: true } or { ok: false, error }.
+// Sends the order-notification email via the Resend API. Returns
+// { ok: true } or { ok: false, error }. Uses Resend's shared
+// "onboarding@resend.dev" sender, which works out of the box with just an
+// API key — no domain verification needed. To send from your own domain
+// instead (e.g. no-reply@pecup.id), verify it in the Resend dashboard and
+// change RESEND_FROM below.
 async function sendOrderNotification({ order, items, proofFile }) {
-  const user = process.env.EMAIL_USER;
-  const appPassword = process.env.EMAIL_APP_PASSWORD;
-  const sellerEmail = process.env.SELLER_EMAIL || user;
+  const apiKey = process.env.RESEND_API_KEY;
+  const sellerEmail = process.env.SELLER_EMAIL || process.env.EMAIL_USER;
+  const from = process.env.RESEND_FROM || 'Pecup <onboarding@resend.dev>';
 
-  if (!user || !appPassword) {
-    return { ok: false, error: 'EMAIL_USER / EMAIL_APP_PASSWORD belum diisi di .env' };
+  if (!apiKey) {
+    return { ok: false, error: 'RESEND_API_KEY belum diisi di environment variables.' };
+  }
+  if (!sellerEmail) {
+    return { ok: false, error: 'SELLER_EMAIL (atau EMAIL_USER) belum diisi di environment variables.' };
   }
 
   const html = buildOrderEmailHtml({ order, items });
 
+  const payload = {
+    from,
+    to: [sellerEmail],
+    subject: `Pesanan Baru — ${order.orderNumber} (${order.customer_name})`,
+    html,
+  };
+  if (proofFile) {
+    payload.attachments = [
+      { filename: proofFile.filename, content: proofFile.buffer.toString('base64') },
+    ];
+  }
+
   try {
-    await sendMail({
-      user,
-      appPassword,
-      to: sellerEmail,
-      subject: `Pesanan Baru — ${order.orderNumber} (${order.customer_name})`,
-      html,
-      attachment: proofFile
-        ? { filename: proofFile.filename, mimetype: proofFile.mimetype, buffer: proofFile.buffer }
-        : null,
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      return { ok: false, error: `Resend API gagal (${res.status}): ${errBody}` };
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };

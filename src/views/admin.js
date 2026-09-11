@@ -136,20 +136,20 @@ function renderProdukForm({ product, error }) {
         </div>
 
         <div class="card" style="flex:1 1 420px;">
-          <div class="field"><label>Nama Produk *</label><input type="text" name="name" required value="${escapeAttr(p.name)}" placeholder="Contoh: Mangga Harum Manis"></div>
+          <div class="field"><label>Nama Produk <span class="req">*</span></label><input type="text" name="name" required value="${escapeAttr(p.name)}" placeholder="Contoh: Mangga Harum Manis"></div>
           <div style="display:flex;gap:16px;flex-wrap:wrap;">
             <div class="field" style="flex:1 1 180px;">
-              <label>Kategori *</label>
+              <label>Kategori <span class="req">*</span></label>
               <select name="category">
                 ${categories.map((c) => `<option value="${c}" ${p.category === c ? 'selected' : ''}>${c}</option>`).join('')}
               </select>
             </div>
-            <div class="field" style="flex:1 1 180px;"><label>Berat / Ukuran Kemasan *</label><input type="text" name="weight" required value="${escapeAttr(p.weight)}" placeholder="Contoh: 250g"></div>
+            <div class="field" style="flex:1 1 180px;"><label>Berat / Ukuran Kemasan <span class="req">*</span></label><input type="text" name="weight" required value="${escapeAttr(p.weight)}" placeholder="Contoh: 250g"></div>
           </div>
           <div class="field"><label>Deskripsi Produk</label><textarea name="description" rows="4" placeholder="Ceritakan kesegaran &amp; keunggulan produk ini...">${escapeHtml(p.description)}</textarea></div>
           <div style="display:flex;gap:16px;flex-wrap:wrap;">
-            <div class="field" style="flex:1 1 180px;"><label>Harga (Rp) *</label><input type="number" name="price" required min="0" value="${escapeAttr(p.price)}" placeholder="Contoh: 18000"></div>
-            <div class="field" style="flex:1 1 180px;"><label>Stok Tersedia *</label><input type="number" name="stock" required min="0" value="${escapeAttr(p.stock)}" placeholder="Contoh: 24"></div>
+            <div class="field" style="flex:1 1 180px;"><label>Harga (Rp) <span class="req">*</span></label><input type="number" name="price" required min="0" value="${escapeAttr(p.price)}" placeholder="Contoh: 18000"></div>
+            <div class="field" style="flex:1 1 180px;"><label>Stok Tersedia <span class="req">*</span></label><input type="number" name="stock" required min="0" value="${escapeAttr(p.stock)}" placeholder="Contoh: 24"></div>
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:var(--surface-2);border-radius:12px;">
             <div>

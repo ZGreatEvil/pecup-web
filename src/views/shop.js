@@ -28,15 +28,16 @@ function renderBeranda({ products, cartCount, category }) {
             </button>
           </form>`;
           return `
-      <div class="p-card" style="border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
-        <a href="/produk/${p.id}" style="aspect-ratio:1;display:block;">${productThumb(p)}</a>
+      <div class="p-card" style="position:relative;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
+        <a href="/produk/${p.id}" style="position:absolute;inset:0;z-index:1;" aria-label="${escapeAttr(p.name)}"></a>
+        <div style="aspect-ratio:1;">${productThumb(p)}</div>
         <div style="display:flex;flex-direction:column;gap:4px;">
-          <a href="/produk/${p.id}" style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</a>
+          <span style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</span>
           <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:10px;">
           <span style="font-size:16.5px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
-          ${action}
+          <div style="position:relative;z-index:2;">${action}</div>
         </div>
       </div>`;
         })
@@ -114,11 +115,11 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [] }) 
   const relatedCards = related
     .map(
       (p) => `
-      <div class="mini-card" style="border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;">
-        <a href="/produk/${p.id}" style="aspect-ratio:1;display:block;">${productThumb(p, { size: 64 })}</a>
-        <a href="/produk/${p.id}" style="font-size:14.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</a>
+      <a href="/produk/${p.id}" class="mini-card" style="border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;text-decoration:none;">
+        <div style="aspect-ratio:1;">${productThumb(p, { size: 64 })}</div>
+        <span style="font-size:14.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</span>
         <span style="font-size:15px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
-      </div>`
+      </a>`
     )
     .join('');
 
@@ -324,8 +325,8 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
         <div class="split-main" style="gap:24px;">
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
-            <div class="field"><label>Nama Lengkap *</label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
-            <div class="field"><label>Nomor WhatsApp *</label><input type="text" name="whatsapp" required value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 0812xxxxxxx"></div>
+            <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
+            <div class="field"><label>Nomor WhatsApp <span class="req">*</span></label><input type="text" name="whatsapp" required value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 0812xxxxxxx"></div>
             <div style="margin-bottom:0;"><label>Catatan Pesanan (opsional)</label><textarea name="notes" rows="3" placeholder="Contoh: tolong pepaya-nya diganti semangka, kurangi manis">${escapeHtml(formValues.notes || '')}</textarea></div>
           </div>
 
@@ -339,7 +340,7 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
           </div>
 
           <div class="card">
-            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Upload Bukti Transfer *</h3>
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Upload Bukti Transfer <span class="req">*</span></h3>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Format JPG, PNG, atau PDF, maksimal 4MB.</p>
             <div class="dropzone" style="padding:24px;">
               <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" required style="border:none;padding:0;background:transparent;">
