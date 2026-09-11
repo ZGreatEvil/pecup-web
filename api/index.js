@@ -15,7 +15,8 @@ const { parseCookies, setCookie, clearCookie } = require('../src/cookies');
 const cartLib = require('../src/cart');
 const adminSession = require('../src/adminSession');
 const { parseBody } = require('../src/body');
-const { checkCredentials } = require('../src/adminAuth');
+const adminAuth = require('../src/adminAuth');
+const { logAdminAction, listAdminLogs } = require('../src/adminLog');
 const queries = require('../src/queries');
 const { toDateKey } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
@@ -28,12 +29,18 @@ const adminViews = require('../src/views/admin');
 const router = new Router();
 
 // Read once at cold start (literal path so Vercel's build-time file tracer
-// bundles it) and keep in memory — it's a small, unchanging static asset.
+// bundles it) and keep in memory — these are small, unchanging static assets.
 const qrisPaymentImage = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'qris-payment.jpg'));
+const pecupLogoImage = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'pecup-logo.png'));
 
 router.get('/assets/qris-payment.jpg', (req, res) => {
   res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' });
   res.end(qrisPaymentImage);
+});
+
+router.get('/assets/pecup-logo.png', (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' });
+  res.end(pecupLogoImage);
 });
 
 // ---------------------------------------------------------------------
@@ -42,11 +49,14 @@ router.get('/assets/qris-payment.jpg', (req, res) => {
 
 router.get('/', async (req, res, { query }) => {
   const category = query.get('kategori');
-  let products = await queries.listProducts({ onlyActive: true });
+  let [products, categories] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    queries.listCategories(),
+  ]);
   if (category && category !== 'Semua') {
     products = products.filter((p) => p.category === category);
   }
-  sendHtml(res, shopViews.renderBeranda({ products, cartCount: cartLib.cartCount(req.cart), category }));
+  sendHtml(res, shopViews.renderBeranda({ products, cartCount: cartLib.cartCount(req.cart), category, categories }));
 });
 
 router.get('/produk/:id', async (req, res) => {
@@ -252,8 +262,10 @@ router.get('/admin/login', (req, res) => {
 
 router.post('/admin/login', async (req, res) => {
   const { fields } = await parseBody(req);
-  if (checkCredentials(fields.username, fields.password)) {
-    setCookie(res, adminSession.COOKIE_NAME, adminSession.issueToken(), { maxAge: adminSession.MAX_AGE_SECONDS });
+  const admin = await adminAuth.checkCredentials(fields.username, fields.password);
+  if (admin) {
+    setCookie(res, adminSession.COOKIE_NAME, adminSession.issueToken(admin), { maxAge: adminSession.MAX_AGE_SECONDS });
+    await logAdminAction(admin, 'login', null);
     redirect(res, '/admin/produk');
   } else {
     sendHtml(res, adminViews.renderLogin({ error: 'Username atau password salah.' }), 401);
@@ -272,17 +284,21 @@ router.post('/admin/logout', (req, res) => {
 router.get('/admin/produk', requireAdmin(async (req, res, { query }) => {
   const products = await queries.listProducts();
   const stats = await queries.productStats();
-  sendHtml(res, adminViews.renderProdukList({ products, stats, flash: query.get('flash') }));
+  sendHtml(res, adminViews.renderProdukList({ products, stats, flash: query.get('flash'), admin: req.admin }));
 }));
 
-router.get('/admin/produk/tambah', requireAdmin((req, res) => {
-  sendHtml(res, adminViews.renderProdukForm({ product: null, error: null }));
+router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
+  const categories = await queries.listCategories();
+  sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin }));
 }));
 
 router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
   const { fields, files } = await parseBody(req);
   const error = validateProductFields(fields);
-  if (error) return sendHtml(res, adminViews.renderProdukForm({ product: fields, error }));
+  if (error) {
+    const categories = await queries.listCategories();
+    return sendHtml(res, adminViews.renderProdukForm({ product: fields, error, categories, admin: req.admin }));
+  }
 
   const image = files.image && files.image.buffer.length ? await saveProductImage(files.image) : null;
   await queries.createProduct({
@@ -297,13 +313,15 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
   });
+  await logAdminAction(req.admin, 'product.create', fields.name.trim());
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk baru berhasil ditambahkan.'));
 }));
 
 router.get('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
   if (!product) return notFound(res);
-  sendHtml(res, adminViews.renderProdukForm({ product, error: null }));
+  const categories = await queries.listCategories();
+  sendHtml(res, adminViews.renderProdukForm({ product, error: null, categories, admin: req.admin }));
 }));
 
 router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
@@ -314,7 +332,8 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   const { fields, files } = await parseBody(req);
   const error = validateProductFields(fields);
   if (error) {
-    return sendHtml(res, adminViews.renderProdukForm({ product: { ...fields, id, image: existing.image }, error }));
+    const categories = await queries.listCategories();
+    return sendHtml(res, adminViews.renderProdukForm({ product: { ...fields, id, image: existing.image }, error, categories, admin: req.admin }));
   }
   const image = files.image && files.image.buffer.length ? await saveProductImage(files.image) : null;
   await queries.updateProduct(id, {
@@ -329,16 +348,20 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
   });
+  await logAdminAction(req.admin, 'product.update', fields.name.trim());
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk berhasil diperbarui.'));
 }));
 
 router.post('/admin/produk/:id/hapus', requireAdmin(async (req, res) => {
+  const existing = await queries.getProduct(Number(req.params.id));
   await queries.deleteProduct(Number(req.params.id));
+  await logAdminAction(req.admin, 'product.delete', existing ? existing.name : `#${req.params.id}`);
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk telah dihapus.'));
 }));
 
 router.post('/admin/produk/:id/toggle', requireAdmin(async (req, res) => {
   await queries.toggleProductActive(Number(req.params.id));
+  await logAdminAction(req.admin, 'product.toggle', `#${req.params.id}`);
   redirect(res, '/admin/produk');
 }));
 
@@ -357,18 +380,23 @@ router.get('/admin/pesanan', requireAdmin(async (req, res, { query }) => {
       nextDate: shiftDateKey(dateKey, 1),
       orders: stats.orders,
       stats,
-      downloadUrl: `/admin/pesanan/unduh?tanggal=${dateKey}`,
+      admin: req.admin,
     })
   );
 }));
 
 router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
-  const dateKey = query.get('tanggal') || toDateKey(new Date());
-  const { orders } = await queries.orderDayStats(dateKey);
+  const today = toDateKey(new Date());
+  let dari = query.get('dari') || query.get('tanggal') || today;
+  let sampai = query.get('sampai') || query.get('tanggal') || dari;
+  if (dari > sampai) [dari, sampai] = [sampai, dari]; // tolerate a reversed range picked in the UI
+
+  const orders = await queries.listOrdersByDateRange(dari, sampai);
   const csv = await buildDailyOrdersCsv(orders);
+  const filename = dari === sampai ? `pesanan-pecup-${dari}.csv` : `pesanan-pecup-${dari}_sampai_${sampai}.csv`;
   res.writeHead(200, {
     'Content-Type': 'text/csv; charset=utf-8',
-    'Content-Disposition': `attachment; filename="pesanan-pecup-${dateKey}.csv"`,
+    'Content-Disposition': `attachment; filename="${filename}"`,
   });
   res.end(csv);
 }));
@@ -385,14 +413,77 @@ router.get('/admin/pesanan/:id', requireAdmin(async (req, res) => {
       console.error('Gagal membuat signed URL bukti transfer:', err.message);
     }
   }
-  sendHtml(res, adminViews.renderPesananDetail({ order, items, proofUrl }));
+  sendHtml(res, adminViews.renderPesananDetail({ order, items, proofUrl, admin: req.admin }));
 }));
 
 router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
   const status = fields.status === 'terkonfirmasi' ? 'terkonfirmasi' : 'menunggu';
   await queries.updateOrderStatus(Number(req.params.id), status);
+  await logAdminAction(req.admin, 'order.status_update', `#${req.params.id} -> ${status}`);
   redirect(res, `/admin/pesanan/${req.params.id}`);
+}));
+
+// ---------------------------------------------------------------------
+// admin: accounts (superadmin only)
+// ---------------------------------------------------------------------
+
+router.get('/admin/akun', requireSuperadmin(async (req, res, { query }) => {
+  const admins = await adminAuth.listAdmins();
+  sendHtml(res, adminViews.renderAdminList({ admins, admin: req.admin, error: query.get('error') }));
+}));
+
+router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const username = (fields.username || '').trim();
+  const password = fields.password || '';
+  const role = fields.role === 'superadmin' ? 'superadmin' : 'admin';
+
+  let error = null;
+  if (!username) error = 'Username wajib diisi.';
+  else if (password.length < 6) error = 'Password minimal 6 karakter.';
+
+  if (error) {
+    return redirect(res, '/admin/akun?error=' + encodeURIComponent(error));
+  }
+
+  try {
+    await adminAuth.createAdmin({ username, password, role });
+    await logAdminAction(req.admin, 'admin.create', `${username} (${role})`);
+    redirect(res, '/admin/akun');
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? 'Username sudah dipakai.' : 'Gagal menambahkan admin.';
+    redirect(res, '/admin/akun?error=' + encodeURIComponent(message));
+  }
+}));
+
+router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (id === req.admin.adminId) {
+    return redirect(res, '/admin/akun?error=' + encodeURIComponent('Tidak bisa menghapus akun sendiri.'));
+  }
+  const target = await adminAuth.findAdminById(id);
+  if (!target) return notFound(res);
+  if (target.role === 'superadmin') {
+    const remaining = await adminAuth.countSuperadmins();
+    if (remaining <= 1) {
+      return redirect(res, '/admin/akun?error=' + encodeURIComponent('Tidak bisa menghapus superadmin terakhir.'));
+    }
+  }
+
+  await adminAuth.deleteAdmin(id);
+  await logAdminAction(req.admin, 'admin.delete', `${target.username} (${target.role})`);
+  redirect(res, '/admin/akun');
+}));
+
+// ---------------------------------------------------------------------
+// admin: activity log (superadmin only)
+// ---------------------------------------------------------------------
+
+router.get('/admin/log-aktivitas', requireSuperadmin(async (req, res) => {
+  const logs = await listAdminLogs(200);
+  sendHtml(res, adminViews.renderAdminLog({ logs, admin: req.admin }));
 }));
 
 // ---------------------------------------------------------------------
@@ -402,6 +493,23 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
 function requireAdmin(handler) {
   return (req, res, extra) => {
     if (!req.isAdmin) return redirect(res, '/admin/login');
+    return handler(req, res, extra);
+  };
+}
+
+// Admin-account management and the activity log are superadmin-only —
+// regular admins keep full access to products and orders (the day-to-day
+// work) but can't manage who else has access or see the audit trail.
+function requireSuperadmin(handler) {
+  return (req, res, extra) => {
+    if (!req.isAdmin) return redirect(res, '/admin/login');
+    if (!req.isSuperadmin) {
+      return sendHtml(
+        res,
+        '<h1>403</h1><p>Hanya superadmin yang bisa mengakses halaman ini. <a href="/admin/produk">Kembali</a></p>',
+        403
+      );
+    }
     return handler(req, res, extra);
   };
 }
@@ -464,7 +572,18 @@ module.exports = async (req, res) => {
 
     const cookies = parseCookies(req);
     req.cart = cartLib.parseCart(cookies[cartLib.COOKIE_NAME]);
-    req.isAdmin = Boolean(adminSession.verify(cookies[adminSession.COOKIE_NAME]));
+    req.admin = adminSession.verify(cookies[adminSession.COOKIE_NAME]);
+    if (req.admin) {
+      // The session token is self-contained (no server-side session store),
+      // so a removed or role-changed admin would otherwise stay "logged in"
+      // with stale privileges until the cookie naturally expires. Re-check
+      // against the DB — this only runs when an admin cookie is actually
+      // present, so it doesn't touch the customer-facing hot path.
+      const current = await adminAuth.findAdminById(req.admin.adminId);
+      req.admin = current ? { ...req.admin, role: current.role, username: current.username } : null;
+    }
+    req.isAdmin = Boolean(req.admin);
+    req.isSuperadmin = Boolean(req.admin && req.admin.role === 'superadmin');
 
     const match = router.match(req.method, pathname);
     if (!match) return notFound(res);

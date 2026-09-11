@@ -31,7 +31,7 @@ function statCard(label, value, bg, iconPath, stroke = '#3f7a42') {
   </div>`;
 }
 
-function renderProdukList({ products, stats, flash }) {
+function renderProdukList({ products, stats, flash, admin }) {
   const rows = products.length
     ? products
         .map(
@@ -67,7 +67,7 @@ function renderProdukList({ products, stats, flash }) {
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('produk')}
+  ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main">
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
@@ -96,7 +96,7 @@ function renderProdukList({ products, stats, flash }) {
   return page({ title: 'Kelola Produk — Admin Pecup', bodyHtml: body });
 }
 
-function renderProdukForm({ product, error }) {
+function renderProdukForm({ product, error, categories = [], admin }) {
   const isEdit = Boolean(product && product.id);
   const p = product || {
     name: '',
@@ -109,11 +109,10 @@ function renderProdukForm({ product, error }) {
     is_bestseller: 0,
     is_recommended: 0,
   };
-  const categories = ['Buah Tunggal', 'Mix Buah', 'Salad Buah', 'Rujak', 'Paket Spesial'];
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('produk')}
+  ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main">
     <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px;">
@@ -150,9 +149,11 @@ function renderProdukForm({ product, error }) {
           <div style="display:flex;gap:16px;flex-wrap:wrap;">
             <div class="field" style="flex:1 1 180px;">
               <label>Kategori <span class="req">*</span></label>
-              <select name="category">
-                ${categories.map((c) => `<option value="${c}" ${p.category === c ? 'selected' : ''}>${c}</option>`).join('')}
-              </select>
+              <input type="text" name="category" list="categoryOptions" required value="${escapeAttr(p.category)}" placeholder="Contoh: Buah Tunggal">
+              <datalist id="categoryOptions">
+                ${categories.map((c) => `<option value="${escapeAttr(c)}">`).join('')}
+              </datalist>
+              <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Pilih dari daftar atau ketik nama kategori baru.</div>
             </div>
             <div class="field" style="flex:1 1 180px;"><label>Berat / Ukuran Kemasan <span class="req">*</span></label><input type="text" name="weight" required value="${escapeAttr(p.weight)}" placeholder="Contoh: 250g"></div>
           </div>
@@ -197,7 +198,7 @@ function renderProdukForm({ product, error }) {
   return page({ title: `${isEdit ? 'Edit' : 'Tambah'} Produk — Admin Pecup`, bodyHtml: body });
 }
 
-function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloadUrl }) {
+function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, admin }) {
   const rows = orders.length
     ? orders
         .map((o) => {
@@ -219,14 +220,24 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloa
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pesanan')}
+  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
       <div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div><h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1></div>
-      <a href="${downloadUrl}" class="btn-primary" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
-        Unduh Laporan Harian (CSV)
-      </a>
+      <form method="get" action="/admin/pesanan/unduh" style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
+        <div style="margin:0;">
+          <label style="margin-bottom:4px;">Dari</label>
+          <input type="date" name="dari" value="${dateKey}" required style="padding:10px 12px;">
+        </div>
+        <div style="margin:0;">
+          <label style="margin-bottom:4px;">Sampai</label>
+          <input type="date" name="sampai" value="${dateKey}" required style="padding:10px 12px;">
+        </div>
+        <button class="btn-primary" type="submit" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;white-space:nowrap;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          Unduh CSV
+        </button>
+      </form>
     </div>
 
     <div style="display:flex;align-items:center;gap:14px;margin:20px 0 28px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;width:fit-content;">
@@ -256,7 +267,7 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, downloa
   return page({ title: 'Pesanan — Admin Pecup', bodyHtml: body });
 }
 
-function renderPesananDetail({ order, items, proofUrl }) {
+function renderPesananDetail({ order, items, proofUrl, admin }) {
   const itemRows = items
     .map(
       (it) => `
@@ -281,7 +292,7 @@ function renderPesananDetail({ order, items, proofUrl }) {
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pesanan')}
+  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main" style="max-width:900px;">
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Detail Pesanan ${escapeHtml(order.order_number)}</h1>
@@ -318,4 +329,127 @@ function renderPesananDetail({ order, items, proofUrl }) {
   return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body });
 }
 
-module.exports = { renderLogin, renderProdukList, renderProdukForm, renderPesananList, renderPesananDetail };
+function renderAdminList({ admins, admin, error }) {
+  const currentAdminId = admin.adminId;
+  const rows = admins
+    .map((a) => {
+      const isSelf = a.id === currentAdminId;
+      const roleBadge =
+        a.role === 'superadmin'
+          ? `<span style="font-size:11.5px;font-weight:700;color:#a15a1f;background:var(--orange-soft);padding:5px 11px;border-radius:99px;">Superadmin</span>`
+          : `<span style="font-size:11.5px;font-weight:700;color:#3f7a42;background:var(--green-soft);padding:5px 11px;border-radius:99px;">Admin</span>`;
+      return `
+      <div class="row-hover" style="display:grid;grid-template-columns:1.6fr 1fr 1.2fr 0.8fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);">
+        <span style="font-size:14px;font-weight:700;">${escapeHtml(a.username)}${isSelf ? ' <span style="color:var(--text-muted);font-weight:500;font-size:12px;">(kamu)</span>' : ''}</span>
+        <div>${roleBadge}</div>
+        <span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(a.created_at)}</span>
+        <div>
+          ${
+            isSelf
+              ? ''
+              : `<form method="post" action="/admin/akun/${a.id}/hapus" onsubmit="return confirm('Hapus admin ${escapeAttr(a.username)}?');">
+                <button type="submit" class="icon-action" style="padding:6px;" title="Hapus">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+                </button>
+              </form>`
+          }
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('akun', { isSuperadmin: true, username: admin.username })}
+  <main class="admin-main">
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Kelola Admin</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Kelola Admin</h1>
+
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+
+    <div class="card" style="margin-bottom:28px;">
+      <h3 style="font-size:15px;font-weight:800;margin-bottom:16px;">Tambah Admin Baru</h3>
+      <form method="post" action="/admin/akun/tambah" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+        <div class="field" style="flex:1 1 200px;margin-bottom:0;"><label>Username <span class="req">*</span></label><input type="text" name="username" required placeholder="Contoh: Budi"></div>
+        <div class="field" style="flex:1 1 200px;margin-bottom:0;"><label>Password <span class="req">*</span></label><input type="password" name="password" required minlength="6" placeholder="Minimal 6 karakter"></div>
+        <div class="field" style="flex:1 1 160px;margin-bottom:0;">
+          <label>Peran <span class="req">*</span></label>
+          <select name="role">
+            <option value="admin">Admin</option>
+            <option value="superadmin">Superadmin</option>
+          </select>
+        </div>
+        <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;white-space:nowrap;">Tambah Admin</button>
+      </form>
+    </div>
+
+    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
+      <div style="display:grid;grid-template-columns:1.6fr 1fr 1.2fr 0.8fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;">
+        <span>USERNAME</span><span>PERAN</span><span>DIBUAT</span><span>AKSI</span>
+      </div>
+      <div style="min-width:520px;">${rows}</div>
+    </div>
+  </main>
+</div>`;
+
+  return page({ title: 'Kelola Admin — Admin Pecup', bodyHtml: body });
+}
+
+function actionLabel(action) {
+  const labels = {
+    login: 'Masuk (login)',
+    'product.create': 'Menambah produk',
+    'product.update': 'Mengubah produk',
+    'product.delete': 'Menghapus produk',
+    'product.toggle': 'Mengubah status tampil produk',
+    'order.status_update': 'Mengubah status pesanan',
+    'admin.create': 'Menambah admin',
+    'admin.delete': 'Menghapus admin',
+  };
+  return labels[action] || action;
+}
+
+function renderAdminLog({ logs, admin }) {
+  const rows = logs.length
+    ? logs
+        .map(
+          (l) => `
+      <div class="row-hover" style="display:grid;grid-template-columns:1.2fr 1fr 1.4fr 1.6fr;align-items:center;padding:12px 20px;border-top:1px solid var(--border);">
+        <span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(l.created_at)}, ${formatTimeID(l.created_at)}</span>
+        <span style="font-size:13.5px;font-weight:700;">${escapeHtml(l.admin_username)}</span>
+        <span style="font-size:13px;">${escapeHtml(actionLabel(l.action))}</span>
+        <span style="font-size:12.5px;color:var(--text-muted);">${l.detail ? escapeHtml(l.detail) : '—'}</span>
+      </div>`
+        )
+        .join('')
+    : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">Belum ada aktivitas tercatat.</div>`;
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('log', { isSuperadmin: true, username: admin.username })}
+  <main class="admin-main">
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Log Aktivitas</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Log Aktivitas</h1>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Menampilkan ${logs.length} aktivitas terakhir dari semua admin.</p>
+
+    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
+      <div style="display:grid;grid-template-columns:1.2fr 1fr 1.4fr 1.6fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:620px;">
+        <span>WAKTU</span><span>ADMIN</span><span>AKSI</span><span>DETAIL</span>
+      </div>
+      <div style="min-width:620px;">${rows}</div>
+    </div>
+  </main>
+</div>`;
+
+  return page({ title: 'Log Aktivitas — Admin Pecup', bodyHtml: body });
+}
+
+module.exports = {
+  renderLogin,
+  renderProdukList,
+  renderProdukForm,
+  renderPesananList,
+  renderPesananDetail,
+  renderAdminList,
+  renderAdminLog,
+};

@@ -15,8 +15,8 @@ function badgeHtml(p, { top = 8, left = 8 } = {}) {
   return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;white-space:nowrap;">${badge.text}</span>`;
 }
 
-function renderBeranda({ products, cartCount, category }) {
-  const categories = ['Semua', 'Buah Tunggal', 'Mix Buah', 'Salad Buah', 'Rujak', 'Paket Spesial'];
+function renderBeranda({ products, cartCount, category, categories: dbCategories = [] }) {
+  const categories = ['Semua', ...dbCategories];
   const chips = categories
     .map((c) => {
       const isActive = (category || 'Semua') === c;
@@ -31,7 +31,12 @@ function renderBeranda({ products, cartCount, category }) {
     ? products
         .map((p) => {
           const isMix = p.category === 'Mix Buah';
-          const action = isMix
+          const inStock = p.stock > 0;
+          const action = !inStock
+            ? `<button class="add-btn" type="button" disabled style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;opacity:0.5;cursor:not-allowed;" title="Stok habis">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>`
+            : isMix
             ? `<a href="/produk/${p.id}" class="add-btn" style="height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 14px;font-size:12.5px;font-weight:700;white-space:nowrap;">Pilih Buah</a>`
             : `<form method="post" action="/keranjang/tambah">
             <input type="hidden" name="productId" value="${p.id}">
@@ -355,6 +360,13 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
             <div style="display:flex;flex-direction:column;align-items:center;gap:12px;background:var(--surface-2);border-radius:12px;padding:20px;">
               <img src="/assets/qris-payment.jpg" alt="QRIS Pecup, Makanan &amp; Minuman" style="width:100%;max-width:260px;border-radius:12px;border:1px solid var(--border);background:#fff;">
               <span style="font-size:12.5px;color:var(--text-muted);text-align:center;">Pecup, Makanan &amp; Minuman — QRIS Standar Pembayaran Nasional</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;background:var(--orange-soft);border-radius:12px;padding:14px 16px;margin-top:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                <span style="font-size:13px;color:#7a4a1f;font-weight:600;">Transfer tepat sejumlah</span>
+                <span style="font-size:17px;font-weight:800;color:#7a4a1f;">${formatRupiah(subtotal)}</span>
+              </div>
+              <span style="font-size:12.5px;color:#7a4a1f;line-height:1.6;">Jangan dibulatkan — jumlah harus sama persis supaya pesananmu bisa langsung diverifikasi. Gunakan nama <strong>kamu sendiri</strong> sebagai nama pengirim/pembayar (bukan nama orang lain), sesuai Nama Lengkap di atas.</span>
             </div>
           </div>
 

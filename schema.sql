@@ -59,6 +59,33 @@ create table if not exists order_items (
 create index if not exists idx_orders_date_key on orders(date_key);
 create index if not exists idx_order_items_order_id on order_items(order_id);
 
+-- Admin accounts. There's always at least one 'superadmin' — only
+-- superadmins can add/remove admin accounts or view the activity log;
+-- regular 'admin' accounts get full run-of-the-shop access (products +
+-- orders). password_hash is "salt:hash" from Node's built-in scrypt (see
+-- src/adminAuth.js) — never a plaintext password.
+create table if not exists admins (
+  id bigint generated always as identity primary key,
+  username text not null unique,
+  password_hash text not null,
+  role text not null default 'admin', -- 'superadmin' | 'admin'
+  created_at timestamptz not null default now()
+);
+
+-- Audit trail of admin actions (who did what, when). admin_username is
+-- denormalized so entries stay readable even if that admin account is later
+-- deleted (admin_id then becomes null via the FK below).
+create table if not exists admin_logs (
+  id bigint generated always as identity primary key,
+  admin_id bigint references admins(id) on delete set null,
+  admin_username text not null,
+  action text not null,   -- e.g. 'login', 'product.create', 'order.status_update'
+  detail text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_admin_logs_created_at on admin_logs(created_at desc);
+
 -- No Row Level Security here on purpose: unlike Supabase, a plain Neon
 -- database has no bundled public REST API or anon key sitting in front of
 -- it — the only way in is your DATABASE_URL connection string, which lives

@@ -27,19 +27,29 @@ function placeholderSvg(tint, size = 88) {
   </svg>`;
 }
 
+function soldOutBanner() {
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+    <span style="background:#c94f4f;color:#fff;font-size:12px;font-weight:800;letter-spacing:0.4px;padding:6px 16px;border-radius:8px;transform:rotate(-8deg);box-shadow:0 4px 12px rgba(0,0,0,0.28);white-space:nowrap;">STOK HABIS</span>
+  </div>`;
+}
+
 // Renders a square product thumbnail: the uploaded photo if present,
-// otherwise the pastel fruit-cup placeholder icon.
+// otherwise the pastel fruit-cup placeholder icon. Out-of-stock products get
+// a greyed-out image with a centered "Stok Habis" banner.
 function productThumb(product, { size = 88, radius = 16 } = {}) {
   const [tint, tintSoft] = tintFor(product.id);
-  if (product.image) {
-    // `product.image` is the full public Vercel Blob URL (stored as-is
-    // at upload time), not a local path.
-    return `<div style="width:100%;height:100%;border-radius:${radius}px;overflow:hidden;background:${tintSoft};">
-      <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;">
-    </div>`;
-  }
-  return `<div style="width:100%;height:100%;border-radius:${radius}px;background:${tintSoft};display:flex;align-items:center;justify-content:center;">
-    ${placeholderSvg(tint, size)}
+  const soldOut = Number(product.stock) <= 0;
+  const dim = soldOut ? 'filter:grayscale(1);opacity:0.6;' : '';
+
+  const inner = product.image
+    ? // `product.image` is the full public Vercel Blob URL (stored as-is
+      // at upload time), not a local path.
+      `<img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;${dim}">`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(tint, size)}</div>`;
+
+  return `<div style="width:100%;height:100%;border-radius:${radius}px;overflow:hidden;background:${tintSoft};position:relative;">
+    ${inner}
+    ${soldOut ? soldOutBanner() : ''}
   </div>`;
 }
 

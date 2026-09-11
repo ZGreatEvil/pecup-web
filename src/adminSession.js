@@ -44,8 +44,14 @@ function verify(token) {
   }
 }
 
-function issueToken() {
-  return sign({ isAdmin: true, exp: Date.now() + MAX_AGE_SECONDS * 1000 });
+function issueToken(admin) {
+  return sign({
+    isAdmin: true,
+    adminId: admin.id,
+    username: admin.username,
+    role: admin.role,
+    exp: Date.now() + MAX_AGE_SECONDS * 1000,
+  });
 }
 
 module.exports = { COOKIE_NAME, MAX_AGE_SECONDS, issueToken, verify };

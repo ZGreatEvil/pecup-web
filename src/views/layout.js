@@ -1,3 +1,5 @@
+const { escapeHtml } = require('../utils');
+
 const SHARED_STYLE = `
   :root{
     --bg:oklch(98% 0.015 95); --surface:oklch(99% 0.006 95); --surface-2:oklch(96% 0.02 95);
@@ -7,46 +9,52 @@ const SHARED_STYLE = `
     --sidebar:oklch(24% 0.03 255);
   }
   *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
   html,body{margin:0;padding:0;}
   body{font-family:'Work Sans',sans-serif;background:var(--bg);color:var(--text);}
   h1,h2,h3,h4{font-family:'Plus Jakarta Sans',sans-serif;margin:0;}
-  a{color:var(--green-dark);text-decoration:none;}
+  a{color:var(--green-dark);text-decoration:none;transition:color 0.18s ease;}
   a:hover{color:var(--green);}
-  button{font-family:inherit;cursor:pointer;}
+  button{font-family:inherit;cursor:pointer;transition:background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
   input, textarea, select{
     width:100%;border:1.5px solid var(--border);border-radius:11px;padding:13px 15px;
     font-family:'Work Sans',sans-serif;font-size:14.5px;color:var(--text);background:var(--surface);outline:none;
+    transition:border-color 0.18s ease;
   }
   input:focus, textarea:focus, select:focus{border-color:var(--green);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;}
-  .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);}
+  .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease;}
   .dropzone:hover{border-color:var(--green);}
-  .nav-link{color:var(--text);font-weight:500;font-size:15px;}
+  .nav-link{color:var(--text);font-weight:500;font-size:15px;transition:color 0.18s ease;}
   .nav-link:hover{color:var(--green-dark);}
-  .btn-primary{background:var(--orange);color:#fff;border:none;}
-  .btn-primary:hover{background:var(--orange-dark);}
-  .btn-primary:disabled{opacity:0.6;cursor:not-allowed;}
-  .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);}
+  .btn-primary{background:var(--orange);color:#fff;border:none;transition:background 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
+  .btn-primary:hover{background:var(--green-dark);transform:translateY(-1px);box-shadow:0 6px 16px -6px oklch(46% 0.14 152 / 0.5);}
+  .btn-primary:active{transform:translateY(0);}
+  .btn-primary:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none;}
+  .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);transition:border-color 0.18s ease, color 0.18s ease;}
   .btn-outline:hover{border-color:var(--green);color:var(--green-dark);}
-  .chip{border:1.5px solid var(--border);background:var(--surface);}
+  .chip{border:1.5px solid var(--border);background:var(--surface);transition:border-color 0.18s ease, background 0.18s ease, color 0.18s ease;}
   .chip:hover{border-color:var(--green);}
   .chip-active{background:var(--green);border-color:var(--green);color:#fff;}
-  .p-card{background:var(--surface);border:1px solid var(--border);}
-  .p-card:hover{border-color:var(--green);box-shadow:0 8px 24px -12px oklch(58% 0.15 152 / 0.35);}
-  .mini-card{background:var(--surface);border:1px solid var(--border);}
-  .add-btn{background:var(--green-soft);color:var(--green-dark);border:none;}
-  .add-btn:hover{background:var(--green);color:#fff;}
+  .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;}
+  .p-card:hover{border-color:var(--green);box-shadow:0 10px 28px -14px oklch(58% 0.15 152 / 0.45);transform:translateY(-3px);}
+  .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease;}
+  .mini-card:hover{border-color:var(--green);transform:translateY(-2px);}
+  .add-btn{background:var(--green-soft);color:var(--green-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
+  .add-btn:hover{background:var(--green);color:#fff;transform:scale(1.06);}
   .icon-btn{background:var(--surface);border:1.5px solid var(--border);}
-  .step-btn{background:var(--surface-2);border:none;}
+  .step-btn{background:var(--surface-2);border:none;transition:background 0.18s ease;}
   .step-btn:hover{background:var(--green-soft);}
   .trash-btn{background:transparent;border:none;}
-  .copy-btn{background:var(--green-soft);color:var(--green-dark);border:none;}
+  .copy-btn{background:var(--green-soft);color:var(--green-dark);border:none;transition:background 0.18s ease, color 0.18s ease;}
   .copy-btn:hover{background:var(--green);color:#fff;}
-  .side-link{color:oklch(80% 0.02 255);display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;font-size:14.5px;font-weight:600;}
+  .side-link{color:oklch(80% 0.02 255);display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;font-size:14.5px;font-weight:600;transition:background 0.18s ease, color 0.18s ease;}
   .side-link:hover{color:#fff;background:oklch(30% 0.03 255);}
+  @keyframes pecup-pop{0%{transform:scale(1);}40%{transform:scale(1.18);}100%{transform:scale(1);}}
+  .cart-pop{animation:pecup-pop 0.35s ease;}
   .side-link-active{background:var(--green);color:#fff;}
   .search-input{border:1.5px solid var(--border);background:var(--surface);}
   .row-hover:hover{background:var(--surface-2);}
@@ -60,7 +68,14 @@ const SHARED_STYLE = `
   .flash-error{background:#f6dcdc;color:#a13f3f;}
   .flash-ok{background:var(--green-soft);color:var(--green-dark);}
   .frame{width:100%;background:var(--bg);}
-  .frame-scroll{overflow-x:hidden;}
+  /* No overflow-x:hidden here anymore: with .frame already fluid (width:100%)
+     it serves no purpose, and — per the CSS spec — setting only overflow-x on
+     an element with overflow-y left at its 'visible' default silently forces
+     overflow-y to 'auto' too, turning this into an unwanted scroll container.
+     That breaks position:sticky on the header (it starts sticking to this
+     container's scrollport instead of the actual viewport) and can throw off
+     width computation for children. */
+  .frame-scroll{overflow-x:visible;}
 
   /* ---- responsive helpers ---- */
   .px-page{padding-left:96px;padding-right:96px;}
@@ -83,11 +98,11 @@ const SHARED_STYLE = `
   .cart-row-qty{display:flex;align-items:center;gap:8px;}
   .cart-row-total{width:110px;text-align:right;font-size:16px;font-weight:800;color:var(--green-dark);}
   .footer-cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px;padding-bottom:40px;border-bottom:1px solid var(--border);}
-  .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;flex-wrap:wrap;}
+  .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:50;}
   /* 3-column grid (logo / nav / cart) so the nav links land truly centered
      regardless of the logo and cart icon having different widths — plain
      flex space-between can't center a middle item between unequal siblings. */
-  .site-header-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;}
+  .site-header-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;position:sticky;top:0;z-index:50;}
   .site-nav{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;}
   .success-card{padding:56px 60px;}
   .admin-shell{display:flex;align-items:flex-start;flex-wrap:wrap;}
@@ -149,7 +164,7 @@ ${CART_SCRIPT}
 }
 
 function logoMark(size = 38) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="#58a05c"/><path d="M10 23c0-8 6-14 14-14 0 8-6 14-14 14z" fill="#e88a3a"/></svg>`;
+  return `<img src="/assets/pecup-logo.png" width="${size}" height="${size}" alt="Pecup" style="border-radius:50%;object-fit:cover;flex-shrink:0;">`;
 }
 
 function customerHeader(cartCount = 0, activeStepLabel = null) {
@@ -197,6 +212,9 @@ const CART_SCRIPT = `
     if(!badge) return;
     badge.textContent = count;
     badge.style.display = count > 0 ? 'flex' : 'none';
+    badge.classList.remove('cart-pop');
+    void badge.offsetWidth; // restart the animation even if it's already mid-run
+    badge.classList.add('cart-pop');
   }
   document.addEventListener('submit', function(e){
     var form = e.target;
@@ -263,7 +281,7 @@ function customerFooter() {
   </footer>`;
 }
 
-function adminSidebar(active) {
+function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {}) {
   const item = (href, key, label, iconPath) => `
     <a class="side-link ${active === key ? 'side-link-active' : ''}" href="${href}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${iconPath}</svg>
@@ -278,14 +296,23 @@ function adminSidebar(active) {
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
+      ${
+        isSuperadmin
+          ? item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
+            item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>')
+          : ''
+      }
     </nav>
     <div style="margin-top:auto;padding:14px;border-top:1px solid oklch(35% 0.02 255);display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;">A</div>
-        <span style="font-size:13px;font-weight:600;color:#fff;">Admin Pecup</span>
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+        <div style="width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(username.charAt(0).toUpperCase())}</div>
+        <div style="min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(username)}</div>
+          <div style="font-size:10.5px;color:oklch(65% 0.02 255);">${isSuperadmin ? 'Superadmin' : 'Admin'}</div>
+        </div>
       </div>
       <form method="post" action="/admin/logout">
-        <button type="submit" style="background:none;border:none;color:oklch(65% 0.02 255);font-size:11.5px;cursor:pointer;">Keluar</button>
+        <button type="submit" style="background:none;border:none;color:oklch(65% 0.02 255);font-size:11.5px;cursor:pointer;flex-shrink:0;">Keluar</button>
       </form>
     </div>
   </aside>`;

@@ -62,7 +62,11 @@ async function buildCartItems(cart) {
     if (!entry || entry.qty <= 0) continue;
     const product = await getProduct(entry.productId);
     if (!product) continue;
-    const cappedQty = Math.min(entry.qty, Math.max(product.stock, 0) || entry.qty);
+    // Math.max(stock, 0) || entry.qty would wrongly fall through to the
+    // full requested qty when stock is exactly 0 (0 is falsy) — clamp
+    // explicitly instead, and drop the line if nothing is available.
+    const cappedQty = Math.min(entry.qty, Math.max(Number(product.stock) || 0, 0));
+    if (cappedQty <= 0) continue;
     const subtotal = product.price * cappedQty;
 
     let fruits = [];

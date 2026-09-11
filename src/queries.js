@@ -18,6 +18,15 @@ async function getProduct(id) {
   return rows[0] || null;
 }
 
+// Categories aren't a separate table — `products.category` is free text, so
+// "adding a category" just means typing a new value on a product. This
+// derives the live list of categories in use, for the storefront filter
+// chips and the admin datalist autocomplete.
+async function listCategories() {
+  const rows = await db.query('select distinct category from products order by category');
+  return rows.map((r) => r.category);
+}
+
 async function createProduct(data) {
   const rows = await db.query(
     `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended)
@@ -134,6 +143,13 @@ async function listOrdersByDate(dateKey) {
   return db.query('select * from orders where date_key = $1 order by created_at asc', [dateKey]);
 }
 
+async function listOrdersByDateRange(startKey, endKey) {
+  return db.query('select * from orders where date_key >= $1 and date_key <= $2 order by created_at asc', [
+    startKey,
+    endKey,
+  ]);
+}
+
 async function orderDayStats(dateKey) {
   const orders = await listOrdersByDate(dateKey);
   const total = orders.length;
@@ -157,6 +173,7 @@ async function markEmailSent(id, ok, errorMessage) {
 module.exports = {
   listProducts,
   getProduct,
+  listCategories,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -166,6 +183,7 @@ module.exports = {
   getOrder,
   getOrderItems,
   listOrdersByDate,
+  listOrdersByDateRange,
   orderDayStats,
   updateOrderStatus,
   markEmailSent,
