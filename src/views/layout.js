@@ -8,12 +8,23 @@ const SHARED_STYLE = `
     --orange:oklch(72% 0.17 55); --orange-dark:oklch(58% 0.17 45); --orange-soft:oklch(94% 0.06 55);
     --orange-mid:oklch(87% 0.09 55);
     --sidebar:oklch(24% 0.03 255);
+    /* One shadow + radius scale used everywhere, so depth reads consistently
+       instead of every component inventing its own values. */
+    --shadow-sm:0 1px 2px oklch(22% 0.02 260 / 0.05), 0 1px 3px oklch(22% 0.02 260 / 0.06);
+    --shadow-md:0 4px 6px -2px oklch(22% 0.02 260 / 0.06), 0 10px 20px -6px oklch(22% 0.02 260 / 0.10);
+    --shadow-lg:0 8px 12px -4px oklch(22% 0.02 260 / 0.07), 0 20px 40px -12px oklch(22% 0.02 260 / 0.16);
+    --radius-sm:10px; --radius-md:14px; --radius-lg:20px; --radius-xl:28px;
   }
   *{box-sizing:border-box;}
   html{scroll-behavior:smooth;}
   html,body{margin:0;padding:0;}
-  body{font-family:'Work Sans',sans-serif;background:var(--bg);color:var(--text);}
-  h1,h2,h3,h4{font-family:'Plus Jakarta Sans',sans-serif;margin:0;}
+  body{font-family:'Work Sans',sans-serif;background:var(--bg);color:var(--text);
+    line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+  h1,h2,h3,h4{font-family:'Plus Jakarta Sans',sans-serif;margin:0;line-height:1.25;letter-spacing:-0.02em;}
+  h1{letter-spacing:-0.03em;}
+  /* Prices, counts and quantities line up in columns when digits share a width. */
+  .tnum, input[type="number"]{font-variant-numeric:tabular-nums;}
+  ::selection{background:var(--orange-soft);color:var(--orange-dark);}
   /* Interactive accents are warm (orange = the brand's action colour). Green
      is reserved for *static* meaning — prices, "in stock", success — so it
      never appears as a hover state. */
@@ -22,20 +33,22 @@ const SHARED_STYLE = `
   button{font-family:inherit;cursor:pointer;transition:background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
+  :focus-visible{outline:2.5px solid var(--orange);outline-offset:2px;border-radius:4px;}
   input, textarea, select{
-    width:100%;border:1.5px solid var(--border);border-radius:11px;padding:13px 15px;
+    width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:13px 15px;
     font-family:'Work Sans',sans-serif;font-size:14.5px;color:var(--text);background:var(--surface);outline:none;
     transition:border-color 0.18s ease;
   }
   input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-sm);}
   .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease, background 0.18s ease;}
   .dropzone:hover{border-color:var(--orange);background:var(--orange-soft);}
   .nav-link{color:var(--text);font-weight:500;font-size:15px;}
   .nav-link:hover{text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px;}
-  .btn-primary{background:var(--orange);color:#fff;border:none;transition:background 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
-  .btn-primary:hover{background:var(--orange-dark);transform:translateY(-2px);box-shadow:0 8px 20px -8px oklch(58% 0.17 45 / 0.6);}
+  .btn-primary{background:linear-gradient(180deg, oklch(75% 0.17 55), var(--orange));color:#fff;border:none;
+    box-shadow:var(--shadow-sm);transition:filter 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
+  .btn-primary:hover{filter:saturate(1.12) brightness(0.96);transform:translateY(-2px);box-shadow:var(--shadow-md);}
   .btn-primary:active{transform:translateY(0) scale(0.98);box-shadow:none;}
   .btn-primary:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none;}
   .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
@@ -47,11 +60,11 @@ const SHARED_STYLE = `
   .chip-active{background:var(--green);border-color:var(--green);color:#fff;}
   .chip-active:hover{background:var(--green-dark);border-color:var(--green-dark);}
   .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.2,0.7,0.3,1);}
-  .p-card:hover{border-color:var(--orange);box-shadow:0 14px 32px -16px oklch(58% 0.17 45 / 0.5);transform:translateY(-4px);}
+  .p-card:hover{border-color:var(--orange);box-shadow:var(--shadow-lg);transform:translateY(-5px);}
   .p-card img{transition:transform 0.35s cubic-bezier(0.2,0.7,0.3,1);}
   .p-card:hover img{transform:scale(1.05);}
   .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;}
-  .mini-card:hover{border-color:var(--orange);transform:translateY(-3px);box-shadow:0 10px 24px -14px oklch(58% 0.17 45 / 0.45);}
+  .mini-card:hover{border-color:var(--orange);transform:translateY(-3px);box-shadow:var(--shadow-md);}
   .add-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
   .add-btn:hover{background:var(--orange-mid);transform:scale(1.08);}
   .add-btn:active{transform:scale(0.94);}
@@ -82,6 +95,24 @@ const SHARED_STYLE = `
   .qty-stepper .qty-value{min-width:24px;text-align:center;font-size:14px;font-weight:800;color:var(--orange-dark);
     font-variant-numeric:tabular-nums;}
   .qty-bump{animation:pecup-pop 0.3s ease;}
+  /* Product photo carousel: arrows + dots wherever it appears, auto-advancing
+     only where data-autoplay is set (the product detail page). */
+  .carousel{position:relative;width:100%;height:100%;overflow:hidden;}
+  .carousel-track{display:flex;width:100%;height:100%;transition:transform 0.45s cubic-bezier(0.2,0.7,0.3,1);}
+  .carousel-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:30px;height:30px;border-radius:50%;
+    border:none;background:rgba(255,255,255,0.86);color:#2b2b2f;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 8px rgba(0,0,0,0.18);opacity:0;transition:opacity 0.2s ease, background 0.18s ease;}
+  .carousel-prev{left:8px;}
+  .carousel-next{right:8px;}
+  .carousel:hover .carousel-arrow, .carousel:focus-within .carousel-arrow{opacity:1;}
+  .carousel-arrow:hover{background:#fff;}
+  .carousel-arrow:active{transform:translateY(-50%) scale(0.9);}
+  .carousel-dots{position:absolute;left:0;right:0;bottom:8px;z-index:3;display:flex;justify-content:center;gap:5px;}
+  .carousel-dot{width:6px;height:6px;padding:0;border-radius:50%;border:none;background:rgba(255,255,255,0.6);
+    box-shadow:0 1px 3px rgba(0,0,0,0.3);transition:width 0.2s ease, background 0.2s ease;}
+  .carousel-dot.is-active{width:16px;border-radius:99px;background:#fff;}
+  /* Touch devices have no hover, so keep the arrows visible there. */
+  @media (hover: none){ .carousel-arrow{opacity:1;} }
   /* Loyalty card: one slot per stamp, earned slots carry the tilted logo. */
   .stamp-grid{display:grid;grid-template-columns:repeat(5, minmax(0,1fr));gap:14px;}
   .stamp-slot{aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;}
@@ -106,14 +137,17 @@ const SHARED_STYLE = `
   .cart-pop{animation:pecup-pop 0.35s ease;}
   .side-link-active{background:var(--green);color:#fff;}
   .search-input{border:1.5px solid var(--border);background:var(--surface);}
+  .row-hover{transition:background 0.15s ease;}
   .row-hover:hover{background:var(--surface-2);}
+  .stat-card:hover{border-color:var(--orange);transform:translateY(-2px);box-shadow:var(--shadow-md);}
   .icon-action{background:transparent;border:none;}
   .lihat-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);}
   .toggle-pill{width:44px;height:26px;border-radius:99px;padding:3px;display:inline-flex;border:none;cursor:pointer;}
   .toggle-on{background:var(--green);justify-content:flex-end;}
   .toggle-off{background:var(--surface-2);border:1px solid var(--border);justify-content:flex-start;}
   .toggle-dot{width:18px;height:18px;border-radius:50%;background:#fff;}
-  .flash{padding:14px 18px;border-radius:12px;font-size:13.5px;margin-bottom:20px;}
+  .flash{padding:14px 18px;border-radius:var(--radius-md);font-size:13.5px;margin-bottom:20px;font-weight:500;
+    display:flex;align-items:center;gap:10px;animation:pecup-fade-up 0.3s ease both;}
   .flash-error{background:#f6dcdc;color:#a13f3f;}
   .flash-ok{background:var(--green-soft);color:var(--green-dark);}
   .frame{width:100%;background:var(--bg);}
@@ -130,7 +164,10 @@ const SHARED_STYLE = `
   .px-page{padding-left:96px;padding-right:96px;}
   .grid-4{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:28px;}
   .grid-3{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:36px;}
-  .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;}
+  .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;position:relative;}
+  .hero::before{content:'';position:absolute;inset:-10% -5% auto;height:150%;pointer-events:none;z-index:0;
+    background:radial-gradient(60% 60% at 75% 30%, oklch(94% 0.06 55 / 0.55), transparent 70%);}
+  .hero > *{position:relative;z-index:1;}
   .hero-copy{flex:1 1 420px;display:flex;flex-direction:column;gap:26px;}
   .hero-title{font-size:clamp(30px, 4.6vw, 48px);line-height:1.15;font-weight:800;letter-spacing:-1px;max-width:560px;}
   .hero-art{flex:0 1 340px;width:min(340px, 60vw);height:min(340px, 60vw);border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;}
@@ -147,11 +184,13 @@ const SHARED_STYLE = `
   .cart-row-qty{display:flex;align-items:center;gap:8px;}
   .cart-row-total{width:110px;text-align:right;font-size:16px;font-weight:800;color:var(--green-dark);}
   .footer-cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px;padding-bottom:40px;border-bottom:1px solid var(--border);}
-  .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:50;}
+  .site-header{display:flex;align-items:center;justify-content:space-between;padding:22px 96px;border-bottom:1px solid var(--border);
+    background:oklch(99% 0.006 95 / 0.92);backdrop-filter:blur(10px);gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:50;box-shadow:var(--shadow-sm);}
   /* 3-column grid (logo / nav / cart) so the nav links land truly centered
      regardless of the logo and cart icon having different widths — plain
      flex space-between can't center a middle item between unequal siblings. */
-  .site-header-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:22px 96px;border-bottom:1px solid var(--border);background:var(--surface);gap:16px;position:sticky;top:0;z-index:50;}
+  .site-header-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:22px 96px;border-bottom:1px solid var(--border);
+    background:oklch(99% 0.006 95 / 0.92);backdrop-filter:blur(10px);gap:16px;position:sticky;top:0;z-index:50;box-shadow:var(--shadow-sm);}
   .site-nav{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;}
   .success-card{padding:56px 60px;}
   .admin-shell{display:flex;align-items:flex-start;flex-wrap:wrap;}
@@ -333,6 +372,58 @@ const CART_SCRIPT = `
     if(form) form.requestSubmit();
   });
 
+  // ---- Product photo carousel -------------------------------------------
+  (function(){
+    function show(carousel, index){
+      var count = Number(carousel.dataset.count) || 1;
+      var next = ((index % count) + count) % count; // wrap both directions
+      carousel.dataset.index = String(next);
+      var track = carousel.querySelector('.carousel-track');
+      if(track) track.style.transform = 'translateX(-' + (next * 100) + '%)';
+      var dots = carousel.querySelectorAll('.carousel-dot');
+      for(var i = 0; i < dots.length; i++){
+        dots[i].classList.toggle('is-active', i === next);
+      }
+    }
+    function current(carousel){ return Number(carousel.dataset.index) || 0; }
+
+    document.addEventListener('click', function(e){
+      if(!e.target.closest) return;
+      var arrow = e.target.closest('.carousel-arrow');
+      var dot = e.target.closest('.carousel-dot');
+      if(!arrow && !dot) return;
+      var carousel = (arrow || dot).closest('.carousel');
+      if(!carousel) return;
+      // Product cards are wrapped in a click-through link — don't navigate
+      // when the tap was meant for the carousel.
+      e.preventDefault();
+      e.stopPropagation();
+      if(dot) show(carousel, Number(dot.dataset.index) || 0);
+      else show(carousel, current(carousel) + (arrow.classList.contains('carousel-next') ? 1 : -1));
+      // A manual interaction cancels autoplay — it's fighting the shopper otherwise.
+      if(carousel.dataset.timer){ clearInterval(Number(carousel.dataset.timer)); carousel.dataset.timer = ''; }
+    });
+
+    function startAutoplay(){
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if(reduce) return;
+      var list = document.querySelectorAll('.carousel[data-autoplay]');
+      for(var i = 0; i < list.length; i++){
+        (function(carousel){
+          if(carousel.dataset.timer) return;
+          var delay = Number(carousel.dataset.autoplay) || 2000;
+          var timer = setInterval(function(){
+            if(!document.body.contains(carousel)){ clearInterval(timer); return; }
+            show(carousel, current(carousel) + 1);
+          }, delay);
+          carousel.dataset.timer = String(timer);
+        })(list[i]);
+      }
+    }
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startAutoplay);
+    else startAutoplay();
+  })();
+
   // ---- Gojek-style quantity stepper -------------------------------------
   // A .qty-control starts as a single "+" button and swaps to a [-][n][+]
   // stepper the moment the product is in the cart. The server owns the real
@@ -500,16 +591,17 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     </a>`;
   return `
   <aside class="admin-sidebar">
-    <a href="/admin/produk" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
-    </a>
+    </div>
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
       ${
         isSuperadmin
-          ? item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
+          ? item('/admin/pelanggan', 'pelanggan', 'Pelanggan & Stempel', '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>') +
+            item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
             item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>')
           : ''
       }

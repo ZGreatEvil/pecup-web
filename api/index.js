@@ -16,14 +16,17 @@ const cartLib = require('../src/cart');
 const adminSession = require('../src/adminSession');
 const customerSession = require('../src/customerSession');
 const customerAuth = require('../src/customerAuth');
+const settings = require('../src/settings');
+const loyalty = require('../src/loyalty');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
-const { logAdminAction, listAdminLogs } = require('../src/adminLog');
+const { logAdminAction, queryAdminLogs, listLogFilters } = require('../src/adminLog');
 const queries = require('../src/queries');
 const { toDateKey, formatRupiah, normalizeWhatsapp, formatWhatsapp, ORDER_STATUSES } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
 const { saveProductImage, saveProofFile, signedProofUrl } = require('../src/uploads');
+const { productPhotos } = require('../src/views/productIcon');
 
 const shopViews = require('../src/views/shop');
 const adminViews = require('../src/views/admin');
@@ -300,16 +303,18 @@ function requireCustomer(handler) {
 }
 
 router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
-  const [loyalty, orders] = await Promise.all([
-    customerAuth.loyaltyStatus(customer.id),
+  const [loyaltyStatus, orders, stampHistory] = await Promise.all([
+    loyalty.statusFor(customer.id),
     customerAuth.listCustomerOrders(customer.id),
+    loyalty.listStamps(customer.id),
   ]);
   sendHtml(
     res,
     accountViews.renderAkun({
       customer,
-      loyalty,
+      loyalty: loyaltyStatus,
       orders,
+      stampHistory,
       cartCount: cartLib.cartCount(req.cart),
       flash: query && query.get('ok') ? 'Perubahan tersimpan.' : '',
     })
@@ -340,13 +345,21 @@ router.post('/akun/password', requireCustomer(async (req, res, { customer }) => 
   if (newPassword.length < 6) errors.push('Password baru minimal 6 karakter.');
 
   if (errors.length) {
-    const [loyalty, orders] = await Promise.all([
-      customerAuth.loyaltyStatus(customer.id),
+    const [loyaltyStatus, orders, stampHistory] = await Promise.all([
+      loyalty.statusFor(customer.id),
       customerAuth.listCustomerOrders(customer.id),
+      loyalty.listStamps(customer.id),
     ]);
     return sendHtml(
       res,
-      accountViews.renderAkun({ customer, loyalty, orders, cartCount: cartLib.cartCount(req.cart), errors })
+      accountViews.renderAkun({
+        customer,
+        loyalty: loyaltyStatus,
+        orders,
+        stampHistory,
+        cartCount: cartLib.cartCount(req.cart),
+        errors,
+      })
     );
   }
 
@@ -360,7 +373,10 @@ router.get('/checkout', async (req, res) => {
 
   // Signed-in shoppers get the form pre-filled from their saved profile —
   // that's the whole point of having an account.
-  const saved = req.customer ? await customerAuth.findById(req.customer.customerId) : null;
+  const [saved, reward] = await Promise.all([
+    req.customer ? customerAuth.findById(req.customer.customerId) : null,
+    rewardPreview(req.customer, items),
+  ]);
   sendHtml(
     res,
     shopViews.renderCheckout({
@@ -368,6 +384,7 @@ router.get('/checkout', async (req, res) => {
       subtotal,
       cartCount: cartLib.cartCount(req.cart),
       customer: saved,
+      reward,
       formValues: saved
         ? { customerName: saved.name, whatsapp: formatWhatsapp(saved.whatsapp), address: saved.address }
         : {},
@@ -396,6 +413,12 @@ router.post('/checkout', async (req, res) => {
     );
   }
 
+  // Re-derived here, never taken from the request: the form can only ask to
+  // use a reward, and the database re-checks eligibility again at insert time.
+  const reward = await rewardPreview(req.customer, items);
+  const useReward = Boolean(fields.useReward) && reward.available > 0;
+  const payable = Math.max(0, subtotal - (useReward ? reward.discount : 0));
+
   const errors = [];
   const customerName = (fields.customerName || '').trim();
   const whatsapp = (fields.whatsapp || '').trim();
@@ -416,8 +439,9 @@ router.post('/checkout', async (req, res) => {
   } else if (deliveryDate < toDateKey(new Date())) {
     errors.push('Tanggal pengantaran tidak boleh di masa lalu.');
   }
-  if (!files.proof) errors.push('Bukti transfer wajib diunggah.');
-  else if (!['image/jpeg', 'image/png', 'application/pdf'].includes(files.proof.mimetype)) {
+  // A fully-waived order has nothing to transfer, so don't demand a proof.
+  if (payable > 0 && !files.proof) errors.push('Bukti transfer wajib diunggah.');
+  else if (files.proof && !['image/jpeg', 'image/png', 'application/pdf'].includes(files.proof.mimetype)) {
     errors.push('Format bukti transfer harus JPG, PNG, atau PDF.');
   }
 
@@ -435,6 +459,8 @@ router.post('/checkout', async (req, res) => {
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
+        reward,
+        useReward,
         errors,
         formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
@@ -444,7 +470,7 @@ router.post('/checkout', async (req, res) => {
   let proofFilename;
   let order;
   try {
-    proofFilename = await saveProofFile(files.proof);
+    proofFilename = files.proof ? await saveProofFile(files.proof) : null;
     const orderItems = items.map((it) => ({
       productId: it.product.id,
       name: it.product.name,
@@ -464,6 +490,7 @@ router.post('/checkout', async (req, res) => {
       address,
       deliveryDate,
       customerId: req.customer ? req.customer.customerId : null,
+      useReward,
     });
   } catch (err) {
     console.error(err);
@@ -474,6 +501,8 @@ router.post('/checkout', async (req, res) => {
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
+        reward,
+        useReward,
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
         formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
@@ -539,9 +568,60 @@ router.post('/admin/logout', (req, res) => {
 // ---------------------------------------------------------------------
 
 router.get('/admin/produk', requireAdmin(async (req, res, { query }) => {
-  const products = await queries.listProducts();
-  const stats = await queries.productStats();
-  sendHtml(res, adminViews.renderProdukList({ products, stats, flash: query.get('flash'), admin: req.admin }));
+  const [allProducts, stats, categories] = await Promise.all([
+    queries.listProducts(),
+    queries.productStats(),
+    queries.listCategories(),
+  ]);
+
+  const view = {
+    kategori: query.get('kategori') || '',
+    status: query.get('status') || 'semua',
+    urut: query.get('urut') || '',
+    arah: query.get('arah') === 'desc' ? 'desc' : 'asc',
+  };
+
+  const statusMatches = {
+    semua: () => true,
+    aktif: (p) => Boolean(p.active),
+    nonaktif: (p) => !p.active,
+    habis: (p) => Number(p.stock) <= 0,
+    menipis: (p) => Number(p.stock) > 0 && Number(p.stock) <= 5,
+  };
+  const matchesStatus = statusMatches[view.status] || statusMatches.semua;
+
+  let products = allProducts.filter(
+    (p) => matchesStatus(p) && (!view.kategori || p.category === view.kategori)
+  );
+
+  // Sorting is done here rather than in SQL: the catalogue is small enough
+  // that one fetch + sort beats a query per sort option, and it keeps
+  // localeCompare's Indonesian collation for names.
+  const sorters = {
+    nama: (a, b) => String(a.name).localeCompare(String(b.name), 'id'),
+    kategori: (a, b) =>
+      String(a.category).localeCompare(String(b.category), 'id') ||
+      String(a.name).localeCompare(String(b.name), 'id'),
+    harga: (a, b) => Number(a.price) - Number(b.price),
+    stok: (a, b) => Number(a.stock) - Number(b.stock),
+  };
+  if (sorters[view.urut]) {
+    products.sort(sorters[view.urut]);
+    if (view.arah === 'desc') products.reverse();
+  }
+
+  sendHtml(
+    res,
+    adminViews.renderProdukList({
+      products,
+      stats,
+      categories,
+      view,
+      totalCount: allProducts.length,
+      flash: query.get('flash'),
+      admin: req.admin,
+    })
+  );
 }));
 
 router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
@@ -550,14 +630,14 @@ router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
 }));
 
 router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
-  const { fields, files } = await parseBody(req);
+  const { fields, fileLists } = await parseBody(req);
   const error = validateProductFields(fields);
   if (error) {
     const categories = await queries.listCategories();
     return sendHtml(res, adminViews.renderProdukForm({ product: fields, error, categories, admin: req.admin }));
   }
 
-  const image = files.image && files.image.buffer.length ? await saveProductImage(files.image) : null;
+  const images = await uploadGalleryFiles(fileLists.image);
   await queries.createProduct({
     name: fields.name.trim(),
     description: (fields.description || '').trim(),
@@ -565,10 +645,12 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     weight: fields.weight.trim(),
     price: Number(fields.price),
     stock: Number(fields.stock),
-    image,
+    image: images[0] || null,
+    images,
     active: fields.active ? 1 : 0,
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
+    ...wholesaleFields(fields),
   });
   await logAdminAction(req.admin, 'product.create', fields.name.trim());
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk baru berhasil ditambahkan.'));
@@ -586,13 +668,27 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   const existing = await queries.getProduct(id);
   if (!existing) return notFound(res);
 
-  const { fields, files } = await parseBody(req);
+  const { fields, fieldLists, fileLists } = await parseBody(req);
   const error = validateProductFields(fields);
   if (error) {
     const categories = await queries.listCategories();
-    return sendHtml(res, adminViews.renderProdukForm({ product: { ...fields, id, image: existing.image }, error, categories, admin: req.admin }));
+    return sendHtml(
+      res,
+      adminViews.renderProdukForm({
+        product: { ...fields, id, image: existing.image, images: existing.images },
+        error,
+        categories,
+        admin: req.admin,
+      })
+    );
   }
-  const image = files.image && files.image.buffer.length ? await saveProductImage(files.image) : null;
+
+  // Gallery = (existing photos the admin didn't tick "Hapus" on) + new uploads.
+  const removed = new Set(fieldLists.hapusFoto || []);
+  const kept = productPhotos(existing).filter((url) => !removed.has(url));
+  const uploaded = await uploadGalleryFiles(fileLists.image);
+  const images = [...kept, ...uploaded];
+
   await queries.updateProduct(id, {
     name: fields.name.trim(),
     description: (fields.description || '').trim(),
@@ -600,10 +696,11 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     weight: fields.weight.trim(),
     price: Number(fields.price),
     stock: Number(fields.stock),
-    image,
+    images,
     active: fields.active ? 1 : 0,
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
+    ...wholesaleFields(fields),
   });
   await logAdminAction(req.admin, 'product.update', fields.name.trim());
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk berhasil diperbarui.'));
@@ -691,17 +788,45 @@ router.get('/admin/pesanan/:id', requireAdmin(async (req, res) => {
       console.error('Gagal membuat signed URL bukti transfer:', err.message);
     }
   }
-  sendHtml(res, adminViews.renderPesananDetail({ order, items, proofUrl, admin: req.admin }));
+  // Signed-in customers have a stamp card; guest orders don't.
+  const loyaltyStatus = order.customer_id ? await loyalty.statusFor(Number(order.customer_id)) : null;
+  sendHtml(res, adminViews.renderPesananDetail({ order, items, proofUrl, admin: req.admin, loyalty: loyaltyStatus }));
+}));
+
+router.post('/admin/pesanan/:id/tukar-stempel', requireAdmin(async (req, res) => {
+  const order = await queries.getOrder(Number(req.params.id));
+  if (!order) return notFound(res);
+  if (!order.customer_id) return redirect(res, `/admin/pesanan/${req.params.id}`);
+
+  const result = await loyalty.claimReward(Number(order.customer_id), {
+    note: `Ditukar admin pada ${order.order_number}`,
+  });
+  if (result.ok) {
+    await logAdminAction(req.admin, 'loyalty.redeem', `${order.customer_name} (${order.order_number})`);
+  }
+  redirect(res, `/admin/pesanan/${req.params.id}`);
 }));
 
 router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
   // Only accept one of the three known states — an unexpected value would
-  // otherwise silently break the stamp count, which keys off 'selesai'.
+  // otherwise silently break the stamp rules, which key off 'selesai'.
   const status = ORDER_STATUSES.some((s) => s.value === fields.status) ? fields.status : 'menunggu';
-  await queries.updateOrderStatus(Number(req.params.id), status);
-  await logAdminAction(req.admin, 'order.status_update', `#${req.params.id} -> ${status}`);
-  redirect(res, `/admin/pesanan/${req.params.id}`);
+
+  const order = await queries.getOrder(id);
+  if (!order) return notFound(res);
+  await queries.updateOrderStatus(id, status);
+
+  // Completing an order earns a stamp; moving it back out takes an unspent
+  // one away again. Both are no-ops for guest orders.
+  if (order.customer_id) {
+    if (status === 'selesai') await loyalty.grantForOrder(Number(order.customer_id), id);
+    else if (order.status === 'selesai') await loyalty.revokeForOrder(id);
+  }
+
+  await logAdminAction(req.admin, 'order.status_update', `#${id} -> ${status}`);
+  redirect(res, `/admin/pesanan/${id}`);
 }));
 
 // ---------------------------------------------------------------------
@@ -758,12 +883,148 @@ router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------------
+// admin: customers, stamps & shop settings (superadmin only)
+// ---------------------------------------------------------------------
+
+router.get('/admin/pelanggan', requireSuperadmin(async (req, res, { query }) => {
+  const [customers, perReward, all, tierConfig] = await Promise.all([
+    loyalty.listCustomersWithLoyalty(),
+    settings.stampsPerReward(),
+    settings.getAll(),
+    loyalty.getTierConfig(),
+  ]);
+  sendHtml(
+    res,
+    adminViews.renderPelangganList({
+      customers,
+      perReward,
+      expiryMonths: Number(all.stamp_expiry_months) || 2,
+      tierConfig,
+      admin: req.admin,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  const target = Number(fields.stamps);
+  if (!Number.isFinite(target) || target < 0) {
+    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Jumlah stempel tidak valid.'));
+  }
+
+  const updated = await loyalty.setStampCount(id, target, { by: req.admin.username });
+  await logAdminAction(req.admin, 'loyalty.stamps', `${customer.name} -> ${updated.stamps} stempel`);
+  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
+}));
+
+router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => {
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  const result = await loyalty.claimReward(id, { note: `Ditukar admin ${req.admin.username}` });
+  if (!result.ok) return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent(result.error));
+
+  await logAdminAction(req.admin, 'loyalty.redeem', customer.name);
+  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Cup gratis ${customer.name} ditukar.`));
+}));
+
+router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const perReward = Number(fields.perReward);
+  const expiryMonths = Number(fields.expiryMonths);
+
+  if (!Number.isFinite(perReward) || perReward < 1 || perReward > 100) {
+    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Jumlah stempel harus antara 1 dan 100.'));
+  }
+  if (!Number.isFinite(expiryMonths) || expiryMonths < 1 || expiryMonths > 60) {
+    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Masa berlaku harus antara 1 dan 60 bulan.'));
+  }
+
+  await settings.setValue('stamps_per_reward', Math.round(perReward));
+  await settings.setValue('stamp_expiry_months', Math.round(expiryMonths));
+  await logAdminAction(
+    req.admin,
+    'settings.update',
+    `stempel/gratis ${Math.round(perReward)}, kedaluwarsa ${Math.round(expiryMonths)} bulan`
+  );
+  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent('Aturan stempel disimpan.'));
+}));
+
+router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
+  const { fields, fieldLists } = await parseBody(req);
+
+  // Each tier row posts one value per field, in display order; the perk
+  // checkboxes post their row index, so unchecked rows simply don't appear.
+  const names = fieldLists.tierName || [];
+  const minClaims = fieldLists.tierMinClaims || [];
+  const discounts = fieldLists.tierDiscount || [];
+  const weekly = new Set((fieldLists.tierWeekly || []).map(Number));
+  const birthday = new Set((fieldLists.tierBirthday || []).map(Number));
+
+  const tiers = names.map((name, i) => ({
+    name,
+    minClaims: minClaims[i],
+    discountPercent: discounts[i],
+    weeklyFreeCup: weekly.has(i),
+    birthdayFreeCup: birthday.has(i),
+  }));
+
+  await loyalty.saveTierConfig({ enabled: Boolean(fields.tiersEnabled), tiers });
+  await logAdminAction(
+    req.admin,
+    'settings.update',
+    `tier ${fields.tiersEnabled ? 'aktif' : 'nonaktif'}, ${tiers.length} tingkat`
+  );
+  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent('Pengaturan tier disimpan.'));
+}));
+
+// ---------------------------------------------------------------------
 // admin: activity log (superadmin only)
 // ---------------------------------------------------------------------
 
-router.get('/admin/log-aktivitas', requireSuperadmin(async (req, res) => {
-  const logs = await listAdminLogs(200);
-  sendHtml(res, adminViews.renderAdminLog({ logs, admin: req.admin }));
+router.get('/admin/log-aktivitas', requireSuperadmin(async (req, res, { query }) => {
+  const filters = {
+    dari: query.get('dari') || '',
+    sampai: query.get('sampai') || '',
+    admin: query.get('admin') || '',
+    aksi: query.get('aksi') || '',
+    per: query.get('per') || '25',
+    urut: query.get('urut') || 'desc',
+  };
+
+  const [result, options] = await Promise.all([
+    queryAdminLogs({
+      page: Number(query.get('halaman')) || 1,
+      perPage: Number(filters.per) || 25,
+      sort: filters.urut,
+      username: filters.admin,
+      action: filters.aksi,
+      from: filters.dari,
+      to: filters.sampai,
+    }),
+    listLogFilters(),
+  ]);
+
+  sendHtml(
+    res,
+    adminViews.renderAdminLog({
+      logs: result.logs,
+      admin: req.admin,
+      filters,
+      page: result.page,
+      totalPages: result.totalPages,
+      total: result.total,
+      sort: result.sort,
+      options,
+    })
+  );
 }));
 
 // ---------------------------------------------------------------------
@@ -794,8 +1055,51 @@ function requireSuperadmin(handler) {
   };
 }
 
+// What the loyalty reward would be worth on this exact cart. The cheapest cup
+// is the one waived — that's the rule create_order enforces too, so what the
+// shopper is shown and what they're charged can't drift apart.
+async function rewardPreview(sessionCustomer, items) {
+  if (!sessionCustomer || !items.length) return { available: 0, discount: 0, itemName: null, perReward: 0 };
+  const status = await loyalty.statusFor(sessionCustomer.customerId);
+  if (!status.cardComplete) return { available: 0, discount: 0, itemName: null, perReward: status.perReward };
+
+  const cheapest = items.reduce((min, it) => (Number(it.product.price) < Number(min.product.price) ? it : min));
+  return {
+    // One card, one free cup — stamps reset to zero when it's spent.
+    available: 1,
+    discount: Number(cheapest.product.price),
+    itemName: cheapest.product.name,
+    perReward: status.perReward,
+  };
+}
+
 function saveCartCookie(res, cart) {
   setCookie(res, cartLib.COOKIE_NAME, cartLib.serializeCart(cart), { maxAge: cartLib.MAX_AGE_SECONDS });
+}
+
+// Uploads every photo picked in the (multiple) gallery input, in order.
+async function uploadGalleryFiles(list) {
+  const urls = [];
+  for (const file of list || []) {
+    if (!file || !file.buffer.length) continue;
+    urls.push(await saveProductImage(file));
+  }
+  return urls;
+}
+
+// A wholesale tier only counts when both halves are filled in and the
+// discounted price is actually lower — otherwise it's stored as "no tier".
+function wholesaleFields(fields) {
+  const minQty = Number(fields.wholesaleMinQty);
+  const price = Number(fields.wholesalePrice);
+  const valid =
+    Number.isFinite(minQty) && minQty > 0 &&
+    Number.isFinite(price) && price > 0 &&
+    String(fields.wholesaleMinQty).trim() !== '' && String(fields.wholesalePrice).trim() !== '' &&
+    price < Number(fields.price);
+  return valid
+    ? { wholesaleMinQty: Math.round(minQty), wholesalePrice: Math.round(price) }
+    : { wholesaleMinQty: 0, wholesalePrice: null };
 }
 
 function validateProductFields(fields) {

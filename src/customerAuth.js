@@ -5,9 +5,9 @@
 const crypto = require('crypto');
 const db = require('./db');
 const { normalizeWhatsapp } = require('./utils');
+const settings = require('./settings');
 
 const SCRYPT_KEYLEN = 64;
-const STAMPS_PER_REWARD = 10;
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -77,26 +77,6 @@ async function updatePassword(id, password) {
   await db.query('update customers set password_hash = $1 where id = $2', [hashPassword(password), id]);
 }
 
-// A stamp is earned per order that reached 'selesai'. Every 10 stamps is one
-// free cup; the card shows the current cycle, so a customer with 23 stamps
-// has 2 rewards banked and 3 stamps toward the next one.
-async function loyaltyStatus(customerId) {
-  const rows = await db.query(
-    "select count(*)::int as count from orders where customer_id = $1 and status = 'selesai'",
-    [customerId]
-  );
-  const stamps = Number(rows[0].count) || 0;
-  const inCurrentCard = stamps % STAMPS_PER_REWARD;
-  return {
-    stamps,
-    perReward: STAMPS_PER_REWARD,
-    rewardsEarned: Math.floor(stamps / STAMPS_PER_REWARD),
-    inCurrentCard,
-    // Always 1..STAMPS_PER_REWARD — an empty card needs all 10, never "0 more".
-    toNextReward: STAMPS_PER_REWARD - inCurrentCard,
-  };
-}
-
 async function listCustomerOrders(customerId, limit = 50) {
   return db.query('select * from orders where customer_id = $1 order by created_at desc limit $2', [
     customerId,
@@ -105,13 +85,11 @@ async function listCustomerOrders(customerId, limit = 50) {
 }
 
 module.exports = {
-  STAMPS_PER_REWARD,
   findByWhatsapp,
   findById,
   createCustomer,
   checkCredentials,
   updateCustomer,
   updatePassword,
-  loyaltyStatus,
   listCustomerOrders,
 };

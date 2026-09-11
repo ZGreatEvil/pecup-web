@@ -18,6 +18,22 @@ function badgeHtml(p, { top = 12, left = 12, scale = 1 } = {}) {
   return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:${fontSize}px;font-weight:800;letter-spacing:0.2px;padding:${padY}px ${padX}px;border-radius:99px;white-space:nowrap;box-shadow:0 4px 12px -3px rgba(0,0,0,0.3);text-shadow:0 1px 2px rgba(0,0,0,0.15);">${badge.text}</span>`;
 }
 
+// Nudge shown on a cart line that has a wholesale tier but hasn't reached it.
+function wholesaleHint(product, qty) {
+  const minQty = Number(product.wholesale_min_qty) || 0;
+  const price = product.wholesale_price;
+  if (!minQty || price === null || price === undefined || qty >= minQty) return '';
+  return `<div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Tambah ${minQty - qty} cup lagi → harga grosir ${formatRupiah(price)}/cup</div>`;
+}
+
+// Badge for the product card / detail page when a wholesale tier exists.
+function wholesaleBadge(product) {
+  const minQty = Number(product.wholesale_min_qty) || 0;
+  const price = product.wholesale_price;
+  if (!minQty || price === null || price === undefined) return '';
+  return `<span style="display:inline-block;font-size:11.5px;font-weight:700;color:#7a4a1f;background:var(--orange-soft);padding:4px 10px;border-radius:99px;">Grosir ≥${minQty}: ${formatRupiah(price)}/cup</span>`;
+}
+
 const MINUS_ICON =
   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>';
 const PLUS_ICON =
@@ -74,9 +90,10 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
       <div class="p-card" style="position:relative;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
         <a href="/produk/${p.id}" style="position:absolute;inset:0;z-index:1;" aria-label="${escapeAttr(p.name)}"></a>
         <div style="aspect-ratio:1;position:relative;">${badgeHtml(p)}${productThumb(p)}</div>
-        <div style="display:flex;flex-direction:column;gap:4px;">
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
           <span style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</span>
           <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
+          ${wholesaleBadge(p)}
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:10px;">
           <span style="font-size:16.5px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
@@ -235,7 +252,7 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
   </div>
 
   <section class="detail-layout px-page" style="padding-top:32px;padding-bottom:72px;">
-    <div class="detail-img" style="position:relative;">${badgeHtml(product, { top: 12, left: 12 })}${productThumb(product, { size: 200, radius: 28 })}</div>
+    <div class="detail-img" style="position:relative;">${badgeHtml(product, { top: 12, left: 12 })}${productThumb(product, { size: 200, radius: 28, autoplay: true })}</div>
 
     <div class="detail-info">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -250,6 +267,7 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <span style="font-size:26px;font-weight:800;color:var(--green-dark);">${formatRupiah(product.price)}</span>
         <span style="font-size:13.5px;color:var(--text-muted);">/ cup ${escapeHtml(product.weight)}</span>
+        ${wholesaleBadge(product)}
         <span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:${inStock ? '#58a05c' : '#a13f3f'};background:${inStock ? 'var(--green-soft)' : '#f6dcdc'};padding:5px 12px;border-radius:99px;">
           <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="${inStock ? '#58a05c' : '#a13f3f'}"/></svg>
           ${inStock ? `Stok Tersedia (${product.stock})` : 'Stok Habis'}
@@ -307,6 +325,11 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
               ? `<div style="font-size:12.5px;color:var(--green-dark);margin-top:4px;font-weight:600;">${it.fruits.map((f) => escapeHtml(f.name)).join(' + ')}</div>`
               : ''
           }
+          ${
+            it.isWholesale
+              ? `<div style="font-size:12px;color:#7a4a1f;background:var(--orange-soft);padding:3px 9px;border-radius:99px;margin-top:6px;display:inline-block;font-weight:700;">Harga grosir ${formatRupiah(it.unitPrice)}/cup · hemat ${formatRupiah(it.savings)}</div>`
+              : wholesaleHint(it.product, it.qty)
+          }
         </div>
         <div class="cart-row-qty">
           ${qtyControl({
@@ -355,7 +378,18 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
   return page({ title: 'Keranjang — Pecup', bodyHtml: body });
 }
 
-function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = {}, customer = null }) {
+function renderCheckout({
+  items,
+  subtotal,
+  cartCount,
+  errors = [],
+  formValues = {},
+  customer = null,
+  reward = { available: 0, discount: 0, itemName: null },
+  useReward = false,
+}) {
+  const rewardOn = Boolean(useReward) && reward.available > 0;
+  const payable = Math.max(0, subtotal - (rewardOn ? reward.discount : 0));
   const summaryRows = items
     .map(
       (it) => `
@@ -418,6 +452,23 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
             </div>
           </div>
 
+          ${
+            reward.available > 0
+              ? `<label style="display:flex;align-items:flex-start;gap:12px;background:var(--green-soft);border:1.5px solid var(--green);border-radius:14px;padding:16px 18px;cursor:pointer;margin:0;">
+                  <input type="checkbox" name="useReward" value="1" ${rewardOn ? 'checked' : ''} id="useRewardBox" style="width:20px;height:20px;margin-top:1px;flex-shrink:0;">
+                  <span>
+                    <span style="display:block;font-size:14.5px;font-weight:800;color:var(--green-dark);">Pakai 1 cup gratis</span>
+                    <span style="display:block;font-size:13px;color:var(--green-dark);line-height:1.6;margin-top:4px;">
+                      Kamu punya <strong>${reward.available}</strong> cup gratis. Yang digratiskan cup termurah di pesanan ini${
+                        reward.itemName ? ` — <strong>${escapeHtml(reward.itemName)}</strong> (${formatRupiah(reward.discount)})` : ''
+                      }.
+                    </span>
+                  </span>
+                </label>`
+              : ''
+          }
+
+          <div id="paymentSection" ${payable <= 0 ? 'hidden' : ''} style="display:flex;flex-direction:column;gap:24px;">
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Info Pembayaran — QRIS</h3>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Scan kode QRIS di bawah dengan aplikasi e-wallet, m-banking, atau QRIS apa pun sesuai total pesanan, lalu unggah buktinya.</p>
@@ -428,7 +479,9 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
             <div style="display:flex;flex-direction:column;gap:8px;background:var(--orange-soft);border-radius:12px;padding:14px 16px;margin-top:14px;">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                 <span style="font-size:13px;color:#7a4a1f;font-weight:600;">Transfer tepat sejumlah</span>
-                <span style="font-size:17px;font-weight:800;color:#7a4a1f;">${formatRupiah(subtotal)}</span>
+                <span style="font-size:17px;font-weight:800;color:#7a4a1f;" data-total data-full="${escapeAttr(formatRupiah(subtotal))}" data-discounted="${escapeAttr(
+                  formatRupiah(Math.max(0, subtotal - reward.discount))
+                )}">${formatRupiah(payable)}</span>
               </div>
               <span style="font-size:12.5px;color:#7a4a1f;line-height:1.6;">Jangan dibulatkan — jumlah harus sama persis supaya pesananmu bisa langsung diverifikasi. Gunakan nama <strong>kamu sendiri</strong> sebagai nama pengirim/pembayar (bukan nama orang lain), sesuai Nama Lengkap di atas.</span>
             </div>
@@ -438,8 +491,14 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
             <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Upload Bukti Transfer <span class="req">*</span></h3>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Format JPG, PNG, atau PDF, maksimal 4MB.</p>
             <div class="dropzone" style="padding:24px;">
-              <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" required style="border:none;padding:0;background:transparent;">
+              <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" ${payable > 0 ? 'required' : ''} style="border:none;padding:0;background:transparent;">
             </div>
+          </div>
+          </div>
+
+          <div id="freeOrderNote" ${payable > 0 ? 'hidden' : ''} class="card" style="background:var(--green-soft);border-color:var(--green);">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;color:var(--green-dark);">Pesanan Ini Gratis</h3>
+            <p style="font-size:13.5px;color:var(--green-dark);line-height:1.7;margin:0;">Cup gratismu menutup seluruh pesanan ini, jadi tidak perlu transfer atau unggah bukti. Tinggal kirim pesanannya.</p>
           </div>
 
           <button class="btn-primary" type="submit" style="width:100%;padding:17px;border-radius:12px;font-size:15.5px;font-weight:700;">Kirim Pesanan Sekarang</button>
@@ -449,7 +508,20 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
         <div class="split-side">
           <h3 style="font-size:18px;font-weight:800;margin-bottom:20px;">Ringkasan Pesanan</h3>
           ${summaryRows}
-          <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:18px;margin-bottom:20px;"><span>Total</span><span style="color:var(--green-dark);">${formatRupiah(subtotal)}</span></div>
+          ${
+            reward.available > 0
+              ? `<div id="rewardRow" style="display:${rewardOn ? 'flex' : 'none'};justify-content:space-between;gap:12px;font-size:13.5px;padding:10px 0;color:var(--green-dark);font-weight:700;">
+                  <span>Cup gratis (${escapeHtml(reward.itemName || '')})</span>
+                  <span style="white-space:nowrap;">− ${formatRupiah(reward.discount)}</span>
+                </div>`
+              : ''
+          }
+          <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:18px;margin-bottom:20px;">
+            <span>Total</span>
+            <span style="color:var(--green-dark);" data-total data-full="${escapeAttr(formatRupiah(subtotal))}" data-discounted="${escapeAttr(
+              formatRupiah(Math.max(0, subtotal - reward.discount))
+            )}">${formatRupiah(payable)}</span>
+          </div>
           <div style="display:flex;align-items:flex-start;gap:10px;background:var(--surface-2);padding:14px;border-radius:12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8" style="flex-shrink:0;margin-top:2px;"><path d="M4 4h16v12H8l-4 4z"/></svg>
             <span style="font-size:12.5px;color:var(--text-muted);line-height:1.6;">Pesanan otomatis terkirim ke email toko begitu kamu klik "Kirim Pesanan".</span>
@@ -459,7 +531,36 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
     </form>
   </section>
   ${customerFooter()}
-</div></div>`;
+</div></div>
+${
+  reward.available > 0
+    ? `<script>
+(function(){
+  var box = document.getElementById('useRewardBox');
+  if(!box) return;
+  function sync(){
+    var on = box.checked;
+    var row = document.getElementById('rewardRow');
+    if(row) row.style.display = on ? 'flex' : 'none';
+    var totals = document.querySelectorAll('[data-total]');
+    for(var i = 0; i < totals.length; i++){
+      totals[i].textContent = on ? totals[i].dataset.discounted : totals[i].dataset.full;
+    }
+    // A fully-waived order has nothing to transfer.
+    var payment = document.getElementById('paymentSection');
+    var free = document.getElementById('freeOrderNote');
+    var isFree = on && totals.length && totals[0].dataset.discounted === 'Rp 0';
+    if(payment) payment.hidden = isFree;
+    if(free) free.hidden = !isFree;
+    var proof = document.querySelector('input[name="proof"]');
+    if(proof) proof.required = !isFree;
+  }
+  box.addEventListener('change', sync);
+  sync();
+})();
+</script>`
+    : ''
+}`;
 
   return page({ title: 'Checkout — Pecup', bodyHtml: body });
 }

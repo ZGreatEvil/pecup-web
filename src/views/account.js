@@ -5,6 +5,7 @@ const {
   escapeAttr,
   formatDateID,
   formatWhatsapp,
+  formatShortDateID,
   orderStatus,
 } = require('../utils');
 
@@ -83,14 +84,16 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
 }
 
 // One slot per stamp in the current card. Earned slots carry the Pecup logo
-// tilted 30°; the 10th slot is highlighted as the free-cup reward.
-function stampCard(loyalty) {
+// tilted 30°; the last slot is highlighted as the free-cup reward.
+function stampCard(loyalty, stampHistory = []) {
   const slots = [];
   for (let i = 0; i < loyalty.perReward; i += 1) {
-    const earned = i < loyalty.inCurrentCard;
+    const earned = i < loyalty.stamps;
     const isReward = i === loyalty.perReward - 1;
     if (earned) {
-      slots.push(`<div class="stamp-slot ${isReward ? 'stamp-reward' : 'stamp-filled'}"><img src="/assets/pecup-logo.png" alt="Stempel ${i + 1}"></div>`);
+      slots.push(
+        `<div class="stamp-slot ${isReward ? 'stamp-reward' : 'stamp-filled'}"><img src="/assets/pecup-logo.png" alt="Stempel ${i + 1}"></div>`
+      );
     } else {
       slots.push(
         `<div class="stamp-slot stamp-empty" title="Stempel ke-${i + 1}">${isReward ? 'GRATIS' : i + 1}</div>`
@@ -98,27 +101,103 @@ function stampCard(loyalty) {
     }
   }
 
-  const justCompletedCard = loyalty.inCurrentCard === 0 && loyalty.rewardsEarned > 0;
-  const message = justCompletedCard
-    ? 'Kartu penuh! Tunjukkan halaman ini saat pesan untuk klaim cup gratismu, lalu kartu dimulai lagi dari nol.'
+  const message = loyalty.cardComplete
+    ? 'Kartu penuh! Centang "Pakai 1 cup gratis" saat checkout — stempelmu kembali ke nol setelah dipakai.'
     : `Kurang <strong>${loyalty.toNextReward}</strong> pesanan selesai lagi untuk 1 cup gratis.`;
+
+  const recent = stampHistory
+    .filter((row) => row.status === 'active')
+    .slice(0, loyalty.perReward)
+    .map(
+      (row) =>
+        `<li style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
+          <span style="color:var(--text-muted);">${escapeHtml(formatShortDateID(row.earned_at))}</span>
+          <span style="color:var(--text);font-weight:600;">${row.order_id ? 'Dari pesanan' : 'Ditambahkan admin'}</span>
+        </li>`
+    )
+    .join('');
 
   return `
   <div class="card">
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;">
       <h2 style="font-size:19px;font-weight:800;">Kartu Stempel</h2>
-      <span style="font-size:13px;color:var(--text-muted);">${loyalty.stamps} stempel seumur hidup</span>
+      <span style="font-size:13px;color:var(--text-muted);">${loyalty.stamps} / ${loyalty.perReward} stempel</span>
     </div>
     <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;margin-bottom:22px;">${message}</p>
     <div class="stamp-grid">${slots.join('')}</div>
+
     ${
-      loyalty.rewardsEarned > 0
-        ? `<div style="margin-top:22px;background:var(--orange-soft);border-radius:12px;padding:14px 16px;font-size:13.5px;color:#7a4a1f;line-height:1.6;">
-            Kamu sudah mengumpulkan <strong>${loyalty.rewardsEarned} cup gratis</strong> sejauh ini. Sebutkan saat memesan ya!
+      loyalty.expiresLabel
+        ? `<div style="margin-top:20px;display:flex;align-items:flex-start;gap:10px;background:var(--surface-2);border-radius:12px;padding:13px 15px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.9" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/></svg>
+            <span style="font-size:12.5px;color:var(--text-muted);line-height:1.6;">Stempel di kartu ini berlaku sampai <strong style="color:var(--text);">${escapeHtml(loyalty.expiresLabel)}</strong> (${loyalty.expiryMonths} bulan sejak stempel pertama). Lewat tanggal itu kartu dimulai lagi dari nol.</span>
           </div>`
         : ''
     }
-    <p style="font-size:12px;color:var(--text-muted);margin-top:16px;line-height:1.6;">Stempel bertambah otomatis setiap pesanan berstatus <strong>Selesai</strong>.</p>
+
+    <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1 1 150px;background:var(--green-soft);border-radius:12px;padding:13px 15px;">
+        <div style="font-size:21px;font-weight:800;color:var(--green-dark);">${loyalty.claims}</div>
+        <div style="font-size:12px;color:var(--green-dark);">cup gratis sudah diklaim</div>
+      </div>
+      ${
+        loyalty.expiredCount > 0
+          ? `<div style="flex:1 1 150px;background:var(--surface-2);border-radius:12px;padding:13px 15px;">
+              <div style="font-size:21px;font-weight:800;color:var(--text-muted);">${loyalty.expiredCount}</div>
+              <div style="font-size:12px;color:var(--text-muted);">stempel kedaluwarsa</div>
+            </div>`
+          : ''
+      }
+    </div>
+
+    ${
+      recent
+        ? `<details style="margin-top:18px;">
+            <summary style="font-size:13px;font-weight:700;cursor:pointer;color:var(--text);">Tanggal stempel di kartu ini</summary>
+            <ul style="list-style:none;padding:0;margin:10px 0 0;">${recent}</ul>
+          </details>`
+        : ''
+    }
+  </div>`;
+}
+
+// Shopee-style membership ladder, driven by how many free cups were claimed.
+function tierCard(loyalty) {
+  if (!loyalty.tiersEnabled) return '';
+  const style = loyalty.tierStyle;
+  const tier = loyalty.tier;
+  const perks = [];
+  if (tier.discountPercent > 0) perks.push(`Diskon <strong>${tier.discountPercent}%</strong> tiap pesanan`);
+  if (tier.weeklyFreeCup) perks.push('Diskon mingguan untuk 1 cup');
+  if (tier.birthdayFreeCup) perks.push('1 cup gratis saat ulang tahun');
+
+  return `
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+      <h2 style="font-size:19px;font-weight:800;">Membership</h2>
+      <span style="font-size:13px;font-weight:800;letter-spacing:0.5px;padding:6px 16px;border-radius:99px;color:${style.color};background:${style.bg};">${escapeHtml(tier.name.toUpperCase())}</span>
+    </div>
+    ${
+      perks.length
+        ? `<ul style="list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:9px;">
+            ${perks
+              .map(
+                (p) => `<li style="display:flex;align-items:flex-start;gap:9px;font-size:13.5px;color:var(--text);line-height:1.6;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${style.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><path d="M20 6L9 17l-5-5"/></svg>
+                  <span>${p}</span>
+                </li>`
+              )
+              .join('')}
+          </ul>`
+        : `<p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;margin:0 0 14px;">Belum ada benefit khusus di tingkat ini — klaim cup gratis untuk naik tingkat.</p>`
+    }
+    ${
+      loyalty.nextTier
+        ? `<div style="background:var(--surface-2);border-radius:12px;padding:13px 15px;font-size:12.5px;color:var(--text-muted);line-height:1.6;">
+            Klaim <strong style="color:var(--text);">${Math.max(0, loyalty.nextTier.minClaims - loyalty.claims)}</strong> cup gratis lagi untuk naik ke <strong style="color:var(--text);">${escapeHtml(loyalty.nextTier.name)}</strong>.
+          </div>`
+        : `<div style="background:var(--surface-2);border-radius:12px;padding:13px 15px;font-size:12.5px;color:var(--text-muted);line-height:1.6;">Kamu sudah di tingkat tertinggi. Terima kasih ya!</div>`
+    }
   </div>`;
 }
 
@@ -144,7 +223,7 @@ function orderHistory(orders) {
     .join('');
 }
 
-function renderAkun({ customer, loyalty, orders, cartCount = 0, flash = '', errors = [] }) {
+function renderAkun({ customer, loyalty, orders, stampHistory = [], cartCount = 0, flash = '', errors = [] }) {
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount, null, customer)}
@@ -165,7 +244,9 @@ function renderAkun({ customer, loyalty, orders, cartCount = 0, flash = '', erro
 
     <div class="split-layout">
       <div class="split-main" style="gap:24px;">
-        ${stampCard(loyalty)}
+        ${tierCard(loyalty)}
+
+        ${stampCard(loyalty, stampHistory)}
 
         <div class="card">
           <h2 style="font-size:19px;font-weight:800;margin-bottom:6px;">Data Pesanan Tersimpan</h2>

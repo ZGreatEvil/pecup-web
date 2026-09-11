@@ -30,6 +30,17 @@ create table if not exists products (
 alter table products add column if not exists is_bestseller boolean not null default false;
 alter table products add column if not exists is_recommended boolean not null default false;
 
+-- Gallery: ordered list of public Blob URLs. `image` above stays as the
+-- primary/first photo so older code paths and existing rows keep working;
+-- `images` holds the full set the carousel pages through.
+alter table products add column if not exists images text[] not null default '{}';
+
+-- Wholesale ("grosir") pricing: from wholesale_min_qty units of this product
+-- in one cart line, each unit costs wholesale_price instead of price.
+-- wholesale_price = null means this product has no wholesale tier.
+alter table products add column if not exists wholesale_min_qty integer not null default 0;
+alter table products add column if not exists wholesale_price integer;
+
 create table if not exists orders (
   id bigint generated always as identity primary key,
   order_number text not null default '',
@@ -53,6 +64,11 @@ create table if not exists orders (
 alter table orders add column if not exists address text not null default '';
 alter table orders add column if not exists delivery_date date;
 
+-- Loyalty reward applied to this order: how much was waived, and which cup.
+-- Stored so a redeemed free cup is auditable after the fact.
+alter table orders add column if not exists reward_discount integer not null default 0;
+alter table orders add column if not exists reward_item text;
+
 -- Returning-customer accounts. The WhatsApp number IS the username (stored
 -- in canonical 62xxxxxxxxx form so "0812...", "+62 812..." and "62812..."
 -- all resolve to the same account).
@@ -64,6 +80,57 @@ create table if not exists customers (
   address text not null default '',
   created_at timestamptz not null default now()
 );
+
+-- Free cups already handed over, so "rewards available" can go down as well
+-- as up. Stamps themselves are derived from completed orders.
+alter table customers add column if not exists rewards_redeemed integer not null default 0;
+
+-- Superseded by the `stamps` table below — kept so re-running this file on an
+-- older database doesn't fail, but no longer read by the app.
+alter table customers add column if not exists stamp_adjustment integer not null default 0;
+
+-- Birthday (optional) — drives the per-tier birthday perk.
+alter table customers add column if not exists birthday date;
+
+-- Individual stamps, each with the date it was earned. A real row per stamp
+-- (rather than a derived count) is what makes expiry dates, "reset to zero on
+-- redemption" and an auditable history possible.
+--   status: 'active'   — counts toward the current card
+--           'redeemed' — spent on a free cup
+--           'expired'  — aged out before being spent
+create table if not exists stamps (
+  id bigint generated always as identity primary key,
+  customer_id bigint not null references customers(id) on delete cascade,
+  order_id bigint references orders(id) on delete set null,
+  earned_at timestamptz not null default now(),
+  status text not null default 'active',
+  settled_at timestamptz,
+  note text
+);
+
+-- One stamp per order, so flipping an order Selesai → Diproses → Selesai
+-- can't mint extra stamps. Not a partial index: Postgres treats NULLs as
+-- distinct, so manually-added stamps (order_id null) are unaffected, and a
+-- plain index can serve as an ON CONFLICT target (a partial one can't).
+create unique index if not exists idx_stamps_order_id on stamps(order_id);
+create index if not exists idx_stamps_customer_status on stamps(customer_id, status);
+
+-- How many free cups this customer has actually claimed — drives the tier.
+alter table customers add column if not exists rewards_claimed integer not null default 0;
+
+-- Small key/value store for shop-wide settings a superadmin can change
+-- without a deploy — currently just how many stamps earn a free cup.
+create table if not exists settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+insert into settings (key, value) values
+  ('stamps_per_reward', '10'),
+  ('stamp_expiry_months', '2'),
+  ('tiers_enabled', '1'),
+  ('tiers', '[]')
+on conflict (key) do nothing;
 
 -- Orders placed while signed in are linked to the account, which is what
 -- the loyalty stamps are counted from. Guest checkout leaves this null.
@@ -142,6 +209,7 @@ create index if not exists idx_admin_logs_created_at on admin_logs(created_at de
 -- 6-argument version lingers and calls can bind to the wrong one.
 drop function if exists create_order(text, text, text, jsonb, text, text);
 drop function if exists create_order(text, text, text, jsonb, text, text, text, date);
+drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint);
 
 create or replace function create_order(
   p_customer_name text,
@@ -152,7 +220,8 @@ create or replace function create_order(
   p_date_key text,
   p_address text,
   p_delivery_date date,
-  p_customer_id bigint
+  p_customer_id bigint,
+  p_use_reward boolean
 ) returns jsonb
 language plpgsql
 as $$
@@ -167,6 +236,16 @@ declare
   v_stock integer;
   v_name text;
   v_label text;
+  v_wholesale_min integer;
+  v_wholesale_price integer;
+  v_reward_discount integer := 0;
+  v_reward_item text;
+  v_per_reward integer;
+  v_expiry_months integer;
+  v_stamp_count integer;
+  v_oldest_stamp timestamptz;
+  v_cheapest_price integer;
+  v_cheapest_name text;
 begin
   if jsonb_array_length(p_items) = 0 then
     raise exception 'Keranjang kosong.';
@@ -185,7 +264,8 @@ begin
     v_product_id := (v_item->>'productId')::bigint;
     v_qty := (v_item->>'qty')::integer;
 
-    select price, stock, name into v_price, v_stock, v_name
+    select price, stock, name, wholesale_min_qty, wholesale_price
+      into v_price, v_stock, v_name, v_wholesale_min, v_wholesale_price
     from products where id = v_product_id;
 
     if v_price is null then
@@ -195,11 +275,61 @@ begin
       raise exception 'Stok % tidak mencukupi (tersisa %).', v_name, v_stock;
     end if;
 
+    -- Wholesale tier is applied here, server-side, so the discount can never
+    -- be forged by a client sending its own prices.
+    if v_wholesale_price is not null and v_wholesale_min > 0 and v_qty >= v_wholesale_min then
+      v_price := v_wholesale_price;
+    end if;
+
     v_subtotal := v_subtotal + v_price * v_qty;
   end loop;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id)
+  -- Loyalty reward. Everything here is re-derived from the database and the
+  -- customer row is locked FOR UPDATE, so two checkouts racing in separate
+  -- serverless invocations can't both spend the same card, and a client can
+  -- only ever ask for the reward (p_use_reward) — never name its value.
+  if p_use_reward and p_customer_id is not null then
+    perform 1 from customers where id = p_customer_id for update;
+
+    select coalesce(value::integer, 10) into v_per_reward from settings where key = 'stamps_per_reward';
+    if v_per_reward is null or v_per_reward < 1 then v_per_reward := 10; end if;
+    select coalesce(value::integer, 2) into v_expiry_months from settings where key = 'stamp_expiry_months';
+    if v_expiry_months is null or v_expiry_months < 1 then v_expiry_months := 2; end if;
+
+    select min(earned_at), count(*) into v_oldest_stamp, v_stamp_count
+    from stamps where customer_id = p_customer_id and status = 'active';
+
+    -- The whole card lapses together, dated from its oldest stamp.
+    if v_oldest_stamp is not null
+       and now() > v_oldest_stamp + (v_expiry_months || ' months')::interval then
+      update stamps set status = 'expired', settled_at = now()
+      where customer_id = p_customer_id and status = 'active';
+      v_stamp_count := 0;
+    end if;
+
+    if v_stamp_count >= v_per_reward then
+      -- The cheapest cup in the order is the one waived.
+      select p.price, p.name into v_cheapest_price, v_cheapest_name
+      from jsonb_array_elements(p_items) as item
+      join products p on p.id = (item->>'productId')::bigint
+      order by p.price asc
+      limit 1;
+
+      if v_cheapest_price is not null then
+        v_reward_discount := least(v_cheapest_price, v_subtotal);
+        v_reward_item := v_cheapest_name;
+        -- Spending a card resets the stamp count to zero and bumps the claim
+        -- counter, which is what drives the membership tier.
+        update stamps set status = 'redeemed', settled_at = now()
+        where customer_id = p_customer_id and status = 'active';
+        update customers set rewards_claimed = coalesce(rewards_claimed, 0) + 1
+        where id = p_customer_id;
+      end if;
+    end if;
+  end if;
+
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal - v_reward_discount, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item)
   returning id into v_order_id;
 
   v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');
@@ -210,7 +340,13 @@ begin
     v_qty := (v_item->>'qty')::integer;
     v_label := v_item->>'label';
 
-    select price, name into v_price, v_name from products where id = v_product_id;
+    select price, name, wholesale_min_qty, wholesale_price
+      into v_price, v_name, v_wholesale_min, v_wholesale_price
+    from products where id = v_product_id;
+
+    if v_wholesale_price is not null and v_wholesale_min > 0 and v_qty >= v_wholesale_min then
+      v_price := v_wholesale_price;
+    end if;
 
     insert into order_items (order_id, product_id, product_name, price, qty, subtotal)
     values (v_order_id, v_product_id, coalesce(v_label, v_name), v_price, v_qty, v_price * v_qty);
@@ -222,7 +358,9 @@ begin
     'id', v_order_id,
     'orderNumber', v_order_number,
     'subtotal', v_subtotal,
-    'total', v_subtotal
+    'rewardDiscount', v_reward_discount,
+    'rewardItem', v_reward_item,
+    'total', v_subtotal - v_reward_discount
   );
 end;
 $$;

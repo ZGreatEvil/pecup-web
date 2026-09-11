@@ -33,19 +33,60 @@ function soldOutBanner() {
   </div>`;
 }
 
-// Renders a square product thumbnail: the uploaded photo if present,
+// Every photo for a product, in display order. `image` is the primary and
+// always comes first; `images` may repeat it, so duplicates are dropped.
+function productPhotos(product) {
+  const list = [];
+  if (product.image) list.push(product.image);
+  for (const url of product.images || []) {
+    if (url && !list.includes(url)) list.push(url);
+  }
+  return list;
+}
+
+const ARROW_LEFT =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+const ARROW_RIGHT =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+
+// Renders a square product thumbnail: the uploaded photo(s) if present,
 // otherwise the pastel fruit-cup placeholder icon. Out-of-stock products get
-// a greyed-out image with a centered "Stok Habis" banner.
-function productThumb(product, { size = 88, radius = 16 } = {}) {
+// a greyed-out image with a centered "Stok Habis" banner. With more than one
+// photo it becomes a carousel — arrows and dots everywhere it appears, but
+// only auto-advancing where `autoplay` is set (the product page).
+function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}) {
   const [tint, tintSoft] = tintFor(product.id);
   const soldOut = Number(product.stock) <= 0;
   const dim = soldOut ? 'filter:grayscale(1);opacity:0.6;' : '';
+  const photos = productPhotos(product);
 
-  const inner = product.image
-    ? // `product.image` is the full public Vercel Blob URL (stored as-is
-      // at upload time), not a local path.
-      `<img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;${dim}">`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(tint, size)}</div>`;
+  let inner;
+  if (photos.length === 0) {
+    inner = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(tint, size)}</div>`;
+  } else if (photos.length === 1) {
+    inner = `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;${dim}">`;
+  } else {
+    const slides = photos
+      .map(
+        (url, i) => `<img src="${escapeAttr(url)}" alt="${escapeAttr(product.name)} foto ${i + 1}" loading="${
+          i === 0 ? 'eager' : 'lazy'
+        }" style="width:100%;height:100%;object-fit:cover;display:block;flex:0 0 100%;${dim}">`
+      )
+      .join('');
+    const dots = photos
+      .map(
+        (_, i) =>
+          `<button type="button" class="carousel-dot${i === 0 ? ' is-active' : ''}" data-index="${i}" aria-label="Foto ${i + 1}"></button>`
+      )
+      .join('');
+
+    inner = `<div class="carousel" data-count="${photos.length}"${autoplay ? ' data-autoplay="2000"' : ''}>
+      <div class="carousel-track">${slides}</div>
+      <button type="button" class="carousel-arrow carousel-prev" aria-label="Foto sebelumnya">${ARROW_LEFT}</button>
+      <button type="button" class="carousel-arrow carousel-next" aria-label="Foto berikutnya">${ARROW_RIGHT}</button>
+      <div class="carousel-dots">${dots}</div>
+    </div>`;
+  }
 
   return `<div style="width:100%;height:100%;border-radius:${radius}px;overflow:hidden;background:${tintSoft};position:relative;">
     ${inner}
@@ -53,4 +94,4 @@ function productThumb(product, { size = 88, radius = 16 } = {}) {
   </div>`;
 }
 
-module.exports = { productThumb, tintFor, placeholderSvg };
+module.exports = { productThumb, productPhotos, tintFor, placeholderSvg };

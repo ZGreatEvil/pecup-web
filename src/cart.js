@@ -56,6 +56,23 @@ function serializeCart(cart) {
   return JSON.stringify(cart);
 }
 
+// Wholesale ("grosir"): once a single cart line reaches the product's
+// wholesale_min_qty, every unit on that line drops to wholesale_price. This
+// mirrors the same rule inside create_order (schema.sql) — the database is
+// the authority at checkout, this is just what the shopper is shown.
+function unitPriceFor(product, qty) {
+  const minQty = Number(product.wholesale_min_qty) || 0;
+  const wholesalePrice = product.wholesale_price === null || product.wholesale_price === undefined
+    ? null
+    : Number(product.wholesale_price);
+  const basePrice = Number(product.price) || 0;
+
+  if (wholesalePrice !== null && minQty > 0 && qty >= minQty && wholesalePrice < basePrice) {
+    return { unitPrice: wholesalePrice, isWholesale: true };
+  }
+  return { unitPrice: basePrice, isWholesale: false };
+}
+
 function cartProductIds(cart) {
   const ids = [];
   for (const entry of Object.values(cart)) {
@@ -80,14 +97,24 @@ async function buildCartItems(cart, { products } = {}) {
     // explicitly instead, and drop the line if nothing is available.
     const cappedQty = Math.min(entry.qty, Math.max(Number(product.stock) || 0, 0));
     if (cappedQty <= 0) continue;
-    const subtotal = product.price * cappedQty;
+    const pricing = unitPriceFor(product, cappedQty);
+    const subtotal = pricing.unitPrice * cappedQty;
 
     const fruits = (entry.fruits || [])
       .map((id) => byId.get(Number(id)))
       .filter(Boolean)
       .map((f) => ({ id: f.id, name: f.name }));
 
-    items.push({ key, product, qty: cappedQty, subtotal, fruits });
+    items.push({
+      key,
+      product,
+      qty: cappedQty,
+      subtotal,
+      fruits,
+      unitPrice: pricing.unitPrice,
+      isWholesale: pricing.isWholesale,
+      savings: pricing.isWholesale ? (Number(product.price) - pricing.unitPrice) * cappedQty : 0,
+    });
   }
   const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
   return { items, subtotal };
@@ -132,6 +159,7 @@ module.exports = {
   serializeCart,
   buildCartItems,
   cartProductIds,
+  unitPriceFor,
   cartCount,
   addToCart,
   setCartQty,

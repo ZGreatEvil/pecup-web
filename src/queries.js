@@ -41,8 +41,8 @@ async function listCategories() {
 
 async function createProduct(data) {
   const rows = await db.query(
-    `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended, images, wholesale_min_qty, wholesale_price)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13)
      returning id`,
     [
       data.name,
@@ -55,52 +55,42 @@ async function createProduct(data) {
       Boolean(data.active),
       Boolean(data.isBestseller),
       Boolean(data.isRecommended),
+      data.images || [],
+      Number(data.wholesaleMinQty) || 0,
+      data.wholesalePrice === null || data.wholesalePrice === undefined ? null : Number(data.wholesalePrice),
     ]
   );
   return Number(rows[0].id);
 }
 
 async function updateProduct(id, data) {
-  // Only overwrite the image when a new one was actually uploaded (mirrors
-  // the local version's `COALESCE(@image, image)`).
-  if (data.image) {
-    await db.query(
-      `update products set name = $1, description = $2, category = $3, weight = $4,
-              price = $5, stock = $6, active = $7, image = $8, is_bestseller = $9, is_recommended = $10
-       where id = $11`,
-      [
-        data.name,
-        data.description,
-        data.category,
-        data.weight,
-        data.price,
-        data.stock,
-        Boolean(data.active),
-        data.image,
-        Boolean(data.isBestseller),
-        Boolean(data.isRecommended),
-        id,
-      ]
-    );
-  } else {
-    await db.query(
-      `update products set name = $1, description = $2, category = $3, weight = $4,
-              price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9
-       where id = $10`,
-      [
-        data.name,
-        data.description,
-        data.category,
-        data.weight,
-        data.price,
-        data.stock,
-        Boolean(data.active),
-        Boolean(data.isBestseller),
-        Boolean(data.isRecommended),
-        id,
-      ]
-    );
-  }
+  // The gallery is always rewritten wholesale from `data.images` (the caller
+  // has already merged keeps + removals + new uploads). `image` stays in sync
+  // as the first photo so the rest of the app's single-photo paths still work.
+  const images = data.images || [];
+  const primary = images[0] || null;
+  await db.query(
+    `update products set name = $1, description = $2, category = $3, weight = $4,
+            price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9,
+            images = $10::text[], image = $11, wholesale_min_qty = $12, wholesale_price = $13
+     where id = $14`,
+    [
+      data.name,
+      data.description,
+      data.category,
+      data.weight,
+      data.price,
+      data.stock,
+      Boolean(data.active),
+      Boolean(data.isBestseller),
+      Boolean(data.isRecommended),
+      images,
+      primary,
+      Number(data.wholesaleMinQty) || 0,
+      data.wholesalePrice === null || data.wholesalePrice === undefined ? null : Number(data.wholesalePrice),
+      id,
+    ]
+  );
 }
 
 async function setProductStock(id, stock) {
@@ -121,10 +111,14 @@ async function toggleProductActive(id) {
 
 async function productStats() {
   const all = await db.query('select id, active, stock from products');
-  const total = all.length;
-  const active = all.filter((p) => p.active).length;
-  const lowStock = all.filter((p) => p.stock <= 5).length;
-  return { total, active, lowStock };
+  return {
+    total: all.length,
+    active: all.filter((p) => p.active).length,
+    inactive: all.filter((p) => !p.active).length,
+    // Sold out is its own bucket: "low" means running down but still sellable.
+    soldOut: all.filter((p) => Number(p.stock) <= 0).length,
+    lowStock: all.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= 5).length,
+  };
 }
 
 // ---------------- orders ----------------
@@ -134,21 +128,32 @@ async function productStats() {
 // the involved product rows with SELECT ... FOR UPDATE. That's what keeps
 // this safe even if two customers check out the last unit at the same time
 // across two different serverless invocations.
-async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate, customerId }) {
-  const rows = await db.query('select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint) as result', [
-    customerName,
-    whatsapp,
-    notes || '',
-    JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty, label: it.label || null }))),
-    proofFilename || null,
-    toDateKey(new Date()),
-    address || '',
-    deliveryDate || null,
-    customerId || null,
-  ]);
+async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate, customerId, useReward }) {
+  const rows = await db.query(
+    'select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean) as result',
+    [
+      customerName,
+      whatsapp,
+      notes || '',
+      JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty, label: it.label || null }))),
+      proofFilename || null,
+      toDateKey(new Date()),
+      address || '',
+      deliveryDate || null,
+      customerId || null,
+      Boolean(useReward),
+    ]
+  );
   const raw = rows[0].result;
   const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  return { id: Number(result.id), orderNumber: result.orderNumber, subtotal: result.subtotal, total: result.total };
+  return {
+    id: Number(result.id),
+    orderNumber: result.orderNumber,
+    subtotal: result.subtotal,
+    total: result.total,
+    rewardDiscount: Number(result.rewardDiscount) || 0,
+    rewardItem: result.rewardItem || null,
+  };
 }
 
 async function getOrder(id) {

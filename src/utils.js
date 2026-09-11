@@ -32,11 +32,18 @@ function generateOrderNumber(id, date = new Date()) {
   return `PC-${y}${m}${d}-${String(id).padStart(4, '0')}`;
 }
 
+// Everything user-facing is rendered in Jakarta time (WIB, UTC+7),
+// explicitly — never in the server's local zone. Vercel runs functions in
+// UTC, so relying on the default would show every timestamp 7 hours early
+// and, worse, file a 6am order under the previous calendar day.
+const TIMEZONE = 'Asia/Jakarta';
+
 function formatDateID(dateInput) {
-  // Treat a bare 'YYYY-MM-DD' as a local calendar date (not UTC midnight),
-  // so the weekday/day shown always matches the date key it was built from.
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(dateInput) ? new Date(dateInput + 'T00:00:00') : new Date(dateInput);
+  // Treat a bare 'YYYY-MM-DD' as noon UTC so the WIB conversion can't slip
+  // to the neighbouring day in either direction.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(dateInput) ? new Date(dateInput + 'T12:00:00Z') : new Date(dateInput);
   return d.toLocaleDateString('id-ID', {
+    timeZone: TIMEZONE,
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -46,16 +53,28 @@ function formatDateID(dateInput) {
 
 function formatTimeID(dateInput) {
   const d = new Date(dateInput);
-  return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString('id-ID', { timeZone: TIMEZONE, hour: '2-digit', minute: '2-digit' });
 }
 
-// yyyy-mm-dd in local time (used for grouping/filtering orders by day)
+function formatDateTimeID(dateInput) {
+  return `${formatShortDateID(dateInput)}, ${formatTimeID(dateInput)} WIB`;
+}
+
+function formatShortDateID(dateInput) {
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(dateInput) ? new Date(dateInput + 'T12:00:00Z') : new Date(dateInput);
+  return d.toLocaleDateString('id-ID', { timeZone: TIMEZONE, day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// yyyy-mm-dd as it reads on a Jakarta wall clock (used for grouping and
+// filtering orders by day). 'en-CA' is the locale that formats as YYYY-MM-DD.
 function toDateKey(dateInput) {
   const d = new Date(dateInput);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 // Accepts the shapes Indonesian shoppers actually type — 08xx…, 62 8xx…,
@@ -121,8 +140,11 @@ module.exports = {
   csvEscape,
   generateOrderNumber,
   formatDateID,
+  formatShortDateID,
+  formatDateTimeID,
   formatTimeID,
   toDateKey,
+  TIMEZONE,
   slugify,
   normalizeWhatsapp,
   formatWhatsapp,
