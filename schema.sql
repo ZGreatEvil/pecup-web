@@ -43,8 +43,15 @@ create table if not exists orders (
   email_sent boolean not null default false,
   email_error text,
   date_key text not null,          -- 'YYYY-MM-DD', local calendar day at checkout time
+  address text not null default '', -- short drop-off note: company, floor, landmark
+  delivery_date date,              -- the day the customer wants it delivered
   created_at timestamptz not null default now()
 );
+
+-- Same as above: picks up the delivery fields on a database created before
+-- they existed.
+alter table orders add column if not exists address text not null default '';
+alter table orders add column if not exists delivery_date date;
 
 create table if not exists order_items (
   id bigint generated always as identity primary key,
@@ -108,13 +115,20 @@ create index if not exists idx_admin_logs_created_at on admin_logs(created_at de
 -- "Mix Buah (Mangga, Semangka, Nanas)", since a mix is one product row with
 -- a customer-chosen composition rather than its own DB row per combination.
 
+-- Adding parameters to a plpgsql function creates an *overload* rather than
+-- replacing it, so drop the previous signature first — otherwise the old
+-- 6-argument version lingers and calls can bind to the wrong one.
+drop function if exists create_order(text, text, text, jsonb, text, text);
+
 create or replace function create_order(
   p_customer_name text,
   p_whatsapp text,
   p_notes text,
   p_items jsonb,
   p_proof_filename text,
-  p_date_key text
+  p_date_key text,
+  p_address text,
+  p_delivery_date date
 ) returns jsonb
 language plpgsql
 as $$
@@ -160,8 +174,8 @@ begin
     v_subtotal := v_subtotal + v_price * v_qty;
   end loop;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal, p_proof_filename, 'menunggu', p_date_key)
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date)
   returning id into v_order_id;
 
   v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');

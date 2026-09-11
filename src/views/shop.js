@@ -1,6 +1,6 @@
-const { page, customerHeader, customerFooter } = require('./layout');
+const { page, customerHeader, customerFooter, backButton } = require('./layout');
 const { productThumb } = require('./productIcon');
-const { formatRupiah, escapeHtml, escapeAttr } = require('../utils');
+const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID } = require('../utils');
 
 // Best Seller takes priority if a product is somehow flagged as both.
 function productBadge(p) {
@@ -9,13 +9,37 @@ function productBadge(p) {
   return null;
 }
 
-function badgeHtml(p, { top = 8, left = 8 } = {}) {
+function badgeHtml(p, { top = 12, left = 12, scale = 1 } = {}) {
   const badge = productBadge(p);
   if (!badge) return '';
-  return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;white-space:nowrap;">${badge.text}</span>`;
+  const fontSize = (12.5 * scale).toFixed(1);
+  const padY = (7 * scale).toFixed(0);
+  const padX = (15 * scale).toFixed(0);
+  return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:${fontSize}px;font-weight:800;letter-spacing:0.2px;padding:${padY}px ${padX}px;border-radius:99px;white-space:nowrap;box-shadow:0 4px 12px -3px rgba(0,0,0,0.3);text-shadow:0 1px 2px rgba(0,0,0,0.15);">${badge.text}</span>`;
 }
 
-function renderBeranda({ products, cartCount, category, categories: dbCategories = [] }) {
+const MINUS_ICON =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>';
+const PLUS_ICON =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+
+// Mirrors stepperMarkup() in layout.js's client script: the server renders
+// the first paint, the script re-renders the same shape after every change.
+function qtyControl({ key, productId, stock, qty }) {
+  const inner =
+    qty > 0
+      ? `<span class="qty-stepper">
+          <button class="qty-step" data-delta="-1" type="button" aria-label="Kurangi">${MINUS_ICON}</button>
+          <span class="qty-value">${qty}</span>
+          <button class="qty-step" data-delta="1" type="button" aria-label="Tambah"${
+            qty >= stock ? ' disabled title="Stok maksimum"' : ''
+          }>${PLUS_ICON}</button>
+        </span>`
+      : `<button class="add-btn qty-step" data-delta="1" type="button" title="Tambah ke keranjang" style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;">${PLUS_ICON}</button>`;
+  return `<div class="qty-control" data-key="${escapeAttr(key)}" data-product-id="${productId}" data-stock="${stock}" data-qty="${qty}">${inner}</div>`;
+}
+
+function renderBeranda({ products, cartCount, category, categories: dbCategories = [], cart = {} }) {
   const categories = ['Semua', ...dbCategories];
   const chips = categories
     .map((c) => {
@@ -32,19 +56,20 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
         .map((p) => {
           const isMix = p.category === 'Mix Buah';
           const inStock = p.stock > 0;
+          // A mix is configured on its own page (which 2-3 fruits), so it
+          // can't be stepped up and down from the card.
           const action = !inStock
             ? `<button class="add-btn" type="button" disabled style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;opacity:0.5;cursor:not-allowed;" title="Stok habis">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
             </button>`
             : isMix
             ? `<a href="/produk/${p.id}" class="add-btn" style="height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 14px;font-size:12.5px;font-weight:700;white-space:nowrap;">Pilih Buah</a>`
-            : `<form method="post" action="/keranjang/tambah">
-            <input type="hidden" name="productId" value="${p.id}">
-            <input type="hidden" name="qty" value="1">
-            <button class="add-btn" type="submit" style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;" title="Tambah ke keranjang">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </form>`;
+            : qtyControl({
+                key: String(p.id),
+                productId: p.id,
+                stock: Number(p.stock) || 0,
+                qty: Number((cart[String(p.id)] || {}).qty) || 0,
+              });
           return `
       <div class="p-card" style="position:relative;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
         <a href="/produk/${p.id}" style="position:absolute;inset:0;z-index:1;" aria-label="${escapeAttr(p.name)}"></a>
@@ -202,8 +227,11 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [] }) 
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount)}
-  <div class="px-page" style="padding-top:24px;font-size:13.5px;color:var(--text-muted);">
-    <a href="/">Beranda</a> &nbsp;/&nbsp; <a href="/#menu">Menu</a> &nbsp;/&nbsp; <span style="color:var(--text);">${escapeHtml(product.name)}</span>
+  <div class="px-page" style="padding-top:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+    ${backButton('/#menu', 'Kembali ke Menu')}
+    <div style="font-size:13.5px;color:var(--text-muted);">
+      <a href="/">Beranda</a> &nbsp;/&nbsp; <a href="/#menu">Menu</a> &nbsp;/&nbsp; <span style="color:var(--text);">${escapeHtml(product.name)}</span>
+    </div>
   </div>
 
   <section class="detail-layout px-page" style="padding-top:32px;padding-bottom:72px;">
@@ -269,7 +297,7 @@ function renderKeranjang({ items, subtotal, cartCount }) {
     ? items
         .map(
           (it) => `
-      <div class="cart-row">
+      <div class="cart-row" data-cart-row>
         <div class="cart-row-thumb">${productThumb(it.product, { size: 48, radius: 14 })}</div>
         <div class="cart-row-name">
           <div style="font-size:16px;font-weight:700;">${escapeHtml(it.product.name)}</div>
@@ -280,11 +308,15 @@ function renderKeranjang({ items, subtotal, cartCount }) {
               : ''
           }
         </div>
-        <form method="post" action="/keranjang/update" class="cart-row-qty">
-          <input type="hidden" name="key" value="${escapeAttr(it.key)}">
-          <input type="number" name="qty" value="${it.qty}" min="0" max="${it.product.stock}" class="qty-auto-submit" style="width:64px;padding:8px;text-align:center;">
-        </form>
-        <div class="cart-row-total">${formatRupiah(it.subtotal)}</div>
+        <div class="cart-row-qty">
+          ${qtyControl({
+            key: it.key,
+            productId: it.product.id,
+            stock: Number(it.product.stock) || 0,
+            qty: it.qty,
+          })}
+        </div>
+        <div class="cart-row-total" data-line-total>${formatRupiah(it.subtotal)}</div>
         <form method="post" action="/keranjang/hapus">
           <input type="hidden" name="key" value="${escapeAttr(it.key)}">
           <button class="trash-btn" type="submit" style="padding:6px;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#9a9a9f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg></button>
@@ -298,17 +330,17 @@ function renderKeranjang({ items, subtotal, cartCount }) {
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount, stepHeader(1))}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
-    <h1 style="font-size:26px;font-weight:800;margin-bottom:6px;">Keranjang Belanja</h1>
-    <p style="color:var(--text-muted);font-size:14px;margin-bottom:30px;">${items.length} produk di keranjang</p>
+    ${backButton('/', 'Lanjut Belanja')}
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:6px;margin-top:20px;">Keranjang Belanja</h1>
+    <p style="color:var(--text-muted);font-size:14px;margin-bottom:30px;"><span data-cart-itemcount>${items.length} produk</span> di keranjang</p>
     <div class="split-layout">
       <div class="split-main">
         ${rows}
-        <a href="/" style="font-size:14px;font-weight:600;margin-top:24px;">← Lanjut Belanja</a>
       </div>
       <div class="split-side">
         <h3 style="font-size:18px;font-weight:800;margin-bottom:22px;">Ringkasan Pesanan</h3>
-        <div style="display:flex;justify-content:space-between;font-size:14.5px;color:var(--text-muted);margin-bottom:12px;"><span>Subtotal (${items.length} produk)</span><span style="color:var(--text);font-weight:600;">${formatRupiah(subtotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:16px;border-top:1px solid var(--border);margin-bottom:24px;"><span>Total</span><span style="color:var(--green-dark);">${formatRupiah(subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:14.5px;color:var(--text-muted);margin-bottom:12px;"><span>Subtotal</span><span style="color:var(--text);font-weight:600;" data-cart-subtotal>${formatRupiah(subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:16px;border-top:1px solid var(--border);margin-bottom:24px;"><span>Total</span><span style="color:var(--green-dark);" data-cart-total>${formatRupiah(subtotal)}</span></div>
         ${
           items.length
             ? `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
@@ -337,12 +369,14 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
   const errorHtml = errors.length
     ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>`
     : '';
+  const todayKey = toDateKey(new Date());
 
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount, stepHeader(2))}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
-    <h1 style="font-size:26px;font-weight:800;margin-bottom:30px;">Checkout Pesanan</h1>
+    ${backButton('/keranjang', 'Kembali ke Keranjang')}
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:30px;margin-top:20px;">Checkout Pesanan</h1>
     ${errorHtml}
     <form method="post" action="/checkout" enctype="multipart/form-data">
       <div class="split-layout">
@@ -350,8 +384,26 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
             <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
-            <div class="field"><label>Nomor WhatsApp <span class="req">*</span></label><input type="text" name="whatsapp" required value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 0812xxxxxxx"></div>
+            <div class="field">
+              <label>Nomor WhatsApp <span class="req">*</span></label>
+              <input type="tel" name="whatsapp" required inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" title="Masukkan nomor WhatsApp yang valid, contoh: 081234567890" value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 081234567890">
+              <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor aktif — kami pakai untuk konfirmasi pesanan.</span>
+            </div>
             <div style="margin-bottom:0;"><label>Catatan Pesanan (opsional)</label><textarea name="notes" rows="3" placeholder="Contoh: tolong pepaya-nya diganti semangka, kurangi manis">${escapeHtml(formValues.notes || '')}</textarea></div>
+          </div>
+
+          <div class="card">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Pengantaran</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Kapan dan ke mana pesananmu diantar.</p>
+            <div class="field">
+              <label>Tanggal Pengantaran <span class="req">*</span></label>
+              <input type="date" name="deliveryDate" required min="${todayKey}" value="${escapeAttr(formValues.deliveryDate || '')}">
+            </div>
+            <div style="margin-bottom:0;">
+              <label>Lokasi Pengantaran <span class="req">*</span></label>
+              <input type="text" name="address" required maxlength="200" value="${escapeAttr(formValues.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5, atau Kos Melati no. 12">
+              <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Cukup nama kantor/tempat dan patokannya — tidak perlu alamat lengkap.</span>
+            </div>
           </div>
 
           <div class="card">
@@ -420,6 +472,16 @@ function renderSukses({ order, items, emailOk }) {
       <div style="width:100%;background:var(--surface-2);border-radius:14px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;text-align:left;">
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">No. Pesanan</span><span style="font-weight:700;">${escapeHtml(order.order_number)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Jumlah Produk</span><span style="font-weight:700;">${items.length} produk</span></div>
+        ${
+          order.delivery_date
+            ? `<div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;"><span style="color:var(--text-muted);">Diantar</span><span style="font-weight:700;text-align:right;">${escapeHtml(formatDateID(order.delivery_date))}</span></div>`
+            : ''
+        }
+        ${
+          order.address
+            ? `<div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;"><span style="color:var(--text-muted);">Lokasi</span><span style="font-weight:700;text-align:right;">${escapeHtml(order.address)}</span></div>`
+            : ''
+        }
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Total Pembayaran</span><span style="font-weight:700;color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
       </div>
       <a href="/" class="btn-primary" style="display:block;width:100%;text-align:center;padding:15px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:8px;">Kembali ke Beranda</a>

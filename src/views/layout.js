@@ -13,8 +13,11 @@ const SHARED_STYLE = `
   html,body{margin:0;padding:0;}
   body{font-family:'Work Sans',sans-serif;background:var(--bg);color:var(--text);}
   h1,h2,h3,h4{font-family:'Plus Jakarta Sans',sans-serif;margin:0;}
-  a{color:var(--green-dark);text-decoration:none;transition:color 0.18s ease;}
-  a:hover{color:var(--green);}
+  /* Interactive accents are warm (orange = the brand's action colour). Green
+     is reserved for *static* meaning — prices, "in stock", success — so it
+     never appears as a hover state. */
+  a{color:var(--orange-dark);text-decoration:none;transition:color 0.18s ease;}
+  a:hover{color:var(--orange);}
   button{font-family:inherit;cursor:pointer;transition:background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
@@ -23,34 +26,70 @@ const SHARED_STYLE = `
     font-family:'Work Sans',sans-serif;font-size:14.5px;color:var(--text);background:var(--surface);outline:none;
     transition:border-color 0.18s ease;
   }
-  input:focus, textarea:focus, select:focus{border-color:var(--green);}
+  input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;}
-  .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease;}
-  .dropzone:hover{border-color:var(--green);}
+  .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease, background 0.18s ease;}
+  .dropzone:hover{border-color:var(--orange);background:var(--orange-soft);}
   .nav-link{color:var(--text);font-weight:500;font-size:15px;transition:color 0.18s ease;}
-  .nav-link:hover{color:var(--green-dark);}
+  .nav-link:hover{color:var(--orange-dark);}
   .btn-primary{background:var(--orange);color:#fff;border:none;transition:background 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
-  .btn-primary:hover{background:var(--green-dark);transform:translateY(-1px);box-shadow:0 6px 16px -6px oklch(46% 0.14 152 / 0.5);}
-  .btn-primary:active{transform:translateY(0);}
+  .btn-primary:hover{background:var(--orange-dark);transform:translateY(-2px);box-shadow:0 8px 20px -8px oklch(58% 0.17 45 / 0.6);}
+  .btn-primary:active{transform:translateY(0) scale(0.98);box-shadow:none;}
   .btn-primary:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none;}
-  .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);transition:border-color 0.18s ease, color 0.18s ease;}
-  .btn-outline:hover{border-color:var(--green);color:var(--green-dark);}
-  .chip{border:1.5px solid var(--border);background:var(--surface);transition:border-color 0.18s ease, background 0.18s ease, color 0.18s ease;}
-  .chip:hover{border-color:var(--green);}
+  .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
+  .btn-outline:hover{border-color:var(--orange);background:var(--orange-soft);}
+  .btn-outline:active{transform:scale(0.98);}
+  .chip{border:1.5px solid var(--border);background:var(--surface);transition:border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
+  .chip:hover{border-color:var(--orange);background:var(--orange-soft);color:var(--orange-dark);}
+  .chip:active{transform:scale(0.97);}
   .chip-active{background:var(--green);border-color:var(--green);color:#fff;}
-  .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;}
-  .p-card:hover{border-color:var(--green);box-shadow:0 10px 28px -14px oklch(58% 0.15 152 / 0.45);transform:translateY(-3px);}
-  .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease;}
-  .mini-card:hover{border-color:var(--green);transform:translateY(-2px);}
-  .add-btn{background:var(--green-soft);color:var(--green-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
-  .add-btn:hover{background:var(--green);color:#fff;transform:scale(1.06);}
+  .chip-active:hover{background:var(--green-dark);border-color:var(--green-dark);color:#fff;}
+  .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.2,0.7,0.3,1);}
+  .p-card:hover{border-color:var(--orange);box-shadow:0 14px 32px -16px oklch(58% 0.17 45 / 0.5);transform:translateY(-4px);}
+  .p-card img{transition:transform 0.35s cubic-bezier(0.2,0.7,0.3,1);}
+  .p-card:hover img{transform:scale(1.05);}
+  .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;}
+  .mini-card:hover{border-color:var(--orange);transform:translateY(-3px);box-shadow:0 10px 24px -14px oklch(58% 0.17 45 / 0.45);}
+  .add-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
+  .add-btn:hover{background:var(--orange);color:#fff;transform:scale(1.08);}
+  .add-btn:active{transform:scale(0.94);}
   .icon-btn{background:var(--surface);border:1.5px solid var(--border);}
-  .step-btn{background:var(--surface-2);border:none;transition:background 0.18s ease;}
-  .step-btn:hover{background:var(--green-soft);}
-  .trash-btn{background:transparent;border:none;}
-  .copy-btn{background:var(--green-soft);color:var(--green-dark);border:none;transition:background 0.18s ease, color 0.18s ease;}
-  .copy-btn:hover{background:var(--green);color:#fff;}
+  .step-btn{background:var(--surface-2);border:none;transition:background 0.18s ease, transform 0.12s ease;}
+  .step-btn:hover{background:var(--orange-soft);}
+  .step-btn:active{transform:scale(0.92);}
+  .trash-btn{background:transparent;border:none;transition:transform 0.15s ease, opacity 0.15s ease;}
+  .trash-btn:hover{transform:scale(1.12);}
+  .copy-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease;}
+  .copy-btn:hover{background:var(--orange);color:#fff;}
+  .back-btn{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);color:var(--text);
+    border-radius:99px;padding:9px 18px 9px 14px;font-size:13.5px;font-weight:600;width:fit-content;cursor:pointer;
+    transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
+  .back-btn:hover{border-color:var(--orange);background:var(--orange-soft);color:var(--orange-dark);}
+  .back-btn:hover svg{transform:translateX(-3px);}
+  .back-btn:active{transform:scale(0.97);}
+  .back-btn svg{transition:transform 0.18s ease;}
+  /* Gojek-style quantity stepper shown on a product once it's in the cart. */
+  .qty-control{display:flex;align-items:center;justify-content:flex-end;}
+  .qty-stepper{display:inline-flex;align-items:center;gap:2px;background:var(--orange-soft);border-radius:10px;padding:3px;
+    animation:pecup-stepper-in 0.22s cubic-bezier(0.2,0.9,0.3,1.2);}
+  .qty-stepper button{width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--orange-dark);
+    display:flex;align-items:center;justify-content:center;transition:background 0.15s ease, transform 0.12s ease;}
+  .qty-stepper button:hover:not(:disabled){background:var(--orange);color:#fff;}
+  .qty-stepper button:active:not(:disabled){transform:scale(0.88);}
+  .qty-stepper button:disabled{opacity:0.35;cursor:not-allowed;}
+  .qty-stepper .qty-value{min-width:24px;text-align:center;font-size:14px;font-weight:800;color:var(--orange-dark);
+    font-variant-numeric:tabular-nums;}
+  .qty-bump{animation:pecup-pop 0.3s ease;}
+  @keyframes pecup-stepper-in{from{opacity:0;transform:scale(0.82);}to{opacity:1;transform:scale(1);}}
+  @keyframes pecup-fade-up{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
+  .fade-up{animation:pecup-fade-up 0.45s cubic-bezier(0.2,0.7,0.3,1) both;}
+  main, section{animation:pecup-fade-up 0.4s cubic-bezier(0.2,0.7,0.3,1) both;}
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto;}
+    *, *::before, *::after{animation-duration:0.001ms !important;animation-iteration-count:1 !important;
+      transition-duration:0.001ms !important;scroll-behavior:auto !important;}
+  }
   .side-link{color:oklch(80% 0.02 255);display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;font-size:14.5px;font-weight:600;transition:background 0.18s ease, color 0.18s ease;}
   .side-link:hover{color:#fff;background:oklch(30% 0.03 255);}
   @keyframes pecup-pop{0%{transform:scale(1);}40%{transform:scale(1.18);}100%{transform:scale(1);}}
@@ -165,6 +204,16 @@ ${CART_SCRIPT}
 </html>`;
 }
 
+// Always renders a real link (never history.back()) so the destination is
+// predictable no matter how the shopper arrived — deep link, refresh, or
+// a normal click-through.
+function backButton(href, label = 'Kembali') {
+  return `<a class="back-btn" href="${href}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    ${escapeHtml(label)}
+  </a>`;
+}
+
 function logoMark(size = 38) {
   return `<img src="/assets/pecup-logo.png" width="${size}" height="${size}" alt="Pecup" style="border-radius:50%;object-fit:cover;flex-shrink:0;">`;
 }
@@ -259,6 +308,94 @@ const CART_SCRIPT = `
     var form = input.closest('form');
     if(form) form.requestSubmit();
   });
+
+  // ---- Gojek-style quantity stepper -------------------------------------
+  // A .qty-control starts as a single "+" button and swaps to a [-][n][+]
+  // stepper the moment the product is in the cart. The server owns the real
+  // quantity: we send the target qty and re-render from whatever it returns
+  // (it clamps to available stock), so the UI can't drift out of sync.
+  function stepperMarkup(qty, stock){
+    var minus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>';
+    var plus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+    if(qty <= 0){
+      return '<button class="add-btn qty-step" data-delta="1" type="button" title="Tambah ke keranjang" ' +
+        'style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + plus + '</button>';
+    }
+    var atMax = stock > 0 && qty >= stock;
+    return '<span class="qty-stepper">' +
+      '<button class="qty-step" data-delta="-1" type="button" aria-label="Kurangi">' + minus + '</button>' +
+      '<span class="qty-value">' + qty + '</span>' +
+      '<button class="qty-step" data-delta="1" type="button" aria-label="Tambah"' + (atMax ? ' disabled title="Stok maksimum"' : '') + '>' + plus + '</button>' +
+      '</span>';
+  }
+
+  function renderControl(control, qty){
+    var stock = Number(control.dataset.stock || 0);
+    control.dataset.qty = String(qty);
+    control.innerHTML = stepperMarkup(qty, stock);
+    var value = control.querySelector('.qty-value');
+    if(value){
+      value.classList.add('qty-bump');
+      setTimeout(function(){ value.classList.remove('qty-bump'); }, 320);
+    }
+  }
+
+  function setText(selector, text){
+    var el = document.querySelector(selector);
+    if(el) el.textContent = text;
+  }
+
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.qty-step') : null;
+    if(!btn) return;
+    var control = btn.closest('.qty-control');
+    if(!control) return;
+    // The whole product card is a click-through link — don't follow it when
+    // the tap landed on the stepper.
+    e.preventDefault();
+    e.stopPropagation();
+    if(control.dataset.busy === '1') return;
+
+    var current = Number(control.dataset.qty || 0);
+    var target = current + Number(btn.dataset.delta || 0);
+    if(target < 0) target = 0;
+    control.dataset.busy = '1';
+
+    var body = new FormData();
+    body.append('key', control.dataset.key);
+    body.append('productId', control.dataset.productId || '');
+    body.append('qty', String(target));
+
+    fetch('/keranjang/set-qty', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: body
+    }).then(function(res){ return res.json(); })
+      .then(function(data){
+        if(!data || !data.ok) return;
+        renderControl(control, data.qty);
+        updateBadge(data.cartCount);
+        // Cart page only: keep the row total and the order summary in step.
+        var row = control.closest('[data-cart-row]');
+        if(row){
+          if(data.qty <= 0){
+            row.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+            row.style.opacity = '0';
+            row.style.transform = 'translateX(-12px)';
+            setTimeout(function(){ if(!document.querySelector('[data-cart-row]')) location.reload(); else row.remove(); }, 250);
+          } else {
+            var lineTotal = row.querySelector('[data-line-total]');
+            if(lineTotal) lineTotal.textContent = data.lineSubtotal;
+          }
+        }
+        setText('[data-cart-subtotal]', data.subtotal);
+        setText('[data-cart-total]', data.subtotal);
+        setText('[data-cart-itemcount]', data.itemCount + ' produk');
+        if(row && data.itemCount === 0) location.reload();
+      })
+      .catch(function(){})
+      .then(function(){ control.dataset.busy = ''; });
+  });
 })();
 </script>`;
 
@@ -320,4 +457,4 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
   </aside>`;
 }
 
-module.exports = { page, logoMark, customerHeader, customerFooter, adminSidebar };
+module.exports = { page, logoMark, backButton, customerHeader, customerFooter, adminSidebar };

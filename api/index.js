@@ -18,7 +18,7 @@ const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const { logAdminAction, listAdminLogs } = require('../src/adminLog');
 const queries = require('../src/queries');
-const { toDateKey } = require('../src/utils');
+const { toDateKey, formatRupiah, normalizeWhatsapp } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
 const { saveProductImage, saveProofFile, signedProofUrl } = require('../src/uploads');
@@ -56,7 +56,16 @@ router.get('/', async (req, res, { query }) => {
   if (category && category !== 'Semua') {
     products = products.filter((p) => p.category === category);
   }
-  sendHtml(res, shopViews.renderBeranda({ products, cartCount: cartLib.cartCount(req.cart), category, categories }));
+  sendHtml(
+    res,
+    shopViews.renderBeranda({
+      products,
+      cartCount: cartLib.cartCount(req.cart),
+      category,
+      categories,
+      cart: req.cart,
+    })
+  );
 });
 
 router.get('/produk/:id', async (req, res) => {
@@ -122,6 +131,38 @@ router.get('/keranjang', async (req, res) => {
   sendHtml(res, shopViews.renderKeranjang({ items, subtotal, cartCount: cartLib.cartCount(req.cart) }));
 });
 
+// Backs the quantity stepper on the product cards and the cart page. Takes
+// the *target* quantity rather than a delta so a double-tap can't compound
+// into the wrong number, clamps it to what's actually in stock, and returns
+// the recalculated totals so the page can update without a reload.
+router.post('/keranjang/set-qty', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const requestedQty = Math.max(0, Number(fields.qty) || 0);
+  const key = fields.key || String(Number(fields.productId));
+  const productId = Number(fields.productId) || Number((req.cart[key] || {}).productId);
+
+  const product = await queries.getProduct(productId);
+  if (!product) return sendJson(res, { ok: false, error: 'Produk tidak ditemukan.' }, 404);
+
+  const qty = Math.min(requestedQty, Math.max(Number(product.stock) || 0, 0));
+  if (qty <= 0) cartLib.removeFromCart(req.cart, key);
+  else if (req.cart[key]) cartLib.setCartQty(req.cart, key, qty);
+  else cartLib.addToCart(req.cart, productId, qty);
+  saveCartCookie(res, req.cart);
+
+  const { items, subtotal } = await cartLib.buildCartItems(req.cart);
+  const line = items.find((it) => it.key === key);
+  sendJson(res, {
+    ok: true,
+    key,
+    qty,
+    cartCount: cartLib.cartCount(req.cart),
+    lineSubtotal: formatRupiah(line ? line.subtotal : 0),
+    subtotal: formatRupiah(subtotal),
+    itemCount: items.length,
+  });
+});
+
 router.post('/keranjang/update', async (req, res) => {
   const { fields } = await parseBody(req);
   const qty = Math.max(0, Number(fields.qty) || 0);
@@ -167,9 +208,22 @@ router.post('/checkout', async (req, res) => {
   const customerName = (fields.customerName || '').trim();
   const whatsapp = (fields.whatsapp || '').trim();
   const notes = (fields.notes || '').trim();
+  const address = (fields.address || '').trim();
+  const deliveryDate = (fields.deliveryDate || '').trim();
 
   if (!customerName) errors.push('Nama lengkap wajib diisi.');
+  const normalizedWhatsapp = normalizeWhatsapp(whatsapp);
   if (!whatsapp) errors.push('Nomor WhatsApp wajib diisi.');
+  else if (!normalizedWhatsapp) {
+    errors.push('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx atau +628xxxxxxxxxx.');
+  }
+  if (!address) errors.push('Lokasi/alamat pengantaran wajib diisi.');
+  if (!deliveryDate) errors.push('Tanggal pengantaran wajib diisi.');
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) || Number.isNaN(Date.parse(deliveryDate))) {
+    errors.push('Tanggal pengantaran tidak valid.');
+  } else if (deliveryDate < toDateKey(new Date())) {
+    errors.push('Tanggal pengantaran tidak boleh di masa lalu.');
+  }
   if (!files.proof) errors.push('Bukti transfer wajib diunggah.');
   else if (!['image/jpeg', 'image/png', 'application/pdf'].includes(files.proof.mimetype)) {
     errors.push('Format bukti transfer harus JPG, PNG, atau PDF.');
@@ -189,7 +243,7 @@ router.post('/checkout', async (req, res) => {
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
         errors,
-        formValues: { customerName, whatsapp, notes },
+        formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
     );
   }
@@ -208,7 +262,15 @@ router.post('/checkout', async (req, res) => {
     // The real stock check happens atomically inside this call (see
     // schema.sql's create_order function) — the loop above is just a fast
     // pre-check so we don't upload a proof file for an obviously-doomed order.
-    order = await queries.createOrder({ customerName, whatsapp, notes, items: orderItems, proofFilename });
+    order = await queries.createOrder({
+      customerName,
+      whatsapp: normalizedWhatsapp,
+      notes,
+      items: orderItems,
+      proofFilename,
+      address,
+      deliveryDate,
+    });
   } catch (err) {
     console.error(err);
     return sendHtml(
@@ -218,7 +280,7 @@ router.post('/checkout', async (req, res) => {
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
-        formValues: { customerName, whatsapp, notes },
+        formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
     );
   }
@@ -362,6 +424,27 @@ router.post('/admin/produk/:id/hapus', requireAdmin(async (req, res) => {
 router.post('/admin/produk/:id/toggle', requireAdmin(async (req, res) => {
   await queries.toggleProductActive(Number(req.params.id));
   await logAdminAction(req.admin, 'product.toggle', `#${req.params.id}`);
+  redirect(res, '/admin/produk');
+}));
+
+// Quick stock edit straight from the product list — takes either an absolute
+// qty or a +/- delta, so restocking doesn't mean opening the full edit form.
+router.post('/admin/produk/:id/stok', requireAdmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const product = await queries.getProduct(id);
+  if (!product) return notFound(res);
+
+  const delta = Number(fields.delta);
+  const target = Number.isFinite(delta) && fields.delta !== undefined && fields.delta !== ''
+    ? Number(product.stock) + delta
+    : Number(fields.stock);
+  const stock = await queries.setProductStock(id, target);
+  await logAdminAction(req.admin, 'product.stock', `${product.name}: ${product.stock} → ${stock}`);
+
+  if ((req.headers.accept || '').includes('application/json')) {
+    return sendJson(res, { ok: true, stock });
+  }
   redirect(res, '/admin/produk');
 }));
 

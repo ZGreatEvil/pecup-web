@@ -1,4 +1,4 @@
-const { formatRupiah, escapeHtml } = require('./utils');
+const { formatRupiah, escapeHtml, formatWhatsapp, formatDateID } = require('./utils');
 
 function buildOrderEmailHtml({ order, items }) {
   const rows = items
@@ -19,7 +19,13 @@ function buildOrderEmailHtml({ order, items }) {
 
     <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
       <tr><td style="padding:4px 12px 4px 0;color:#666;">Nama Pemesan</td><td style="padding:4px 0;font-weight:bold;">${escapeHtml(order.customer_name)}</td></tr>
-      <tr><td style="padding:4px 12px 4px 0;color:#666;">Nomor WhatsApp</td><td style="padding:4px 0;font-weight:bold;">${escapeHtml(order.whatsapp)}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;">Nomor WhatsApp</td><td style="padding:4px 0;font-weight:bold;">${escapeHtml(formatWhatsapp(order.whatsapp))}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;">Tanggal Antar</td><td style="padding:4px 0;font-weight:bold;">${
+        order.delivery_date ? escapeHtml(formatDateID(order.delivery_date)) : '<span style="color:#999;">(tidak diisi)</span>'
+      }</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top;">Lokasi Antar</td><td style="padding:4px 0;font-weight:bold;">${
+        order.address ? escapeHtml(order.address) : '<span style="color:#999;">(tidak diisi)</span>'
+      }</td></tr>
       <tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top;">Catatan</td><td style="padding:4px 0;">${order.notes ? escapeHtml(order.notes) : '<span style="color:#999;">(tidak ada catatan)</span>'}</td></tr>
     </table>
 

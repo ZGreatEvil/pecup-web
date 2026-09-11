@@ -58,6 +58,43 @@ function toDateKey(dateInput) {
   return `${y}-${m}-${day}`;
 }
 
+// Accepts the shapes Indonesian shoppers actually type — 08xx…, 62 8xx…,
+// +62 8xx… — with spaces, dots, dashes or parentheses anywhere, and returns
+// the number in canonical 62xxxxxxxxx form. Returns null when the input
+// isn't a plausible Indonesian mobile number, so free text can't get through.
+function normalizeWhatsapp(raw) {
+  const digits = String(raw === null || raw === undefined ? '' : raw).replace(/\D/g, '');
+  if (!digits) return null;
+  let national;
+  if (digits.startsWith('62')) national = digits.slice(2);
+  else if (digits.startsWith('0')) national = digits.slice(1);
+  else national = digits;
+  // Indonesian mobile numbers always start with 8, and run 9-12 digits once
+  // the leading 0 / 62 is stripped.
+  if (!/^8\d{8,11}$/.test(national)) return null;
+  return '62' + national;
+}
+
+function formatWhatsapp(raw) {
+  const normalized = normalizeWhatsapp(raw);
+  if (!normalized) return String(raw === null || raw === undefined ? '' : raw);
+  const national = normalized.slice(2);
+  return '+62 ' + national.replace(/^(\d{3})(\d{3,4})(\d+)$/, '$1-$2-$3');
+}
+
+// A Postgres `date` column comes back as either a plain 'YYYY-MM-DD' string
+// or a Date, depending on driver version. The driver builds that Date at
+// *local* midnight, so it must be read back with local getters — using UTC
+// getters lands on the previous day in any positive-offset zone (WIB
+// included), which is exactly where this runs.
+function toDateOnly(value) {
+  if (!value) return '';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return toDateKey(d);
+}
+
 function slugify(name) {
   return String(name)
     .toLowerCase()
@@ -75,4 +112,7 @@ module.exports = {
   formatTimeID,
   toDateKey,
   slugify,
+  normalizeWhatsapp,
+  formatWhatsapp,
+  toDateOnly,
 };

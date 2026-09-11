@@ -1,6 +1,14 @@
-const { page, adminSidebar, logoMark } = require('./layout');
+const { page, adminSidebar, logoMark, backButton } = require('./layout');
 const { productThumb } = require('./productIcon');
-const { formatRupiah, escapeHtml, escapeAttr, formatDateID, formatTimeID } = require('../utils');
+const {
+  formatRupiah,
+  escapeHtml,
+  escapeAttr,
+  formatDateID,
+  formatTimeID,
+  normalizeWhatsapp,
+  formatWhatsapp,
+} = require('../utils');
 
 function renderLogin({ error }) {
   const body = `
@@ -36,14 +44,21 @@ function renderProdukList({ products, stats, flash, admin }) {
     ? products
         .map(
           (p) => `
-      <div class="row-hover" style="display:grid;grid-template-columns:2.4fr 1.2fr 1fr 0.8fr 1fr 1.2fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);">
+      <div class="row-hover" style="display:grid;grid-template-columns:2.2fr 1.1fr 1fr 1.4fr 1fr 1fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:14px;">
           <div style="width:44px;height:44px;flex-shrink:0;">${productThumb(p, { size: 24, radius: 10 })}</div>
           <span style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</span>
         </div>
         <span style="font-size:13.5px;color:var(--text-muted);">${escapeHtml(p.category)}</span>
         <span style="font-size:13.5px;font-weight:600;">${formatRupiah(p.price)}</span>
-        <span style="font-size:13.5px;">${p.stock}</span>
+        <div class="stock-control" data-product-id="${p.id}" style="display:flex;align-items:center;gap:4px;">
+          <button type="button" class="step-btn stock-step" data-delta="-1" title="Kurangi stok" style="width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:var(--text-muted);">&minus;</button>
+          <input type="number" class="stock-input" value="${p.stock}" min="0" aria-label="Stok ${escapeAttr(p.name)}"
+                 style="width:52px;padding:5px 4px;text-align:center;font-size:13.5px;font-weight:700;border-radius:7px;${
+                   Number(p.stock) <= 0 ? 'color:#a13f3f;border-color:#e2b4b4;' : ''
+                 }">
+          <button type="button" class="step-btn stock-step" data-delta="1" title="Tambah stok" style="width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:var(--text-muted);">+</button>
+        </div>
         <form method="post" action="/admin/produk/${p.id}/toggle">
           <button type="submit" class="toggle-pill ${p.active ? 'toggle-on' : 'toggle-off'}" title="Klik untuk ${p.active ? 'nonaktifkan' : 'aktifkan'}">
             <span class="toggle-dot"></span>
@@ -85,13 +100,60 @@ function renderProdukList({ products, stats, flash, admin }) {
     </div>
 
     <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:2.4fr 1.2fr 1fr 0.8fr 1fr 1.2fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:640px;">
+      <div style="display:grid;grid-template-columns:2.2fr 1.1fr 1fr 1.4fr 1fr 1fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:780px;">
         <span>PRODUK</span><span>KATEGORI</span><span>HARGA</span><span>STOK</span><span>STATUS</span><span>AKSI</span>
       </div>
-      <div style="min-width:640px;">${rows}</div>
+      <div style="min-width:780px;">${rows}</div>
     </div>
+    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;">Stok tersimpan otomatis — pakai tombol &minus;/+ atau ketik angkanya langsung.</p>
   </main>
-</div>`;
+</div>
+<script>
+(function(){
+  // Inline stock editing: saves on its own (no Save button, no page reload),
+  // and paints the field green/red for a moment so it's obvious it stuck.
+  function flash(input, ok){
+    input.style.transition = 'background 0.2s ease, border-color 0.2s ease';
+    input.style.background = ok ? 'var(--green-soft)' : '#f6dcdc';
+    input.style.borderColor = ok ? 'var(--green)' : '#c94f4f';
+    setTimeout(function(){ input.style.background = ''; input.style.borderColor = ''; }, 700);
+  }
+  function save(control, value){
+    var input = control.querySelector('.stock-input');
+    if(control.dataset.busy === '1') return;
+    control.dataset.busy = '1';
+    var body = new FormData();
+    body.append('stock', String(value));
+    fetch('/admin/produk/' + control.dataset.productId + '/stok', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: body
+    }).then(function(res){ return res.json(); })
+      .then(function(data){
+        if(data && data.ok){ input.value = data.stock; flash(input, true); }
+        else flash(input, false);
+      })
+      .catch(function(){ flash(input, false); })
+      .then(function(){ control.dataset.busy = ''; });
+  }
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.stock-step') : null;
+    if(!btn) return;
+    var control = btn.closest('.stock-control');
+    var input = control.querySelector('.stock-input');
+    var next = Math.max(0, (Number(input.value) || 0) + Number(btn.dataset.delta));
+    input.value = next;
+    save(control, next);
+  });
+  document.addEventListener('change', function(e){
+    var input = e.target;
+    if(!input.classList || !input.classList.contains('stock-input')) return;
+    var next = Math.max(0, Number(input.value) || 0);
+    input.value = next;
+    save(input.closest('.stock-control'), next);
+  });
+})();
+</script>`;
 
   return page({ title: 'Kelola Produk — Admin Pecup', bodyHtml: body });
 }
@@ -114,7 +176,8 @@ function renderProdukForm({ product, error, categories = [], admin }) {
 <div class="admin-shell">
   ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main">
-    <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data">
+    ${backButton('/admin/produk', 'Kembali ke Produk')}
+    <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data" style="margin-top:20px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px;">
         <div>
           <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Produk / ${isEdit ? 'Edit' : 'Tambah Baru'}</div>
@@ -294,15 +357,31 @@ function renderPesananDetail({ order, items, proofUrl, admin }) {
 <div class="admin-shell">
   ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main" style="max-width:900px;">
-    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
+    ${backButton('/admin/pesanan', 'Kembali ke Pesanan')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Detail Pesanan ${escapeHtml(order.order_number)}</h1>
 
     <div style="display:flex;gap:24px;flex-wrap:wrap;">
       <div class="card" style="flex:1 1 380px;">
         <h3 style="font-size:15px;font-weight:800;margin-bottom:16px;">Data Pemesan</h3>
         <div style="font-size:14px;margin-bottom:8px;"><strong>${escapeHtml(order.customer_name)}</strong></div>
-        <div style="font-size:14px;color:var(--text-muted);margin-bottom:8px;">WhatsApp: ${escapeHtml(order.whatsapp)}</div>
+        <div style="font-size:14px;color:var(--text-muted);margin-bottom:8px;">WhatsApp: ${
+          normalizeWhatsapp(order.whatsapp)
+            ? `<a href="https://wa.me/${normalizeWhatsapp(order.whatsapp)}" target="_blank" rel="noopener">${escapeHtml(formatWhatsapp(order.whatsapp))}</a>`
+            : escapeHtml(order.whatsapp)
+        }</div>
         <div style="font-size:14px;color:var(--text-muted);margin-bottom:16px;">Catatan: ${order.notes ? escapeHtml(order.notes) : '(tidak ada)'}</div>
+
+        <div style="background:var(--orange-soft);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:800;color:#7a4a1f;letter-spacing:0.4px;margin-bottom:8px;">PENGANTARAN</div>
+          <div style="font-size:14px;color:#7a4a1f;margin-bottom:6px;">Tanggal: <strong>${
+            order.delivery_date ? escapeHtml(formatDateID(order.delivery_date)) : '(tidak diisi)'
+          }</strong></div>
+          <div style="font-size:14px;color:#7a4a1f;">Lokasi: <strong>${
+            order.address ? escapeHtml(order.address) : '(tidak diisi)'
+          }</strong></div>
+        </div>
+
         <div style="font-size:12.5px;color:var(--text-muted);">Email notifikasi: ${emailStatus}</div>
 
         <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;">Item Dipesan</h3>
@@ -362,7 +441,8 @@ function renderAdminList({ admins, admin, error }) {
 <div class="admin-shell">
   ${adminSidebar('akun', { isSuperadmin: true, username: admin.username })}
   <main class="admin-main">
-    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Kelola Admin</div>
+    ${backButton('/admin/produk', 'Kembali ke Produk')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kelola Admin</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Kelola Admin</h1>
 
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
@@ -428,7 +508,8 @@ function renderAdminLog({ logs, admin }) {
 <div class="admin-shell">
   ${adminSidebar('log', { isSuperadmin: true, username: admin.username })}
   <main class="admin-main">
-    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Log Aktivitas</div>
+    ${backButton('/admin/produk', 'Kembali ke Produk')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Log Aktivitas</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Log Aktivitas</h1>
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Menampilkan ${logs.length} aktivitas terakhir dari semua admin.</p>
 

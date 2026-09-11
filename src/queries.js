@@ -91,6 +91,12 @@ async function updateProduct(id, data) {
   }
 }
 
+async function setProductStock(id, stock) {
+  const safeStock = Math.max(0, Math.round(Number(stock) || 0));
+  await db.query('update products set stock = $1 where id = $2', [safeStock, id]);
+  return safeStock;
+}
+
 async function deleteProduct(id) {
   await db.query('delete from products where id = $1', [id]);
 }
@@ -116,14 +122,16 @@ async function productStats() {
 // the involved product rows with SELECT ... FOR UPDATE. That's what keeps
 // this safe even if two customers check out the last unit at the same time
 // across two different serverless invocations.
-async function createOrder({ customerName, whatsapp, notes, items, proofFilename }) {
-  const rows = await db.query('select create_order($1, $2, $3, $4::jsonb, $5, $6) as result', [
+async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate }) {
+  const rows = await db.query('select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date) as result', [
     customerName,
     whatsapp,
     notes || '',
     JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty, label: it.label || null }))),
     proofFilename || null,
     toDateKey(new Date()),
+    address || '',
+    deliveryDate || null,
   ]);
   const raw = rows[0].result;
   const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -177,6 +185,7 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  setProductStock,
   toggleProductActive,
   productStats,
   createOrder,

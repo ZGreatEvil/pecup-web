@@ -1,4 +1,4 @@
-const { csvEscape, formatTimeID, formatRupiah } = require('./utils');
+const { csvEscape, formatTimeID, formatRupiah, formatWhatsapp, toDateOnly } = require('./utils');
 const { getOrderItems } = require('./queries');
 
 async function buildDailyOrdersCsv(orders) {
@@ -7,6 +7,8 @@ async function buildDailyOrdersCsv(orders) {
     'Nomor Pesanan',
     'Nama Pemesan',
     'WhatsApp',
+    'Tanggal Antar',
+    'Lokasi Antar',
     'Produk Dipesan',
     'Catatan',
     'Total',
@@ -24,7 +26,9 @@ async function buildDailyOrdersCsv(orders) {
       formatTimeID(o.created_at),
       o.order_number,
       o.customer_name,
-      o.whatsapp,
+      formatWhatsapp(o.whatsapp),
+      toDateOnly(o.delivery_date),
+      o.address || '',
       itemsText,
       o.notes || '',
       formatRupiah(o.total),

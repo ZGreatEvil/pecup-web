@@ -129,6 +129,20 @@ Atau, lebih simpel: push kode ini ke GitHub, lalu **Import Project** di
 [vercel.com/new](https://vercel.com/new) dan pilih repo-nya — deploy
 otomatis jalan setiap kali kamu push.
 
+### 8. Bersihkan pesanan percobaan sebelum buka untuk umum
+
+Setelah selesai tes-tes pesanan sendiri, hapus semuanya supaya toko mulai
+dari nol:
+
+```
+node scripts/reset-orders.js          # cuma menampilkan apa yang akan dihapus
+node scripts/reset-orders.js --yes    # benar-benar menghapus
+```
+
+Yang dihapus: semua pesanan, item pesanan, dan berkas bukti transfernya,
+lalu nomor pesanan mulai lagi dari `0001`. Yang **tidak** disentuh: produk,
+kategori, akun admin, dan log aktivitas.
+
 ## Struktur folder
 
 ```
