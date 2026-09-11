@@ -6,6 +6,7 @@ const SHARED_STYLE = `
     --text:oklch(22% 0.02 260); --text-muted:oklch(48% 0.02 260); --border:oklch(90% 0.012 95);
     --green:oklch(58% 0.15 152); --green-dark:oklch(46% 0.14 152); --green-soft:oklch(94% 0.05 152);
     --orange:oklch(72% 0.17 55); --orange-dark:oklch(58% 0.17 45); --orange-soft:oklch(94% 0.06 55);
+    --orange-mid:oklch(87% 0.09 55);
     --sidebar:oklch(24% 0.03 255);
   }
   *{box-sizing:border-box;}
@@ -16,8 +17,8 @@ const SHARED_STYLE = `
   /* Interactive accents are warm (orange = the brand's action colour). Green
      is reserved for *static* meaning — prices, "in stock", success — so it
      never appears as a hover state. */
-  a{color:var(--orange-dark);text-decoration:none;transition:color 0.18s ease;}
-  a:hover{color:var(--orange);}
+  a{color:var(--orange-dark);text-decoration:none;}
+  a:hover{text-decoration:underline;text-underline-offset:3px;}
   button{font-family:inherit;cursor:pointer;transition:background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
@@ -31,8 +32,8 @@ const SHARED_STYLE = `
   .card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;}
   .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease, background 0.18s ease;}
   .dropzone:hover{border-color:var(--orange);background:var(--orange-soft);}
-  .nav-link{color:var(--text);font-weight:500;font-size:15px;transition:color 0.18s ease;}
-  .nav-link:hover{color:var(--orange-dark);}
+  .nav-link{color:var(--text);font-weight:500;font-size:15px;}
+  .nav-link:hover{text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px;}
   .btn-primary{background:var(--orange);color:#fff;border:none;transition:background 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   .btn-primary:hover{background:var(--orange-dark);transform:translateY(-2px);box-shadow:0 8px 20px -8px oklch(58% 0.17 45 / 0.6);}
   .btn-primary:active{transform:translateY(0) scale(0.98);box-shadow:none;}
@@ -41,10 +42,10 @@ const SHARED_STYLE = `
   .btn-outline:hover{border-color:var(--orange);background:var(--orange-soft);}
   .btn-outline:active{transform:scale(0.98);}
   .chip{border:1.5px solid var(--border);background:var(--surface);transition:border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
-  .chip:hover{border-color:var(--orange);background:var(--orange-soft);color:var(--orange-dark);}
+  .chip:hover{border-color:var(--orange);background:var(--orange-soft);}
   .chip:active{transform:scale(0.97);}
   .chip-active{background:var(--green);border-color:var(--green);color:#fff;}
-  .chip-active:hover{background:var(--green-dark);border-color:var(--green-dark);color:#fff;}
+  .chip-active:hover{background:var(--green-dark);border-color:var(--green-dark);}
   .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.2,0.7,0.3,1);}
   .p-card:hover{border-color:var(--orange);box-shadow:0 14px 32px -16px oklch(58% 0.17 45 / 0.5);transform:translateY(-4px);}
   .p-card img{transition:transform 0.35s cubic-bezier(0.2,0.7,0.3,1);}
@@ -52,7 +53,7 @@ const SHARED_STYLE = `
   .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;}
   .mini-card:hover{border-color:var(--orange);transform:translateY(-3px);box-shadow:0 10px 24px -14px oklch(58% 0.17 45 / 0.45);}
   .add-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
-  .add-btn:hover{background:var(--orange);color:#fff;transform:scale(1.08);}
+  .add-btn:hover{background:var(--orange-mid);transform:scale(1.08);}
   .add-btn:active{transform:scale(0.94);}
   .icon-btn{background:var(--surface);border:1.5px solid var(--border);}
   .step-btn{background:var(--surface-2);border:none;transition:background 0.18s ease, transform 0.12s ease;}
@@ -61,11 +62,11 @@ const SHARED_STYLE = `
   .trash-btn{background:transparent;border:none;transition:transform 0.15s ease, opacity 0.15s ease;}
   .trash-btn:hover{transform:scale(1.12);}
   .copy-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease;}
-  .copy-btn:hover{background:var(--orange);color:#fff;}
+  .copy-btn:hover{background:var(--orange-mid);}
   .back-btn{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);color:var(--text);
     border-radius:99px;padding:9px 18px 9px 14px;font-size:13.5px;font-weight:600;width:fit-content;cursor:pointer;
     transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
-  .back-btn:hover{border-color:var(--orange);background:var(--orange-soft);color:var(--orange-dark);}
+  .back-btn:hover{border-color:var(--orange);background:var(--orange-soft);}
   .back-btn:hover svg{transform:translateX(-3px);}
   .back-btn:active{transform:scale(0.97);}
   .back-btn svg{transition:transform 0.18s ease;}
@@ -75,12 +76,21 @@ const SHARED_STYLE = `
     animation:pecup-stepper-in 0.22s cubic-bezier(0.2,0.9,0.3,1.2);}
   .qty-stepper button{width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--orange-dark);
     display:flex;align-items:center;justify-content:center;transition:background 0.15s ease, transform 0.12s ease;}
-  .qty-stepper button:hover:not(:disabled){background:var(--orange);color:#fff;}
+  .qty-stepper button:hover:not(:disabled){background:var(--orange-mid);}
   .qty-stepper button:active:not(:disabled){transform:scale(0.88);}
   .qty-stepper button:disabled{opacity:0.35;cursor:not-allowed;}
   .qty-stepper .qty-value{min-width:24px;text-align:center;font-size:14px;font-weight:800;color:var(--orange-dark);
     font-variant-numeric:tabular-nums;}
   .qty-bump{animation:pecup-pop 0.3s ease;}
+  /* Loyalty card: one slot per stamp, earned slots carry the tilted logo. */
+  .stamp-grid{display:grid;grid-template-columns:repeat(5, minmax(0,1fr));gap:14px;}
+  .stamp-slot{aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;}
+  .stamp-empty{border:2px dashed var(--border);background:var(--surface-2);color:var(--text-muted);font-size:13px;font-weight:700;}
+  .stamp-filled{border:2px solid var(--green-soft);background:var(--green-soft);}
+  .stamp-filled img{width:72%;height:72%;object-fit:contain;transform:rotate(-30deg);}
+  .stamp-reward{border:2px solid var(--orange);background:var(--orange-soft);}
+  .stamp-reward img{width:72%;height:72%;object-fit:contain;transform:rotate(-30deg);}
+  @media (max-width: 480px){ .stamp-grid{gap:10px;} }
   @keyframes pecup-stepper-in{from{opacity:0;transform:scale(0.82);}to{opacity:1;transform:scale(1);}}
   @keyframes pecup-fade-up{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
   .fade-up{animation:pecup-fade-up 0.45s cubic-bezier(0.2,0.7,0.3,1) both;}
@@ -90,8 +100,8 @@ const SHARED_STYLE = `
     *, *::before, *::after{animation-duration:0.001ms !important;animation-iteration-count:1 !important;
       transition-duration:0.001ms !important;scroll-behavior:auto !important;}
   }
-  .side-link{color:oklch(80% 0.02 255);display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;font-size:14.5px;font-weight:600;transition:background 0.18s ease, color 0.18s ease;}
-  .side-link:hover{color:#fff;background:oklch(30% 0.03 255);}
+  .side-link{color:oklch(92% 0.01 255);display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;font-size:14.5px;font-weight:600;transition:background 0.18s ease, color 0.18s ease;}
+  .side-link:hover{background:oklch(32% 0.03 255);}
   @keyframes pecup-pop{0%{transform:scale(1);}40%{transform:scale(1.18);}100%{transform:scale(1);}}
   .cart-pop{animation:pecup-pop 0.35s ease;}
   .side-link-active{background:var(--green);color:#fff;}
@@ -218,7 +228,17 @@ function logoMark(size = 38) {
   return `<img src="/assets/pecup-logo.png" width="${size}" height="${size}" alt="Pecup" style="border-radius:50%;object-fit:cover;flex-shrink:0;">`;
 }
 
-function customerHeader(cartCount = 0, activeStepLabel = null) {
+function accountLink(customer) {
+  if (customer) {
+    const initial = escapeHtml(String(customer.name || '?').charAt(0).toUpperCase());
+    return `<a href="/akun" title="Akun saya" style="display:flex;align-items:center;gap:8px;">
+      <span style="width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initial}</span>
+    </a>`;
+  }
+  return `<a class="nav-link" href="/masuk" style="font-size:13.5px;font-weight:600;white-space:nowrap;">Masuk</a>`;
+}
+
+function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) {
   if (activeStepLabel) {
     return `
   <header class="site-header">
@@ -243,10 +263,13 @@ function customerHeader(cartCount = 0, activeStepLabel = null) {
       <a class="nav-link" href="/#menu">Menu</a>
       <a class="nav-link" href="/#cara-pesan">Cara Pesan</a>
     </nav>
-    <a href="/keranjang" style="position:relative;display:flex;align-items:center;justify-self:end;">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/><circle cx="18" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/></svg>
-      <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
-    </a>
+    <div style="display:flex;align-items:center;gap:18px;justify-self:end;">
+      ${accountLink(customer)}
+      <a href="/keranjang" id="cartLink" style="position:relative;display:flex;align-items:center;">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/><circle cx="18" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/></svg>
+        <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
+      </a>
+    </div>
   </header>`;
 }
 
@@ -277,6 +300,7 @@ const CART_SCRIPT = `
     // "click twice, accidentally order 2".
     if(form.dataset.submitting === '1') return;
     form.dataset.submitting = '1';
+    flyToCart(document.querySelector('.detail-img img') || productImageFor(form));
     var btn = form.querySelector('button[type="submit"]');
     var originalText = btn ? btn.textContent : '';
     if(btn){ btn.disabled = true; btn.textContent = '...'; }
@@ -314,6 +338,43 @@ const CART_SCRIPT = `
   // stepper the moment the product is in the cart. The server owns the real
   // quantity: we send the target qty and re-render from whatever it returns
   // (it clamps to available stock), so the UI can't drift out of sync.
+  // Flies a copy of the product photo into the cart icon. Purely decorative:
+  // it runs on a detached clone, so if anything here is unsupported the real
+  // add still goes through untouched.
+  function flyToCart(sourceEl){
+    try{
+      var cart = document.getElementById('cartLink');
+      if(!cart || !sourceEl || !sourceEl.getBoundingClientRect) return;
+      if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      var from = sourceEl.getBoundingClientRect();
+      var to = cart.getBoundingClientRect();
+      if(!from.width || !to.width) return;
+
+      var clone = sourceEl.cloneNode(true);
+      clone.style.cssText = 'position:fixed;left:' + from.left + 'px;top:' + from.top + 'px;width:' + from.width +
+        'px;height:' + from.height + 'px;object-fit:cover;border-radius:14px;z-index:9999;pointer-events:none;' +
+        'box-shadow:0 12px 28px -10px rgba(0,0,0,0.45);';
+      document.body.appendChild(clone);
+
+      var dx = (to.left + to.width / 2) - (from.left + from.width / 2);
+      var dy = (to.top + to.height / 2) - (from.top + from.height / 2);
+      var anim = clone.animate([
+        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+        // Arc upward on the way across so it reads as a toss, not a slide.
+        { transform: 'translate(' + (dx * 0.5) + 'px,' + (dy * 0.5 - 70) + 'px) scale(0.6)', opacity: 0.9, offset: 0.55 },
+        { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(0.12)', opacity: 0.15 }
+      ], { duration: 620, easing: 'cubic-bezier(0.3,0,0.5,1)' });
+      anim.onfinish = function(){ clone.remove(); };
+      // Safety net: never leave a stray clone on screen if onfinish doesn't fire.
+      setTimeout(function(){ if(clone.parentNode) clone.remove(); }, 1200);
+    }catch(err){ /* decoration only */ }
+  }
+
+  function productImageFor(el){
+    var card = el.closest('.p-card, .cart-row, .detail-layout, form');
+    return card ? card.querySelector('img') : null;
+  }
+
   function stepperMarkup(qty, stock){
     var minus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>';
     var plus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
@@ -357,9 +418,18 @@ const CART_SCRIPT = `
     if(control.dataset.busy === '1') return;
 
     var current = Number(control.dataset.qty || 0);
-    var target = current + Number(btn.dataset.delta || 0);
+    var delta = Number(btn.dataset.delta || 0);
+    var stock = Number(control.dataset.stock || 0);
+    var target = current + delta;
     if(target < 0) target = 0;
+    if(stock > 0 && target > stock) target = stock;
     control.dataset.busy = '1';
+
+    if(delta > 0 && target > current) flyToCart(productImageFor(btn));
+    // Repaint at the target straight away — the request still decides the
+    // real number (it clamps to stock), but the shopper never waits on it.
+    var isCartRow = Boolean(control.closest('[data-cart-row]'));
+    if(!isCartRow) renderControl(control, target);
 
     var body = new FormData();
     body.append('key', control.dataset.key);
@@ -372,8 +442,10 @@ const CART_SCRIPT = `
       body: body
     }).then(function(res){ return res.json(); })
       .then(function(data){
-        if(!data || !data.ok) return;
-        renderControl(control, data.qty);
+        if(!data || !data.ok){ renderControl(control, current); return; }
+        // Reconcile: only repaint if the server landed somewhere different
+        // from the optimistic guess, so the number doesn't flicker.
+        if(Number(control.dataset.qty) !== data.qty) renderControl(control, data.qty);
         updateBadge(data.cartCount);
         // Cart page only: keep the row total and the order summary in step.
         var row = control.closest('[data-cart-row]');
@@ -393,7 +465,7 @@ const CART_SCRIPT = `
         setText('[data-cart-itemcount]', data.itemCount + ' produk');
         if(row && data.itemCount === 0) location.reload();
       })
-      .catch(function(){})
+      .catch(function(){ renderControl(control, current); })
       .then(function(){ control.dataset.busy = ''; });
   });
 })();

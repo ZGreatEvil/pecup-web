@@ -6,7 +6,7 @@
 // Each entry is keyed by a composite key so that the same base product with
 // different fruit-mix compositions (e.g. "Mangga+Semangka" vs
 // "Mangga+Nanas+Melon") lands in separate cart lines instead of merging.
-const { getProduct } = require('./queries');
+const { getProductsByIds } = require('./queries');
 
 const COOKIE_NAME = 'pecup_cart';
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 14; // 14 days
@@ -56,11 +56,24 @@ function serializeCart(cart) {
   return JSON.stringify(cart);
 }
 
-async function buildCartItems(cart) {
+function cartProductIds(cart) {
+  const ids = [];
+  for (const entry of Object.values(cart)) {
+    if (!entry || entry.qty <= 0) continue;
+    ids.push(Number(entry.productId));
+    for (const fruitId of entry.fruits || []) ids.push(Number(fruitId));
+  }
+  return ids;
+}
+
+// `products` lets a caller that already batch-loaded the rows (see the
+// set-qty route) pass them in, so rendering the cart costs no extra queries.
+async function buildCartItems(cart, { products } = {}) {
+  const byId = products || (await getProductsByIds(cartProductIds(cart)));
   const items = [];
   for (const [key, entry] of Object.entries(cart)) {
     if (!entry || entry.qty <= 0) continue;
-    const product = await getProduct(entry.productId);
+    const product = byId.get(Number(entry.productId));
     if (!product) continue;
     // Math.max(stock, 0) || entry.qty would wrongly fall through to the
     // full requested qty when stock is exactly 0 (0 is falsy) — clamp
@@ -69,11 +82,10 @@ async function buildCartItems(cart) {
     if (cappedQty <= 0) continue;
     const subtotal = product.price * cappedQty;
 
-    let fruits = [];
-    if (entry.fruits && entry.fruits.length) {
-      const fetched = await Promise.all(entry.fruits.map((id) => getProduct(id)));
-      fruits = fetched.filter(Boolean).map((f) => ({ id: f.id, name: f.name }));
-    }
+    const fruits = (entry.fruits || [])
+      .map((id) => byId.get(Number(id)))
+      .filter(Boolean)
+      .map((f) => ({ id: f.id, name: f.name }));
 
     items.push({ key, product, qty: cappedQty, subtotal, fruits });
   }
@@ -119,6 +131,7 @@ module.exports = {
   parseCart,
   serializeCart,
   buildCartItems,
+  cartProductIds,
   cartCount,
   addToCart,
   setCartQty,

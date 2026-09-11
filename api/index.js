@@ -14,17 +14,20 @@ const Router = require('../src/router');
 const { parseCookies, setCookie, clearCookie } = require('../src/cookies');
 const cartLib = require('../src/cart');
 const adminSession = require('../src/adminSession');
+const customerSession = require('../src/customerSession');
+const customerAuth = require('../src/customerAuth');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const { logAdminAction, listAdminLogs } = require('../src/adminLog');
 const queries = require('../src/queries');
-const { toDateKey, formatRupiah, normalizeWhatsapp } = require('../src/utils');
+const { toDateKey, formatRupiah, normalizeWhatsapp, formatWhatsapp, ORDER_STATUSES } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
 const { saveProductImage, saveProofFile, signedProofUrl } = require('../src/uploads');
 
 const shopViews = require('../src/views/shop');
 const adminViews = require('../src/views/admin');
+const accountViews = require('../src/views/account');
 
 const router = new Router();
 
@@ -64,6 +67,7 @@ router.get('/', async (req, res, { query }) => {
       category,
       categories,
       cart: req.cart,
+      customer: req.customer,
     })
   );
 });
@@ -76,7 +80,13 @@ router.get('/produk/:id', async (req, res) => {
   const singleFruits = all.filter((p) => p.category === 'Buah Tunggal');
   sendHtml(
     res,
-    shopViews.renderProdukDetail({ product, related, cartCount: cartLib.cartCount(req.cart), singleFruits })
+    shopViews.renderProdukDetail({
+      product,
+      related,
+      cartCount: cartLib.cartCount(req.cart),
+      singleFruits,
+      customer: req.customer,
+    })
   );
 });
 
@@ -128,7 +138,10 @@ router.post('/keranjang/tambah', async (req, res) => {
 
 router.get('/keranjang', async (req, res) => {
   const { items, subtotal } = await cartLib.buildCartItems(req.cart);
-  sendHtml(res, shopViews.renderKeranjang({ items, subtotal, cartCount: cartLib.cartCount(req.cart) }));
+  sendHtml(
+    res,
+    shopViews.renderKeranjang({ items, subtotal, cartCount: cartLib.cartCount(req.cart), customer: req.customer })
+  );
 });
 
 // Backs the quantity stepper on the product cards and the cart page. Takes
@@ -141,7 +154,11 @@ router.post('/keranjang/set-qty', async (req, res) => {
   const key = fields.key || String(Number(fields.productId));
   const productId = Number(fields.productId) || Number((req.cart[key] || {}).productId);
 
-  const product = await queries.getProduct(productId);
+  // One batched query covers the product being changed *and* every other
+  // line already in the cart, so this whole request is a single round-trip
+  // to the database instead of one per cart line.
+  const products = await queries.getProductsByIds([...cartLib.cartProductIds(req.cart), productId]);
+  const product = products.get(productId);
   if (!product) return sendJson(res, { ok: false, error: 'Produk tidak ditemukan.' }, 404);
 
   const qty = Math.min(requestedQty, Math.max(Number(product.stock) || 0, 0));
@@ -150,7 +167,7 @@ router.post('/keranjang/set-qty', async (req, res) => {
   else cartLib.addToCart(req.cart, productId, qty);
   saveCartCookie(res, req.cart);
 
-  const { items, subtotal } = await cartLib.buildCartItems(req.cart);
+  const { items, subtotal } = await cartLib.buildCartItems(req.cart, { products });
   const line = items.find((it) => it.key === key);
   sendJson(res, {
     ok: true,
@@ -178,10 +195,184 @@ router.post('/keranjang/hapus', async (req, res) => {
   redirect(res, '/keranjang');
 });
 
+// ---------------------------------------------------------------------
+// customer accounts (WhatsApp number is the username)
+// ---------------------------------------------------------------------
+
+function saveCustomerCookie(res, customer) {
+  setCookie(res, customerSession.COOKIE_NAME, customerSession.issueToken(customer), {
+    maxAge: customerSession.MAX_AGE_SECONDS,
+    httpOnly: true,
+  });
+}
+
+// Only ever redirect to a path on this site — never to whatever an attacker
+// managed to get into the ?next= parameter.
+function safeNext(value) {
+  const next = String(value || '');
+  return /^\/[^/\\]/.test(next) ? next : '/akun';
+}
+
+router.get('/masuk', async (req, res, { query }) => {
+  if (req.customer) return redirect(res, '/akun');
+  sendHtml(
+    res,
+    accountViews.renderMasuk({ cartCount: cartLib.cartCount(req.cart), next: query.get('next') || '' })
+  );
+});
+
+router.post('/masuk', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const whatsapp = (fields.whatsapp || '').trim();
+  const password = fields.password || '';
+
+  const customer = await customerAuth.checkCredentials(whatsapp, password);
+  if (!customer) {
+    return sendHtml(
+      res,
+      accountViews.renderMasuk({
+        cartCount: cartLib.cartCount(req.cart),
+        customer: req.customer,
+        errors: ['Nomor WhatsApp atau password salah.'],
+        values: { whatsapp },
+        next: fields.next || '',
+      })
+    );
+  }
+
+  saveCustomerCookie(res, customer);
+  redirect(res, safeNext(fields.next));
+});
+
+router.get('/daftar', async (req, res) => {
+  if (req.customer) return redirect(res, '/akun');
+  sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart) }));
+});
+
+router.post('/daftar', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const name = (fields.name || '').trim();
+  const whatsapp = (fields.whatsapp || '').trim();
+  const address = (fields.address || '').trim();
+  const password = fields.password || '';
+
+  const errors = [];
+  if (!name) errors.push('Nama lengkap wajib diisi.');
+  const normalized = normalizeWhatsapp(whatsapp);
+  if (!normalized) errors.push('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx atau +628xxxxxxxxxx.');
+  if (password.length < 6) errors.push('Password minimal 6 karakter.');
+  if (normalized && (await customerAuth.findByWhatsapp(normalized))) {
+    errors.push('Nomor WhatsApp ini sudah terdaftar. Silakan masuk.');
+  }
+
+  if (errors.length) {
+    return sendHtml(
+      res,
+      accountViews.renderDaftar({
+        cartCount: cartLib.cartCount(req.cart),
+        customer: req.customer,
+        errors,
+        values: { name, whatsapp, address },
+      })
+    );
+  }
+
+  const customer = await customerAuth.createCustomer({ whatsapp: normalized, name, password, address });
+  saveCustomerCookie(res, customer);
+  redirect(res, '/akun');
+});
+
+router.post('/keluar', async (req, res) => {
+  clearCookie(res, customerSession.COOKIE_NAME);
+  redirect(res, '/');
+});
+
+function requireCustomer(handler) {
+  return async (req, res, extra) => {
+    if (!req.customer) return redirect(res, '/masuk');
+    const customer = await customerAuth.findById(req.customer.customerId);
+    if (!customer) {
+      clearCookie(res, customerSession.COOKIE_NAME);
+      return redirect(res, '/masuk');
+    }
+    return handler(req, res, { ...extra, customer });
+  };
+}
+
+router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
+  const [loyalty, orders] = await Promise.all([
+    customerAuth.loyaltyStatus(customer.id),
+    customerAuth.listCustomerOrders(customer.id),
+  ]);
+  sendHtml(
+    res,
+    accountViews.renderAkun({
+      customer,
+      loyalty,
+      orders,
+      cartCount: cartLib.cartCount(req.cart),
+      flash: query && query.get('ok') ? 'Perubahan tersimpan.' : '',
+    })
+  );
+}));
+
+router.post('/akun', requireCustomer(async (req, res, { customer }) => {
+  const { fields } = await parseBody(req);
+  const name = (fields.name || '').trim();
+  if (!name) return redirect(res, '/akun');
+
+  const updated = await customerAuth.updateCustomer(customer.id, {
+    name,
+    address: (fields.address || '').trim(),
+  });
+  // Re-issue the cookie so the header greeting reflects a renamed account.
+  saveCustomerCookie(res, updated);
+  redirect(res, '/akun?ok=1');
+}));
+
+router.post('/akun/password', requireCustomer(async (req, res, { customer }) => {
+  const { fields } = await parseBody(req);
+  const valid = await customerAuth.checkCredentials(customer.whatsapp, fields.currentPassword || '');
+  const newPassword = fields.newPassword || '';
+
+  const errors = [];
+  if (!valid) errors.push('Password lama salah.');
+  if (newPassword.length < 6) errors.push('Password baru minimal 6 karakter.');
+
+  if (errors.length) {
+    const [loyalty, orders] = await Promise.all([
+      customerAuth.loyaltyStatus(customer.id),
+      customerAuth.listCustomerOrders(customer.id),
+    ]);
+    return sendHtml(
+      res,
+      accountViews.renderAkun({ customer, loyalty, orders, cartCount: cartLib.cartCount(req.cart), errors })
+    );
+  }
+
+  await customerAuth.updatePassword(customer.id, newPassword);
+  redirect(res, '/akun?ok=1');
+}));
+
 router.get('/checkout', async (req, res) => {
   const { items, subtotal } = await cartLib.buildCartItems(req.cart);
   if (items.length === 0) return redirect(res, '/keranjang');
-  sendHtml(res, shopViews.renderCheckout({ items, subtotal, cartCount: cartLib.cartCount(req.cart) }));
+
+  // Signed-in shoppers get the form pre-filled from their saved profile —
+  // that's the whole point of having an account.
+  const saved = req.customer ? await customerAuth.findById(req.customer.customerId) : null;
+  sendHtml(
+    res,
+    shopViews.renderCheckout({
+      items,
+      subtotal,
+      cartCount: cartLib.cartCount(req.cart),
+      customer: saved,
+      formValues: saved
+        ? { customerName: saved.name, whatsapp: formatWhatsapp(saved.whatsapp), address: saved.address }
+        : {},
+    })
+  );
 });
 
 router.post('/checkout', async (req, res) => {
@@ -198,6 +389,7 @@ router.post('/checkout', async (req, res) => {
         items,
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
+        customer: req.customer,
         errors: ['Berkas terlalu besar atau gagal diunggah. Coba lagi dengan file yang lebih kecil (maks. 4MB).'],
       }),
       413
@@ -242,6 +434,7 @@ router.post('/checkout', async (req, res) => {
         items,
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
+        customer: req.customer,
         errors,
         formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
@@ -270,6 +463,7 @@ router.post('/checkout', async (req, res) => {
       proofFilename,
       address,
       deliveryDate,
+      customerId: req.customer ? req.customer.customerId : null,
     });
   } catch (err) {
     console.error(err);
@@ -279,6 +473,7 @@ router.post('/checkout', async (req, res) => {
         items,
         subtotal,
         cartCount: cartLib.cartCount(req.cart),
+        customer: req.customer,
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
         formValues: { customerName, whatsapp, notes, address, deliveryDate },
       })
@@ -308,7 +503,7 @@ router.get('/pesanan-berhasil/:id', async (req, res) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
   const items = await queries.getOrderItems(order.id);
-  sendHtml(res, shopViews.renderSukses({ order, items, emailOk: Boolean(order.email_sent) }));
+  sendHtml(res, shopViews.renderSukses({ order, items, emailOk: Boolean(order.email_sent), customer: req.customer }));
 });
 
 // ---------------------------------------------------------------------
@@ -501,7 +696,9 @@ router.get('/admin/pesanan/:id', requireAdmin(async (req, res) => {
 
 router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
-  const status = fields.status === 'terkonfirmasi' ? 'terkonfirmasi' : 'menunggu';
+  // Only accept one of the three known states — an unexpected value would
+  // otherwise silently break the stamp count, which keys off 'selesai'.
+  const status = ORDER_STATUSES.some((s) => s.value === fields.status) ? fields.status : 'menunggu';
   await queries.updateOrderStatus(Number(req.params.id), status);
   await logAdminAction(req.admin, 'order.status_update', `#${req.params.id} -> ${status}`);
   redirect(res, `/admin/pesanan/${req.params.id}`);
@@ -667,6 +864,11 @@ module.exports = async (req, res) => {
     }
     req.isAdmin = Boolean(req.admin);
     req.isSuperadmin = Boolean(req.admin && req.admin.role === 'superadmin');
+    // Deliberately *not* re-checked against the DB here: the token already
+    // carries everything the header needs (name), and the routes that act on
+    // a customer load the row themselves. Keeps the storefront hot path at
+    // zero extra queries.
+    req.customer = customerSession.verify(cookies[customerSession.COOKIE_NAME]);
 
     const match = router.match(req.method, pathname);
     if (!match) return notFound(res);

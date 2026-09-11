@@ -8,6 +8,8 @@ const {
   formatTimeID,
   normalizeWhatsapp,
   formatWhatsapp,
+  orderStatus,
+  ORDER_STATUSES,
 } = require('../utils');
 
 function renderLogin({ error }) {
@@ -265,9 +267,8 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, admin }
   const rows = orders.length
     ? orders
         .map((o) => {
-          const badge = o.status === 'terkonfirmasi'
-            ? `<span style="font-size:11.5px;font-weight:700;color:#3f7a42;background:var(--green-soft);padding:5px 11px;border-radius:99px;">Terkonfirmasi</span>`
-            : `<span style="font-size:11.5px;font-weight:700;color:#a15a1f;background:var(--orange-soft);padding:5px 11px;border-radius:99px;">Menunggu</span>`;
+          const status = orderStatus(o.status);
+          const badge = `<span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span>`;
           return `
       <div class="row-hover" style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);">
         <span style="font-size:13px;color:var(--text-muted);">${formatTimeID(o.created_at)}</span>
@@ -312,10 +313,11 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, admin }
       <a href="/admin/pesanan?tanggal=${nextDate}" style="display:flex;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></a>
     </div>
 
-    <div class="grid-3" style="margin-bottom:28px;">
-      ${statCard('Pesanan Hari Ini', stats.total, 'var(--green-soft)', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
-      ${statCard('Menunggu Verifikasi', stats.pending, 'var(--orange-soft)', '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>', '#a15a1f')}
-      ${statCard('Terkonfirmasi', stats.confirmed, 'var(--green-soft)', '<path d="M20 6L9 17l-5-5"/>')}
+    <div class="grid-4" style="margin-bottom:28px;gap:16px;">
+      ${statCard('Pesanan Hari Ini', stats.total, 'var(--surface-2)', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>', '#5a5a60')}
+      ${statCard('Menunggu Verifikasi', stats.pending, 'oklch(94% 0.06 55)', '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>', '#a15a1f')}
+      ${statCard('Diproses', stats.processing, 'oklch(93% 0.05 245)', '<path d="M12 2v4M12 18v4M4.9 4.9l2.9 2.9M16.2 16.2l2.9 2.9M2 12h4M18 12h4M4.9 19.1l2.9-2.9M16.2 7.8l2.9-2.9"/>', '#1f5aa1')}
+      ${statCard('Selesai', stats.done, 'var(--green-soft)', '<path d="M20 6L9 17l-5-5"/>')}
     </div>
 
     <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
@@ -390,8 +392,7 @@ function renderPesananDetail({ order, items, proofUrl, admin }) {
 
         <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:20px;display:flex;gap:10px;">
           <select name="status" style="flex:1;">
-            <option value="menunggu" ${order.status === 'menunggu' ? 'selected' : ''}>Menunggu Verifikasi</option>
-            <option value="terkonfirmasi" ${order.status === 'terkonfirmasi' ? 'selected' : ''}>Terkonfirmasi</option>
+            ${ORDER_STATUSES.map((s) => `<option value="${s.value}" ${order.status === s.value ? 'selected' : ''}>${s.label}</option>`).join('')}
           </select>
           <button class="btn-primary" type="submit" style="padding:0 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Update Status</button>
         </form>

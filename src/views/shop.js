@@ -39,7 +39,7 @@ function qtyControl({ key, productId, stock, qty }) {
   return `<div class="qty-control" data-key="${escapeAttr(key)}" data-product-id="${productId}" data-stock="${stock}" data-qty="${qty}">${inner}</div>`;
 }
 
-function renderBeranda({ products, cartCount, category, categories: dbCategories = [], cart = {} }) {
+function renderBeranda({ products, cartCount, category, categories: dbCategories = [], cart = {}, customer = null }) {
   const categories = ['Semua', ...dbCategories];
   const chips = categories
     .map((c) => {
@@ -89,7 +89,7 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
 
   const body = `
 <div class="frame-scroll"><div class="frame">
-  ${customerHeader(cartCount)}
+  ${customerHeader(cartCount, null, customer)}
 
   <section class="hero px-page" style="padding-top:88px;padding-bottom:72px;">
     <div class="hero-copy">
@@ -154,7 +154,7 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
   return page({ title: 'Pecup — Buah Potong Segar', bodyHtml: body });
 }
 
-function renderProdukDetail({ product, related, cartCount, singleFruits = [] }) {
+function renderProdukDetail({ product, related, cartCount, singleFruits = [], customer = null }) {
   const relatedCards = related
     .map(
       (p) => `
@@ -226,7 +226,7 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [] }) 
 
   const body = `
 <div class="frame-scroll"><div class="frame">
-  ${customerHeader(cartCount)}
+  ${customerHeader(cartCount, null, customer)}
   <div class="px-page" style="padding-top:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
     ${backButton('/#menu', 'Kembali ke Menu')}
     <div style="font-size:13.5px;color:var(--text-muted);">
@@ -292,7 +292,7 @@ function stepHeader(activeIndex) {
   return html;
 }
 
-function renderKeranjang({ items, subtotal, cartCount }) {
+function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
   const rows = items.length
     ? items
         .map(
@@ -328,7 +328,7 @@ function renderKeranjang({ items, subtotal, cartCount }) {
 
   const body = `
 <div class="frame-scroll"><div class="frame">
-  ${customerHeader(cartCount, stepHeader(1))}
+  ${customerHeader(cartCount, stepHeader(1), customer)}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
     ${backButton('/', 'Lanjut Belanja')}
     <h1 style="font-size:26px;font-weight:800;margin-bottom:6px;margin-top:20px;">Keranjang Belanja</h1>
@@ -355,7 +355,7 @@ function renderKeranjang({ items, subtotal, cartCount }) {
   return page({ title: 'Keranjang — Pecup', bodyHtml: body });
 }
 
-function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = {} }) {
+function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = {}, customer = null }) {
   const summaryRows = items
     .map(
       (it) => `
@@ -373,7 +373,7 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
 
   const body = `
 <div class="frame-scroll"><div class="frame">
-  ${customerHeader(cartCount, stepHeader(2))}
+  ${customerHeader(cartCount, stepHeader(2), customer)}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
     ${backButton('/keranjang', 'Kembali ke Keranjang')}
     <h1 style="font-size:26px;font-weight:800;margin-bottom:30px;margin-top:20px;">Checkout Pesanan</h1>
@@ -381,6 +381,18 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
     <form method="post" action="/checkout" enctype="multipart/form-data">
       <div class="split-layout">
         <div class="split-main" style="gap:24px;">
+          ${
+            customer
+              ? `<div style="display:flex;align-items:center;gap:10px;background:var(--green-soft);border-radius:12px;padding:14px 16px;font-size:13.5px;color:var(--green-dark);line-height:1.6;">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>
+                  <span>Data di bawah terisi otomatis dari akunmu. Pesanan ini juga menambah stempelmu setelah selesai.</span>
+                </div>`
+              : `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--surface-2);border-radius:12px;padding:14px 18px;">
+                  <span style="font-size:13.5px;color:var(--text-muted);line-height:1.6;">Lanjut sebagai tamu saja juga boleh — akun cuma untuk isi otomatis &amp; kumpul stempel.</span>
+                  <a href="/masuk?next=/checkout" class="btn-outline" style="padding:10px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Masuk / Daftar</a>
+                </div>`
+          }
+
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
             <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
@@ -452,14 +464,14 @@ function renderCheckout({ items, subtotal, cartCount, errors = [], formValues = 
   return page({ title: 'Checkout — Pecup', bodyHtml: body });
 }
 
-function renderSukses({ order, items, emailOk }) {
+function renderSukses({ order, items, emailOk, customer = null }) {
   const emailNote = emailOk
     ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
     : `Pesananmu sudah tersimpan, tapi email notifikasi ke toko belum berhasil terkirim otomatis — tim kami tetap bisa melihatnya lewat panel admin.`;
 
   const body = `
 <div class="frame-scroll"><div class="frame">
-  ${customerHeader(0)}
+  ${customerHeader(0, null, customer)}
   <div class="px-page" style="display:flex;justify-content:center;padding-top:60px;padding-bottom:100px;">
     <div class="success-card" style="background:var(--surface);border:1px solid var(--border);border-radius:28px;max-width:560px;width:100%;display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;">
       <div style="width:80px;height:80px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;">

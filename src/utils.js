@@ -95,6 +95,18 @@ function toDateOnly(value) {
   return toDateKey(d);
 }
 
+// The three order states, in the order they progress. 'selesai' is what
+// earns a loyalty stamp (see customerAuth.loyaltyStatus).
+const ORDER_STATUSES = [
+  { value: 'menunggu', label: 'Menunggu Verifikasi', color: '#a15a1f', bg: 'oklch(94% 0.06 55)' },
+  { value: 'diproses', label: 'Diproses', color: '#1f5aa1', bg: 'oklch(93% 0.05 245)' },
+  { value: 'selesai', label: 'Selesai', color: '#3f7a42', bg: 'oklch(94% 0.05 152)' },
+];
+
+function orderStatus(value) {
+  return ORDER_STATUSES.find((s) => s.value === value) || ORDER_STATUSES[0];
+}
+
 function slugify(name) {
   return String(name)
     .toLowerCase()
@@ -115,4 +127,6 @@ module.exports = {
   normalizeWhatsapp,
   formatWhatsapp,
   toDateOnly,
+  ORDER_STATUSES,
+  orderStatus,
 };

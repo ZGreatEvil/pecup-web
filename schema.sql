@@ -53,6 +53,28 @@ create table if not exists orders (
 alter table orders add column if not exists address text not null default '';
 alter table orders add column if not exists delivery_date date;
 
+-- Returning-customer accounts. The WhatsApp number IS the username (stored
+-- in canonical 62xxxxxxxxx form so "0812...", "+62 812..." and "62812..."
+-- all resolve to the same account).
+create table if not exists customers (
+  id bigint generated always as identity primary key,
+  whatsapp text not null unique,
+  name text not null,
+  password_hash text not null,
+  address text not null default '',
+  created_at timestamptz not null default now()
+);
+
+-- Orders placed while signed in are linked to the account, which is what
+-- the loyalty stamps are counted from. Guest checkout leaves this null.
+alter table orders add column if not exists customer_id bigint references customers(id) on delete set null;
+create index if not exists idx_orders_customer_id on orders(customer_id);
+
+-- Order status is one of: 'menunggu' (awaiting payment verification),
+-- 'diproses' (verified, being prepared), 'selesai' (delivered/done — this
+-- is what earns a loyalty stamp). Renames the older two-state value.
+update orders set status = 'diproses' where status = 'terkonfirmasi';
+
 create table if not exists order_items (
   id bigint generated always as identity primary key,
   order_id bigint not null references orders(id) on delete cascade,
@@ -119,6 +141,7 @@ create index if not exists idx_admin_logs_created_at on admin_logs(created_at de
 -- replacing it, so drop the previous signature first — otherwise the old
 -- 6-argument version lingers and calls can bind to the wrong one.
 drop function if exists create_order(text, text, text, jsonb, text, text);
+drop function if exists create_order(text, text, text, jsonb, text, text, text, date);
 
 create or replace function create_order(
   p_customer_name text,
@@ -128,7 +151,8 @@ create or replace function create_order(
   p_proof_filename text,
   p_date_key text,
   p_address text,
-  p_delivery_date date
+  p_delivery_date date,
+  p_customer_id bigint
 ) returns jsonb
 language plpgsql
 as $$
@@ -174,8 +198,8 @@ begin
     v_subtotal := v_subtotal + v_price * v_qty;
   end loop;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date)
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id)
   returning id into v_order_id;
 
   v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');

@@ -1,4 +1,4 @@
-const { csvEscape, formatTimeID, formatRupiah, formatWhatsapp, toDateOnly } = require('./utils');
+const { csvEscape, formatTimeID, formatRupiah, formatWhatsapp, toDateOnly, orderStatus } = require('./utils');
 const { getOrderItems } = require('./queries');
 
 async function buildDailyOrdersCsv(orders) {
@@ -32,7 +32,7 @@ async function buildDailyOrdersCsv(orders) {
       itemsText,
       o.notes || '',
       formatRupiah(o.total),
-      o.status === 'terkonfirmasi' ? 'Terkonfirmasi' : 'Menunggu Verifikasi',
+      orderStatus(o.status).label,
       o.proof_filename || '',
       o.email_sent ? 'Ya' : 'Tidak',
     ];

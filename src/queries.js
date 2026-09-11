@@ -18,6 +18,18 @@ async function getProduct(id) {
   return rows[0] || null;
 }
 
+// Batched lookup keyed by id. Every cart render needs several products at
+// once, and each Neon call is its own HTTPS round-trip — fetching them one
+// at a time is what made add-to-cart feel slow.
+async function getProductsByIds(ids) {
+  const unique = Array.from(new Set(ids.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+  const byId = new Map();
+  if (!unique.length) return byId;
+  const rows = await db.query('select * from products where id = any($1::bigint[])', [unique]);
+  for (const row of rows) byId.set(Number(row.id), row);
+  return byId;
+}
+
 // Categories aren't a separate table — `products.category` is free text, so
 // "adding a category" just means typing a new value on a product. This
 // derives the live list of categories in use, for the storefront filter
@@ -122,8 +134,8 @@ async function productStats() {
 // the involved product rows with SELECT ... FOR UPDATE. That's what keeps
 // this safe even if two customers check out the last unit at the same time
 // across two different serverless invocations.
-async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate }) {
-  const rows = await db.query('select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date) as result', [
+async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate, customerId }) {
+  const rows = await db.query('select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint) as result', [
     customerName,
     whatsapp,
     notes || '',
@@ -132,6 +144,7 @@ async function createOrder({ customerName, whatsapp, notes, items, proofFilename
     toDateKey(new Date()),
     address || '',
     deliveryDate || null,
+    customerId || null,
   ]);
   const raw = rows[0].result;
   const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -162,8 +175,9 @@ async function orderDayStats(dateKey) {
   const orders = await listOrdersByDate(dateKey);
   const total = orders.length;
   const pending = orders.filter((o) => o.status === 'menunggu').length;
-  const confirmed = orders.filter((o) => o.status === 'terkonfirmasi').length;
-  return { total, pending, confirmed, orders };
+  const processing = orders.filter((o) => o.status === 'diproses').length;
+  const done = orders.filter((o) => o.status === 'selesai').length;
+  return { total, pending, processing, done, orders };
 }
 
 async function updateOrderStatus(id, status) {
@@ -181,6 +195,7 @@ async function markEmailSent(id, ok, errorMessage) {
 module.exports = {
   listProducts,
   getProduct,
+  getProductsByIds,
   listCategories,
   createProduct,
   updateProduct,
