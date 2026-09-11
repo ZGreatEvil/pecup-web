@@ -58,7 +58,7 @@ const SHARED_STYLE = `
   .flash{padding:14px 18px;border-radius:12px;font-size:13.5px;margin-bottom:20px;}
   .flash-error{background:#f6dcdc;color:#a13f3f;}
   .flash-ok{background:var(--green-soft);color:var(--green-dark);}
-  .frame{width:100%;max-width:1440px;margin:0 auto;background:var(--bg);}
+  .frame{width:100%;background:var(--bg);}
   .frame-scroll{overflow-x:hidden;}
 
   /* ---- responsive helpers ---- */
