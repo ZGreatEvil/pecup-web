@@ -21,10 +21,10 @@ function renderLogin({ error }) {
   const body = `
 <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);">
   <div class="card" style="width:100%;max-width:380px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;justify-content:center;">
+    <a href="/" class="brand-link" style="gap:10px;margin-bottom:24px;justify-content:center;" aria-label="Pecup — buka halaman toko">
       ${logoMark(34)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:20px;">Pecup Admin</span>
-    </div>
+    </a>
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
     <form method="post" action="/admin/login">
       <div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>

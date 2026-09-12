@@ -33,6 +33,11 @@ const SHARED_STYLE = `
      never appears as a hover state. */
   a{color:var(--orange-dark);text-decoration:none;}
   a:hover{text-decoration:underline;text-underline-offset:3px;}
+  /* The logo lockup is a link, but it must not take link styling: the rules
+     above would paint the wordmark orange and underline it on hover. It keeps
+     the colours its own spans set and dims slightly instead. */
+  .brand-link{color:inherit;text-decoration:none;display:flex;align-items:center;transition:opacity 0.16s ease;}
+  .brand-link:hover{text-decoration:none;opacity:0.82;}
   button{font-family:inherit;cursor:pointer;transition:background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
@@ -775,7 +780,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) 
   if (activeStepLabel) {
     return `
   <header class="site-header">
-    <a href="/" style="display:flex;align-items:center;gap:12px;">
+    <a href="/" class="brand-link" style="gap:12px;">
       ${logoMark(38)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;color:var(--text);">Pecup</span>
     </a>
@@ -784,7 +789,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) 
   }
   return `
   <header class="site-header-grid">
-    <a href="/" style="display:flex;align-items:center;gap:12px;justify-self:start;">
+    <a href="/" class="brand-link" style="gap:12px;justify-self:start;">
       ${logoMark(38)}
       <div style="display:flex;flex-direction:column;">
         <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;letter-spacing:-0.3px;color:var(--text);">Pecup</span>
@@ -1302,10 +1307,10 @@ function customerFooter() {
   <footer class="px-page" style="padding-top:64px;padding-bottom:40px;">
     <div class="footer-cols">
       <div style="flex:1 1 260px;max-width:320px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <a href="/" class="brand-link" style="gap:10px;margin-bottom:14px;" aria-label="Pecup — kembali ke beranda">
           ${logoMark(30)}
           <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:19px;">Pecup</span>
-        </div>
+        </a>
         <p style="font-size:13.5px;color:var(--text-muted);line-height:1.7;">Buah segar, dipotong &amp; dikemas higienis setiap hari, siap diantar ke tempatmu.</p>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
@@ -1331,10 +1336,10 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
   <input type="checkbox" id="adminNavToggle" class="admin-nav-toggle">
   <label class="admin-scrim" for="adminNavToggle" aria-hidden="true"></label>
   <div class="admin-topbar">
-    <div style="display:flex;align-items:center;gap:9px;min-width:0;">
+    <a href="/admin" class="brand-link" style="gap:9px;min-width:0;" aria-label="Pecup Admin — kembali ke ringkasan">
       ${logoMark(28)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:16px;color:#fff;white-space:nowrap;">Pecup <span style="font-weight:500;font-size:11px;color:oklch(70% 0.02 255);">Admin</span></span>
-    </div>
+    </a>
     <label class="admin-burger" for="adminNavToggle">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       <span class="burger-open">Menu</span>
@@ -1342,10 +1347,10 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     </label>
   </div>
   <aside class="admin-sidebar">
-    <div class="admin-sidebar-brand" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
+    <a href="/admin" class="admin-sidebar-brand brand-link" style="gap:10px;padding:0 8px;margin-bottom:40px;" aria-label="Pecup Admin — kembali ke ringkasan">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
-    </div>
+    </a>
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin', 'dashboard', 'Ringkasan', '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>')}
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}

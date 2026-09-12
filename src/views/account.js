@@ -22,10 +22,10 @@ function authShell({ title, heading, subheading, formHtml, footerHtml, cartCount
     <div style="width:100%;max-width:420px;">
       ${backButton('/', 'Kembali ke Beranda')}
       <div class="card" style="margin-top:20px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+        <a href="/" class="brand-link" style="gap:10px;margin-bottom:20px;" aria-label="Pecup — kembali ke beranda">
           ${logoMark(34)}
           <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:19px;">${escapeHtml(heading)}</span>
-        </div>
+        </a>
         <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;margin-bottom:22px;">${subheading}</p>
         ${formHtml}
       </div>
