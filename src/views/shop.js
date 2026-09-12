@@ -86,17 +86,20 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
                 stock: Number(p.stock) || 0,
                 qty: Number((cart[String(p.id)] || {}).qty) || 0,
               });
+          // The photo box and the name block are fixed-height, and the price
+          // row is pushed down with .p-card-foot, so every card in the grid
+          // lines up regardless of name length or whether it has a badge.
           return `
       <div class="p-card" style="position:relative;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;">
         <a href="/produk/${p.id}" style="position:absolute;inset:0;z-index:1;" aria-label="${escapeAttr(p.name)}"></a>
-        <div style="aspect-ratio:1;position:relative;">${badgeHtml(p)}${productThumb(p)}</div>
-        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
-          <span style="font-size:15.5px;font-weight:700;color:var(--text);">${escapeHtml(p.name)}</span>
+        <div style="aspect-ratio:1;position:relative;flex-shrink:0;">${badgeHtml(p)}${productThumb(p)}</div>
+        <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-start;">
+          <span class="p-card-name">${escapeHtml(p.name)}</span>
           <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
           ${wholesaleBadge(p)}
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:10px;">
-          <span style="font-size:16.5px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
+        <div class="p-card-foot" style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;gap:10px;">
+          <span class="tnum" style="font-size:16.5px;font-weight:800;color:var(--green-dark);">${formatRupiah(p.price)}</span>
           <div style="position:relative;z-index:2;">${action}</div>
         </div>
       </div>`;

@@ -215,28 +215,154 @@ async function setClaims(customerId, claims) {
   return statusFor(customerId);
 }
 
-// Everyone who has an account, with their live loyalty state — powers the
-// superadmin's Pelanggan & Stempel page.
-async function listCustomersWithLoyalty() {
-  const rows = await db.query('select id from customers order by created_at desc');
-  const out = [];
-  for (const row of rows) {
-    const id = Number(row.id);
-    const [customer, status] = await Promise.all([
-      db.query('select id, name, whatsapp, birthday, created_at from customers where id = $1', [id]),
-      statusFor(id),
-    ]);
-    const c = customer[0];
-    out.push({
-      id,
+// Bulk version of expireStale: settles every lapsed card among the given
+// customers in one statement. Same rule as the single-customer path — the
+// clock starts at the oldest active stamp and the whole batch lapses N
+// months later.
+async function expireStaleMany(customerIds, months) {
+  if (!customerIds.length) return;
+  await db.query(
+    `with due as (
+       select customer_id, min(earned_at) as oldest
+       from stamps
+       where status = 'active' and customer_id = any($1::bigint[])
+       group by customer_id
+       having min(earned_at) + ($2 || ' months')::interval < now()
+     )
+     update stamps s set status = 'expired', settled_at = now()
+     from due
+     where s.customer_id = due.customer_id
+       and s.status = 'active'
+       and s.earned_at < due.oldest + ($2 || ' months')::interval`,
+    [customerIds, String(months)]
+  );
+}
+
+// Loyalty state for many customers at once — three queries total rather than
+// statusFor()'s handful per customer, which is what makes a searchable list
+// of every customer viable.
+async function statusForMany(customerRows) {
+  const all = await settings.getAll();
+  const perReward = await settings.stampsPerReward();
+  const months = Math.min(Math.max(Number(all.stamp_expiry_months) || 2, 1), 60);
+  const tierConfig = await getTierConfig();
+  const ids = customerRows.map((c) => Number(c.id));
+
+  await expireStaleMany(ids, months);
+
+  const stampRows = ids.length
+    ? await db.query(
+        `select customer_id, status, count(*)::int as n, min(earned_at) as oldest
+         from stamps where customer_id = any($1::bigint[])
+         group by customer_id, status`,
+        [ids]
+      )
+    : [];
+
+  const byCustomer = new Map();
+  for (const row of stampRows) {
+    const id = Number(row.customer_id);
+    if (!byCustomer.has(id)) byCustomer.set(id, {});
+    byCustomer.get(id)[row.status] = row;
+  }
+
+  return customerRows.map((c) => {
+    const buckets = byCustomer.get(Number(c.id)) || {};
+    const active = buckets.active || { n: 0, oldest: null };
+    const stamps = Number(active.n) || 0;
+    const claims = Number(c.rewards_claimed) || 0;
+    const { current, next } = tierFor(tierConfig.tiers, claims);
+    const expiresAt = expiryFor(active.oldest, months);
+
+    return {
+      id: Number(c.id),
       name: c.name,
       whatsapp: c.whatsapp,
-      birthday: c.birthday,
+      birthday: c.birthday || null,
       created_at: c.created_at,
-      ...status,
-    });
+      stamps,
+      perReward,
+      expiryMonths: months,
+      expiresAt,
+      expiresLabel: expiresAt ? formatShortDateID(expiresAt) : null,
+      cardComplete: stamps >= perReward,
+      toNextReward: Math.max(0, perReward - stamps),
+      claims,
+      expiredCount: Number((buckets.expired || {}).n) || 0,
+      redeemedCount: Number((buckets.redeemed || {}).n) || 0,
+      tiersEnabled: tierConfig.enabled,
+      tier: current,
+      nextTier: next,
+      tierStyle: tierStyle(current.name),
+    };
+  });
+}
+
+// Customers (optionally filtered by a search term) with their live loyalty
+// state — powers the admin's searchable Pelanggan page. `search` matches on
+// name or WhatsApp number; digits typed as 08xx also match the stored 628xx
+// form, since that's how people actually know their own number.
+async function listCustomersWithLoyalty({ search = '', limit = 100 } = {}) {
+  const term = String(search || '').trim();
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+
+  const columns = 'id, name, whatsapp, birthday, rewards_claimed, created_at';
+  let rows;
+  if (term) {
+    const digits = term.replace(/\D/g, '');
+    // 0812… and 62812… are the same number, so match on the number with any
+    // leading zero stripped too. Guarded on digits being non-empty — a
+    // letters-only search must not turn into `whatsapp like '%%'`, which
+    // would quietly match every customer.
+    const clauses = ['name ilike $1'];
+    const params = [`%${term}%`];
+    if (digits) {
+      params.push(`%${digits}%`);
+      clauses.push(`whatsapp like $${params.length}`);
+      params.push(`%${digits.replace(/^0/, '')}%`);
+      clauses.push(`whatsapp like $${params.length}`);
+    }
+    params.push(safeLimit);
+    rows = await db.query(
+      `select ${columns} from customers where ${clauses.join(' or ')}
+       order by created_at desc limit $${params.length}`,
+      params
+    );
+  } else {
+    rows = await db.query(`select ${columns} from customers order by created_at desc limit $1`, [safeLimit]);
   }
-  return out;
+
+  return statusForMany(rows);
+}
+
+async function countCustomers() {
+  const rows = await db.query('select count(*)::int as n from customers');
+  return Number(rows[0].n) || 0;
+}
+
+// Headline numbers for the Program Stempel page. "Cards complete" is counted
+// in SQL against the current threshold rather than by walking every customer.
+async function programStats() {
+  const perReward = await settings.stampsPerReward();
+  const [customers, claims, active, complete] = await Promise.all([
+    db.query('select count(*)::int as n from customers'),
+    db.query('select coalesce(sum(rewards_claimed), 0)::int as n from customers'),
+    db.query("select count(*)::int as n from stamps where status = 'active'"),
+    db.query(
+      `select count(*)::int as n from (
+         select customer_id from stamps where status = 'active'
+         group by customer_id having count(*) >= $1
+       ) full_cards`,
+      [perReward]
+    ),
+  ]);
+  return {
+    customers: Number(customers[0].n) || 0,
+    totalClaims: Number(claims[0].n) || 0,
+    activeStamps: Number(active[0].n) || 0,
+    cardsComplete: Number(complete[0].n) || 0,
+    perReward,
+  };
 }
 
 // The stamp history shown on the customer's own profile.
@@ -253,6 +379,8 @@ module.exports = {
   saveTierConfig,
   tierStyle,
   statusFor,
+  countCustomers,
+  programStats,
   grantForOrder,
   revokeForOrder,
   claimReward,

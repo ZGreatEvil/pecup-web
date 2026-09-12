@@ -1,4 +1,4 @@
-const { escapeHtml } = require('../utils');
+const { escapeHtml, escapeAttr } = require('../utils');
 
 const SHARED_STYLE = `
   :root{
@@ -46,6 +46,18 @@ const SHARED_STYLE = `
   .dropzone:hover{border-color:var(--orange);background:var(--orange-soft);}
   .nav-link{color:var(--text);font-weight:500;font-size:15px;}
   .nav-link:hover{text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px;}
+  .account-btn{display:inline-flex;align-items:center;gap:9px;padding:6px 12px 6px 7px;border-radius:99px;color:var(--text);
+    border:1.5px solid var(--border);background:var(--surface);max-width:190px;
+    transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
+  .account-btn:hover{border-color:var(--orange);background:var(--orange-soft);text-decoration:none;transform:translateY(-1px);}
+  .account-btn:active{transform:translateY(0) scale(0.98);}
+  .account-avatar{width:28px;height:28px;border-radius:50%;background:var(--green);color:#fff;font-size:12.5px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .account-text{display:flex;flex-direction:column;line-height:1.2;min-width:0;}
+  .account-hint{font-size:9.5px;font-weight:700;letter-spacing:0.5px;color:var(--text-muted);text-transform:uppercase;}
+  .account-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* On a phone the row is already tight — keep the avatar, drop the wording. */
+  @media (max-width: 700px){ .account-text, .account-btn > svg:last-child{display:none;} .account-btn{padding:5px 9px 5px 5px;} }
   .btn-primary{background:linear-gradient(180deg, oklch(75% 0.17 55), var(--orange));color:#fff;border:none;
     box-shadow:var(--shadow-sm);transition:filter 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   .btn-primary:hover{filter:saturate(1.12) brightness(0.96);transform:translateY(-2px);box-shadow:var(--shadow-md);}
@@ -59,10 +71,17 @@ const SHARED_STYLE = `
   .chip:active{transform:scale(0.97);}
   .chip-active{background:var(--green);border-color:var(--green);color:#fff;}
   .chip-active:hover{background:var(--green-dark);border-color:var(--green-dark);}
-  .p-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.2,0.7,0.3,1);}
+  /* height:100% + grid-auto-rows:1fr on the grid keeps every card the same
+     size no matter how long the name is or whether it carries a badge. */
+  .p-card{background:var(--surface);border:1px solid var(--border);height:100%;transition:border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.2,0.7,0.3,1);}
   .p-card:hover{border-color:var(--orange);box-shadow:var(--shadow-lg);transform:translateY(-5px);}
   .p-card img{transition:transform 0.35s cubic-bezier(0.2,0.7,0.3,1);}
   .p-card:hover img{transform:scale(1.05);}
+  /* Two lines reserved for the name so a one-word product and a three-word
+     one leave the price on the same baseline. */
+  .p-card-name{font-size:15.5px;font-weight:700;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;overflow:hidden;min-height:2.6em;line-height:1.3;}
+  .p-card-foot{margin-top:auto;}
   .mini-card{background:var(--surface);border:1px solid var(--border);transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;}
   .mini-card:hover{border-color:var(--orange);transform:translateY(-3px);box-shadow:var(--shadow-md);}
   .add-btn{background:var(--orange-soft);color:var(--orange-dark);border:none;transition:background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
@@ -99,6 +118,11 @@ const SHARED_STYLE = `
      only where data-autoplay is set (the product detail page). */
   .carousel{position:relative;width:100%;height:100%;overflow:hidden;}
   .carousel-track{display:flex;width:100%;height:100%;transition:transform 0.45s cubic-bezier(0.2,0.7,0.3,1);}
+  /* Each photo gets its own clipping box. Without this the card's hover zoom
+     (.p-card:hover img -> scale) pushes each image past its slot and the
+     neighbouring photo peeks in at the edges. */
+  .carousel-slide{flex:0 0 100%;width:100%;height:100%;overflow:hidden;position:relative;}
+  .carousel-slide img{width:100%;height:100%;object-fit:cover;display:block;}
   .carousel-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:30px;height:30px;border-radius:50%;
     border:none;background:rgba(255,255,255,0.86);color:#2b2b2f;display:flex;align-items:center;justify-content:center;
     box-shadow:0 2px 8px rgba(0,0,0,0.18);opacity:0;transition:opacity 0.2s ease, background 0.18s ease;}
@@ -162,7 +186,12 @@ const SHARED_STYLE = `
 
   /* ---- responsive helpers ---- */
   .px-page{padding-left:96px;padding-right:96px;}
-  .grid-4{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:28px;}
+  /* auto-rows:1fr so every row of cards is the same height as the tallest in
+     the grid — not just the tallest in its own row. */
+  .grid-4{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:28px;grid-auto-rows:1fr;}
+  /* The sticky header would otherwise cover the top of whatever #anchor you
+     jump to. */
+  section[id]{scroll-margin-top:96px;}
   .grid-3{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:36px;}
   .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;position:relative;}
   .hero::before{content:'';position:absolute;inset:-10% -5% auto;height:150%;pointer-events:none;z-index:0;
@@ -193,8 +222,11 @@ const SHARED_STYLE = `
     background:oklch(99% 0.006 95 / 0.92);backdrop-filter:blur(10px);gap:16px;position:sticky;top:0;z-index:50;box-shadow:var(--shadow-sm);}
   .site-nav{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;}
   .success-card{padding:56px 60px;}
-  .admin-shell{display:flex;align-items:flex-start;flex-wrap:wrap;}
-  .admin-sidebar{flex:0 0 240px;background:var(--sidebar);min-height:1000px;padding:28px 20px;display:flex;flex-direction:column;}
+  /* stretch (not flex-start) + a viewport floor: the dark rail runs the full
+     height of whatever page it's on, so a short page like Kelola Admin no
+     longer leaves it dangling past the content or stopping short of the fold. */
+  .admin-shell{display:flex;align-items:stretch;flex-wrap:wrap;min-height:100vh;}
+  .admin-sidebar{flex:0 0 240px;background:var(--sidebar);padding:28px 20px;display:flex;flex-direction:column;}
   .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
   table.admin-table{width:100%;border-collapse:collapse;}
   .table-scroll{overflow-x:auto;}
@@ -267,14 +299,27 @@ function logoMark(size = 38) {
   return `<img src="/assets/pecup-logo.png" width="${size}" height="${size}" alt="Pecup" style="border-radius:50%;object-fit:cover;flex-shrink:0;">`;
 }
 
+// The signed-in state is a labelled button, not a bare avatar: an initial in
+// a circle doesn't tell a shopper it's their account, or that it's clickable.
 function accountLink(customer) {
   if (customer) {
-    const initial = escapeHtml(String(customer.name || '?').charAt(0).toUpperCase());
-    return `<a href="/akun" title="Akun saya" style="display:flex;align-items:center;gap:8px;">
-      <span style="width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${initial}</span>
+    const name = String(customer.name || 'Akun');
+    const initial = escapeHtml(name.charAt(0).toUpperCase());
+    // Only the first word — a full name would push the cart icon off the row.
+    const short = escapeHtml(name.trim().split(/\s+/)[0].slice(0, 12));
+    return `<a class="account-btn" href="/akun" title="Akun saya — ${escapeAttr(name)}">
+      <span class="account-avatar">${initial}</span>
+      <span class="account-text">
+        <span class="account-hint">Akun</span>
+        <span class="account-name">${short}</span>
+      </span>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><path d="M9 18l6-6-6-6"/></svg>
     </a>`;
   }
-  return `<a class="nav-link" href="/masuk" style="font-size:13.5px;font-weight:600;white-space:nowrap;">Masuk</a>`;
+  return `<a class="account-btn" href="/masuk">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <span style="font-size:13.5px;font-weight:700;white-space:nowrap;">Masuk</span>
+  </a>`;
 }
 
 function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) {
@@ -370,6 +415,34 @@ const CART_SCRIPT = `
     if(!input || !input.classList || !input.classList.contains('qty-auto-submit')) return;
     var form = input.closest('form');
     if(form) form.requestSubmit();
+  });
+
+  // ---- Same-page links ---------------------------------------------------
+  // Clicking "Beranda" while already on the home page used to re-navigate to
+  // "/", which re-renders the whole page and drops the shopper wherever the
+  // browser decides to restore scroll to — it reads as being teleported.
+  // Same destination = just glide back to the top instead.
+  document.addEventListener('click', function(e){
+    if(!e.target.closest || e.defaultPrevented) return;
+    if(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    var link = e.target.closest('a');
+    if(!link || link.target === '_blank' || link.hasAttribute('download')) return;
+    var href = link.getAttribute('href');
+    if(!href || href.charAt(0) !== '/') return;
+
+    var url = new URL(href, window.location.href);
+    if(url.origin !== window.location.origin) return;
+    // A hash link has its own destination on the page — leave it to the browser.
+    if(url.hash) return;
+    if(url.pathname !== window.location.pathname || url.search !== window.location.search) return;
+
+    e.preventDefault();
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+    // Drop any lingering #menu so a refresh doesn't jump back down.
+    if(window.location.hash && history.replaceState){
+      history.replaceState(null, '', url.pathname + url.search);
+    }
   });
 
   // ---- Product photo carousel -------------------------------------------
@@ -598,9 +671,10 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
+      ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>')}
       ${
         isSuperadmin
-          ? item('/admin/pelanggan', 'pelanggan', 'Pelanggan & Stempel', '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>') +
+          ? item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>') +
             item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
             item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>')
           : ''

@@ -683,9 +683,17 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     );
   }
 
-  // Gallery = (existing photos the admin didn't tick "Hapus" on) + new uploads.
+  // Gallery = (existing photos the admin didn't tick "Hapus" on, in whatever
+  // order the tiles ended up in) + new uploads appended. `fotoUrutan` carries
+  // that order; it's filtered against the photos actually on the product so a
+  // forged or stale value can't inject a URL.
   const removed = new Set(fieldLists.hapusFoto || []);
-  const kept = productPhotos(existing).filter((url) => !removed.has(url));
+  const onProduct = productPhotos(existing);
+  const requested = (fieldLists.fotoUrutan || []).filter((url) => onProduct.includes(url));
+  // Anything the form didn't mention (older tab, JS off) keeps its old spot
+  // at the end rather than silently disappearing.
+  const ordered = [...requested, ...onProduct.filter((url) => !requested.includes(url))];
+  const kept = Array.from(new Set(ordered)).filter((url) => !removed.has(url));
   const uploaded = await uploadGalleryFiles(fileLists.image);
   const images = [...kept, ...uploaded];
 
@@ -886,21 +894,73 @@ router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
 // admin: customers, stamps & shop settings (superadmin only)
 // ---------------------------------------------------------------------
 
-router.get('/admin/pelanggan', requireSuperadmin(async (req, res, { query }) => {
-  const [customers, perReward, all, tierConfig] = await Promise.all([
-    loyalty.listCustomersWithLoyalty(),
-    settings.stampsPerReward(),
-    settings.getAll(),
+// Looking a customer up is day-to-day work, so every admin can search and
+// read. Changing stamps (below) stays superadmin-only.
+router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
+  const search = (query.get('q') || '').trim();
+  const [customers, totalCustomers, tierConfig] = await Promise.all([
+    loyalty.listCustomersWithLoyalty({ search }),
+    loyalty.countCustomers(),
     loyalty.getTierConfig(),
   ]);
   sendHtml(
     res,
     adminViews.renderPelangganList({
       customers,
+      search,
+      totalCustomers,
+      tiersEnabled: tierConfig.enabled,
+      admin: req.admin,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  const [loyaltyStatus, orders, stamps, tierConfig] = await Promise.all([
+    loyalty.statusFor(id),
+    customerAuth.listCustomerOrders(id),
+    loyalty.listStamps(id),
+    loyalty.getTierConfig(),
+  ]);
+
+  sendHtml(
+    res,
+    adminViews.renderPelangganDetail({
+      customer,
+      loyalty: loyaltyStatus,
+      orders,
+      stamps,
+      admin: req.admin,
+      canEdit: req.isSuperadmin,
+      tiersEnabled: tierConfig.enabled,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+// The programme rulebook — separate tab, superadmin only.
+router.get('/admin/loyalitas', requireSuperadmin(async (req, res, { query }) => {
+  const [perReward, all, tierConfig, stats] = await Promise.all([
+    settings.stampsPerReward(),
+    settings.getAll(),
+    loyalty.getTierConfig(),
+    loyalty.programStats(),
+  ]);
+  sendHtml(
+    res,
+    adminViews.renderLoyalitas({
+      admin: req.admin,
       perReward,
       expiryMonths: Number(all.stamp_expiry_months) || 2,
       tierConfig,
-      admin: req.admin,
+      stats,
       flash: query.get('flash') || '',
       error: query.get('error') || '',
     })
@@ -915,12 +975,12 @@ router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) =
 
   const target = Number(fields.stamps);
   if (!Number.isFinite(target) || target < 0) {
-    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Jumlah stempel tidak valid.'));
+    return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent('Jumlah stempel tidak valid.'));
   }
 
   const updated = await loyalty.setStampCount(id, target, { by: req.admin.username });
   await logAdminAction(req.admin, 'loyalty.stamps', `${customer.name} -> ${updated.stamps} stempel`);
-  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
+  redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
 }));
 
 router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => {
@@ -929,10 +989,10 @@ router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => 
   if (!customer) return notFound(res);
 
   const result = await loyalty.claimReward(id, { note: `Ditukar admin ${req.admin.username}` });
-  if (!result.ok) return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent(result.error));
+  if (!result.ok) return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent(result.error));
 
   await logAdminAction(req.admin, 'loyalty.redeem', customer.name);
-  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Cup gratis ${customer.name} ditukar.`));
+  redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Cup gratis ${customer.name} ditukar.`));
 }));
 
 router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
@@ -941,10 +1001,10 @@ router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
   const expiryMonths = Number(fields.expiryMonths);
 
   if (!Number.isFinite(perReward) || perReward < 1 || perReward > 100) {
-    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Jumlah stempel harus antara 1 dan 100.'));
+    return redirect(res, '/admin/loyalitas?error=' + encodeURIComponent('Jumlah stempel harus antara 1 dan 100.'));
   }
   if (!Number.isFinite(expiryMonths) || expiryMonths < 1 || expiryMonths > 60) {
-    return redirect(res, '/admin/pelanggan?error=' + encodeURIComponent('Masa berlaku harus antara 1 dan 60 bulan.'));
+    return redirect(res, '/admin/loyalitas?error=' + encodeURIComponent('Masa berlaku harus antara 1 dan 60 bulan.'));
   }
 
   await settings.setValue('stamps_per_reward', Math.round(perReward));
@@ -954,7 +1014,7 @@ router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
     'settings.update',
     `stempel/gratis ${Math.round(perReward)}, kedaluwarsa ${Math.round(expiryMonths)} bulan`
   );
-  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent('Aturan stempel disimpan.'));
+  redirect(res, '/admin/loyalitas?flash=' + encodeURIComponent('Aturan stempel disimpan.'));
 }));
 
 router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
@@ -982,7 +1042,7 @@ router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
     'settings.update',
     `tier ${fields.tiersEnabled ? 'aktif' : 'nonaktif'}, ${tiers.length} tingkat`
   );
-  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent('Pengaturan tier disimpan.'));
+  redirect(res, '/admin/loyalitas?flash=' + encodeURIComponent('Pengaturan tier disimpan.'));
 }));
 
 // ---------------------------------------------------------------------

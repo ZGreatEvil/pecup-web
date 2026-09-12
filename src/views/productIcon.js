@@ -66,11 +66,14 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
   } else if (photos.length === 1) {
     inner = `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;${dim}">`;
   } else {
+    // Each photo sits in its own clipping box (.carousel-slide) rather than
+    // being a flex item itself — the card's hover zoom scales the image, and
+    // without a clip that overflow spills into the neighbouring photo.
     const slides = photos
       .map(
-        (url, i) => `<img src="${escapeAttr(url)}" alt="${escapeAttr(product.name)} foto ${i + 1}" loading="${
-          i === 0 ? 'eager' : 'lazy'
-        }" style="width:100%;height:100%;object-fit:cover;display:block;flex:0 0 100%;${dim}">`
+        (url, i) => `<div class="carousel-slide"><img src="${escapeAttr(url)}" alt="${escapeAttr(
+          product.name
+        )} foto ${i + 1}" loading="${i === 0 ? 'eager' : 'lazy'}" style="${dim}"></div>`
       )
       .join('');
     const dots = photos
