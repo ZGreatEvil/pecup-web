@@ -374,9 +374,11 @@ const SHARED_STYLE = `
   .admin-burger:hover{background:oklch(36% 0.03 255);}
   .admin-burger:active{transform:scale(0.97);}
   .admin-burger .burger-close{display:none;}
-  /* Desktop keeps the rail in the flow; the scrim only exists for the phone
-     drawer, where the media query turns it on. */
+  /* Desktop keeps the rail in the flow; the scrim and the drawer's close
+     button only exist for the phone drawer, where the media query turns
+     them on. */
   .admin-scrim{display:none;}
+  .drawer-close{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-open{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-close{display:inline;}
   table.admin-table{width:100%;border-collapse:collapse;}
@@ -484,10 +486,13 @@ const SHARED_STYLE = `
        replayed whenever the element was re-shown, which is what made the
        menu look like it animated twice. */
     .admin-sidebar{
-      position:fixed;top:0;left:0;bottom:0;z-index:70;
+      /* Anchored to the right, because that's the side the Menu button is on.
+         A drawer that flies in from the opposite edge to the control that
+         opened it reads as two unrelated things happening. */
+      position:fixed;top:0;right:0;bottom:0;left:auto;z-index:70;
       width:min(290px, 84vw);flex:0 0 auto;min-height:0;height:100%;
       padding:18px 14px;overflow-y:auto;-webkit-overflow-scrolling:touch;
-      transform:translateX(-100%);box-shadow:0 0 40px rgba(0,0,0,0.4);
+      transform:translateX(100%);box-shadow:0 0 40px rgba(0,0,0,0.4);
       /* visibility, delayed until the slide-out finishes, keeps a closed
          drawer out of the tab order instead of leaving focusable links
          parked off-screen. */
@@ -502,6 +507,10 @@ const SHARED_STYLE = `
       opacity:0;pointer-events:none;transition:opacity 0.24s ease;}
     .admin-nav-toggle:checked ~ .admin-scrim{opacity:1;pointer-events:auto;}
     .admin-sidebar .admin-sidebar-brand{display:flex !important;margin-bottom:22px;}
+    .drawer-close{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;
+      width:36px;height:36px;border-radius:10px;cursor:pointer;color:#fff;flex-shrink:0;
+      background:oklch(30% 0.03 255);border:1px solid oklch(40% 0.03 255);}
+    .drawer-close:active{transform:scale(0.94);}
     .admin-main{padding:24px 20px;}
     /* Filter bars are built as flex rows with fixed pixel bases for desktop.
        On a phone those bases fight each other, so the bar becomes a two-column
@@ -1142,6 +1151,12 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     <div class="admin-sidebar-brand" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
+      <!-- Open, the drawer covers the Menu button that opened it, so it
+           carries its own close control rather than leaving the dimmed
+           backdrop as the only way out. Phone-only (see .drawer-close). -->
+      <label class="drawer-close" for="adminNavToggle" aria-label="Tutup menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </label>
     </div>
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin', 'dashboard', 'Ringkasan', '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>')}
