@@ -103,6 +103,17 @@ const SHARED_STYLE = `
   input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-sm);}
+  .empty-state{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+    padding:52px 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;
+    box-shadow:var(--shadow-sm);}
+  .empty-state-compact{padding:34px 20px;gap:11px;border-radius:16px;}
+  .empty-state-icon{width:84px;height:84px;border-radius:50%;background:var(--surface-2);flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;}
+  .empty-state-compact .empty-state-icon{width:62px;height:62px;}
+  .empty-state-title{font-size:18px;font-weight:800;color:var(--text);}
+  .empty-state-compact .empty-state-title{font-size:15.5px;}
+  .empty-state-text{font-size:14px;color:var(--text-muted);line-height:1.7;max-width:340px;margin:0;}
+  .empty-state-cta{padding:14px 28px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:4px;}
   /* Section heading with the brand mark as a coloured accent bar. */
   .section-title{display:flex;align-items:center;gap:12px;}
   .section-title::before{content:'';width:5px;height:26px;border-radius:99px;flex-shrink:0;
@@ -532,10 +543,12 @@ const SHARED_STYLE = `
        Stacked means full width. */
     .split-layout{flex-direction:column;gap:24px;}
     .split-main, .split-side{flex:1 1 auto;width:100%;max-width:100%;}
-    /* The order summary belongs ABOVE the send button, not below it: stacked,
-       the left column's submit button came first and the customer could send
-       the order before ever seeing what it cost. */
-    .split-side{order:-1;}
+    /* At checkout the summary belongs ABOVE the send button: stacked, the left
+       column's submit button came first and the customer could send the order
+       before ever seeing what it cost. On the cart page it stays below the
+       items — putting a "checkout" button above the list you're still editing
+       makes you scroll back up to use it. */
+    .split-side.summary-first{order:-1;}
     .split-side{padding:22px;}
   }
   @media (max-width: 560px){
@@ -565,15 +578,40 @@ const SHARED_STYLE = `
     .admin-main .grid-4{grid-template-columns:1fr;}
   }
   @media (max-width: 640px){
-    /* Below this width, drop back to a wrapping flex row — with limited
-       horizontal space, letting the nav wrap onto its own line matters more
-       than keeping it perfectly centered between logo and cart icon. */
-    .site-header-grid{display:flex;flex-wrap:wrap;justify-content:space-between;}
+    /* Below this width the three-column grid can't hold. Wrapping alone gave
+       three stacked rows (logo / nav / account+cart) and a header that ate a
+       fifth of the screen. Ordering puts the brand and the two actions on one
+       row and the nav on its own strip beneath: two rows, not three. */
+    .site-header-grid{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+      gap:10px 12px;padding-bottom:10px;}
+    .site-header-grid > a:first-child{order:0;}
+    .site-header-grid > div:last-child{order:1;gap:14px;}
+    .site-nav{order:2;flex:1 1 100%;justify-content:flex-start;gap:22px;
+      overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;padding-top:2px;}
+    .site-nav::-webkit-scrollbar{display:none;}
+    .site-nav .nav-link{white-space:nowrap;}
   }
   @media (max-width: 560px){
     .px-page{padding-left:18px;padding-right:18px;}
     .site-header, .site-header-grid{padding:16px 18px;}
-    .grid-4{grid-template-columns:1fr;}
+    /* Two products per row. One-up meant a ~450px-tall card each and a
+       ten-item menu that took most of a minute to scroll past; two-up shows
+       four products per screen, which is how a menu is meant to be browsed. */
+    .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));gap:12px;}
+    .p-card{padding:10px !important;border-radius:16px !important;gap:10px !important;}
+    .p-card-name{font-size:13.5px;line-height:1.35;}
+    .p-card-weight{font-size:11.5px !important;}
+    /* If the price and a worded button can't share the line, the button drops
+       to its own row — the price must never wrap mid-number. */
+    .p-card-foot{padding-top:0 !important;gap:8px !important;flex-wrap:wrap;}
+    .p-card-foot .tnum{font-size:14.5px !important;white-space:nowrap;}
+    .p-card-foot > div{margin-left:auto;}
+    .p-card-foot .add-btn{width:36px !important;height:36px !important;}
+    .p-card-foot a.add-btn{width:auto !important;padding:0 11px !important;font-size:11.5px !important;}
+    .p-card .badge-float{font-size:10px !important;padding:4px 9px !important;}
+    /* The hero is a full-height billboard on desktop; on a phone it's just
+       delaying the menu. */
+    .hero{padding-top:46px !important;padding-bottom:40px !important;}
     .hero-art{display:none;}
     .split-side{flex-basis:100%;max-width:100%;}
     .cart-row{gap:12px;padding:18px 0;}
@@ -1027,6 +1065,35 @@ const CART_SCRIPT = `
 })();
 </script>`;
 
+// A blank list should still look designed. One shape for all of them — the
+// empty cart, a search that matched nothing, an account with no orders yet —
+// so "there's nothing here" reads as a deliberate state rather than a page
+// that failed to load.
+const EMPTY_ICONS = {
+  cart: '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.3"/><circle cx="18" cy="21" r="1.3"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  receipt: '<path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2z"/><path d="M9 7h6M9 11h6"/>',
+  box: '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5"/>',
+};
+
+function emptyState({ icon = 'box', title, text = '', ctaHref = '', ctaLabel = '', compact = false }) {
+  const path = EMPTY_ICONS[icon] || EMPTY_ICONS.box;
+  return `
+    <div class="empty-state${compact ? ' empty-state-compact' : ''}">
+      <div class="empty-state-icon">
+        <svg width="${compact ? 28 : 36}" height="${compact ? 28 : 36}" viewBox="0 0 24 24" fill="none"
+             stroke="var(--text-muted)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${path}</svg>
+      </div>
+      <h3 class="empty-state-title">${escapeHtml(title)}</h3>
+      ${text ? `<p class="empty-state-text">${escapeHtml(text)}</p>` : ''}
+      ${
+        ctaHref
+          ? `<a href="${escapeAttr(ctaHref)}" class="btn-primary empty-state-cta">${escapeHtml(ctaLabel || 'Lihat menu')}</a>`
+          : ''
+      }
+    </div>`;
+}
+
 function customerFooter() {
   return `
   <footer class="px-page" style="padding-top:64px;padding-bottom:40px;">
@@ -1108,4 +1175,4 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
   </aside>`;
 }
 
-module.exports = { page, logoMark, backButton, customerHeader, customerFooter, adminSidebar };
+module.exports = { page, logoMark, backButton, customerHeader, customerFooter, adminSidebar, emptyState };

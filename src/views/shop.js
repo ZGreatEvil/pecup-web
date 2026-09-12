@@ -1,4 +1,4 @@
-const { page, customerHeader, customerFooter, backButton } = require('./layout');
+const { page, customerHeader, customerFooter, backButton, emptyState } = require('./layout');
 const { productThumb, productPhotos } = require('./productIcon');
 const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID, orderStatus } = require('../utils');
 const { discountLines, freeCupValue } = require('../orderMoney');
@@ -18,7 +18,7 @@ function badgeHtml(p, { top = 12, left = 12, scale = 1 } = {}) {
   const fontSize = (12.5 * scale).toFixed(1);
   const padY = (7 * scale).toFixed(0);
   const padX = (15 * scale).toFixed(0);
-  return `<span style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:${fontSize}px;font-weight:800;letter-spacing:0.2px;padding:${padY}px ${padX}px;border-radius:99px;white-space:nowrap;box-shadow:0 4px 12px -3px rgba(0,0,0,0.3);text-shadow:0 1px 2px rgba(0,0,0,0.15);">${badge.text}</span>`;
+  return `<span class="badge-float" style="position:absolute;top:${top}px;left:${left}px;z-index:2;background:${badge.bg};color:#fff;font-size:${fontSize}px;font-weight:800;letter-spacing:0.2px;padding:${padY}px ${padX}px;border-radius:99px;white-space:nowrap;box-shadow:0 4px 12px -3px rgba(0,0,0,0.3);text-shadow:0 1px 2px rgba(0,0,0,0.15);">${badge.text}</span>`;
 }
 
 // Nudge shown on a cart line that has a wholesale tier but hasn't reached it.
@@ -143,7 +143,7 @@ function renderBeranda({
         <div style="aspect-ratio:1;position:relative;flex-shrink:0;">${badgeHtml(p)}${productThumb(p)}</div>
         <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-start;">
           <span class="p-card-name">${escapeHtml(p.name)}</span>
-          <span style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
+          <span class="p-card-weight" style="font-size:12.5px;color:var(--text-muted);">Cup ${escapeHtml(p.weight)}</span>
           ${wholesaleBadge(p)}
         </div>
         <div class="p-card-foot" style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;gap:10px;">
@@ -153,7 +153,15 @@ function renderBeranda({
       </div>`;
         })
         .join('')
-    : `<p style="color:var(--text-muted);font-size:14px;">Belum ada produk pada kategori ini.</p>`;
+    : emptyState({
+        icon: 'search',
+        title: search ? 'Tidak ada yang cocok' : 'Belum ada produk di kategori ini',
+        text: search
+          ? `Tidak ada buah yang cocok dengan "${search}". Coba kata lain, atau lihat semua menu.`
+          : 'Kategori ini sedang kosong. Lihat kategori lain — menunya berganti mengikuti buah yang segar hari itu.',
+        ctaHref: '/#menu',
+        ctaLabel: 'Lihat Semua Menu',
+      });
 
   const body = `
 <div class="frame-scroll"><div class="frame">
@@ -473,7 +481,17 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
       </div>`
         )
         .join('')
-    : `<p style="color:var(--text-muted);font-size:14px;padding:40px 0;">Keranjang kamu masih kosong. <a href="/">Mulai belanja →</a></p>`;
+    : '';
+
+  // An empty cart gets a proper empty state, not a Rp 0 summary panel with a
+  // dead checkout button above a stranded line of text.
+  const emptyCart = emptyState({
+    icon: 'cart',
+    title: 'Keranjangmu masih kosong',
+    text: 'Belum ada cup yang dipilih. Lihat menu hari ini — buahnya dipotong segar tiap pagi.',
+    ctaHref: '/#menu',
+    ctaLabel: 'Lihat Menu Buah',
+  });
 
   const body = `
 <div class="frame-scroll"><div class="frame">
@@ -482,7 +500,9 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
     ${backButton('/', 'Lanjut Belanja')}
     <h1 style="font-size:26px;font-weight:800;margin-bottom:6px;margin-top:20px;">Keranjang Belanja</h1>
     <p style="color:var(--text-muted);font-size:14px;margin-bottom:30px;"><span data-cart-itemcount>${items.length} produk</span> di keranjang</p>
-    <div class="split-layout">
+    ${
+      items.length
+        ? `<div class="split-layout">
       <div class="split-main">
         ${rows}
       </div>
@@ -490,13 +510,11 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
         <h3 style="font-size:18px;font-weight:800;margin-bottom:22px;">Ringkasan Pesanan</h3>
         <div style="display:flex;justify-content:space-between;font-size:14.5px;color:var(--text-muted);margin-bottom:12px;"><span>Subtotal</span><span style="color:var(--text);font-weight:600;" data-cart-subtotal>${formatRupiah(subtotal)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:16px;border-top:1px solid var(--border);margin-bottom:24px;"><span>Total</span><span style="color:var(--green-dark);" data-cart-total>${formatRupiah(subtotal)}</span></div>
-        ${
-          items.length
-            ? `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
-            : `<button class="btn-primary" disabled style="width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</button>`
-        }
+        <a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>
       </div>
-    </div>
+    </div>`
+        : emptyCart
+    }
   </section>
   ${customerFooter()}
 </div></div>`;
@@ -708,7 +726,7 @@ function renderCheckout({
           <p style="font-size:12.5px;color:var(--text-muted);text-align:center;line-height:1.6;">Dengan mengirim pesanan, data di atas beserta bukti transfer akan otomatis terkirim melalui email ke tim Pecup untuk diverifikasi.</p>
         </div>
 
-        <div class="split-side">
+        <div class="split-side summary-first">
           <h3 style="font-size:18px;font-weight:800;margin-bottom:20px;">Ringkasan Pesanan</h3>
           ${summaryRows}
           ${

@@ -1,4 +1,4 @@
-const { page, customerHeader, customerFooter, backButton, logoMark } = require('./layout');
+const { page, customerHeader, customerFooter, backButton, logoMark, emptyState } = require('./layout');
 const {
   formatRupiah,
   escapeHtml,
@@ -293,7 +293,14 @@ function orderRow(o) {
 // mile-long scroll.
 function orderHistory(orders, { total = 0, previewCount = 0 } = {}) {
   if (!orders.length) {
-    return `<p style="font-size:14px;color:var(--text-muted);padding:8px 0;">Belum ada pesanan. <a href="/">Mulai belanja →</a></p>`;
+    return emptyState({
+      icon: 'receipt',
+      title: 'Belum ada pesanan',
+      text: 'Pesanan pertamamu akan muncul di sini, lengkap dengan status dan stempelnya.',
+      ctaHref: '/#menu',
+      ctaLabel: 'Mulai Belanja',
+      compact: true,
+    });
   }
   const rows = orders.map(orderRow).join('');
   const more = total > previewCount
