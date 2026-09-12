@@ -1,6 +1,6 @@
 const { page, customerHeader, customerFooter, backButton } = require('./layout');
 const { productThumb, productPhotos } = require('./productIcon');
-const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID } = require('../utils');
+const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID, orderStatus } = require('../utils');
 const { discountLines, freeCupValue } = require('../orderMoney');
 
 const DEFAULT_PRODUCT_DESCRIPTION = 'Buah potong segar, dipotong higienis dan dikemas rapi dalam cup.';
@@ -695,6 +695,15 @@ function renderCheckout({
             <p style="font-size:13.5px;color:var(--green-dark);line-height:1.7;margin:0;">Cup gratismu menutup seluruh pesanan ini, jadi tidak perlu transfer atau unggah bukti. Tinggal kirim pesanannya.</p>
           </div>
 
+          <!-- The total restated immediately above the button. It carries the
+               same data-total hooks as the one in the summary panel, so the
+               free-cup checkbox updates both and they can't disagree. -->
+          <div class="checkout-total-recap" style="display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--surface-2);border-radius:12px;padding:14px 16px;">
+            <span style="font-size:13.5px;font-weight:700;color:var(--text-muted);">Total yang dibayar</span>
+            <span class="tnum" style="font-size:18px;font-weight:800;color:var(--green-dark);" data-total
+                  data-full="${escapeAttr(formatRupiah(totalFull))}"
+                  data-discounted="${escapeAttr(formatRupiah(totalDiscounted))}">${formatRupiah(payable)}</span>
+          </div>
           <button class="btn-primary" type="submit" style="width:100%;padding:17px;border-radius:12px;font-size:15.5px;font-weight:700;">Kirim Pesanan Sekarang</button>
           <p style="font-size:12.5px;color:var(--text-muted);text-align:center;line-height:1.6;">Dengan mengirim pesanan, data di atas beserta bukti transfer akan otomatis terkirim melalui email ke tim Pecup untuk diverifikasi.</p>
         </div>
@@ -823,17 +832,51 @@ function renderSukses({ order, items, emailOk, customer = null }) {
     ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
     : `Pesananmu sudah tersimpan, tapi email notifikasi ke toko belum berhasil terkirim otomatis — tim kami tetap bisa melihatnya lewat panel admin.`;
 
+  // This page doubles as the receipt a customer returns to later, so it has to
+  // reflect where the order actually IS. It used to show the green tick and
+  // "Pesanan Berhasil Dikirim!" forever — including after the order had been
+  // cancelled, which told the customer the exact opposite of the truth.
+  const status = orderStatus(order.status);
+  const STATE = {
+    menunggu: {
+      heading: 'Pesanan Berhasil Dikirim!',
+      tone: { bg: 'var(--green-soft)', stroke: '#3f7a42' },
+      icon: '<path d="M20 6L9 17l-5-5"/>',
+      lead: (name) => `Terima kasih, <strong style="color:var(--text);">${name}</strong>! ${emailNote} Kami akan konfirmasi pesananmu lewat WhatsApp.`,
+    },
+    diproses: {
+      heading: 'Pesanan Sedang Diproses',
+      tone: { bg: 'oklch(93% 0.05 245)', stroke: '#1f5aa1' },
+      icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      lead: (name) => `Pembayaranmu sudah diverifikasi, <strong style="color:var(--text);">${name}</strong>. Pesananmu sedang disiapkan dan akan diantar sesuai jadwal.`,
+    },
+    selesai: {
+      heading: 'Pesanan Selesai',
+      tone: { bg: 'var(--green-soft)', stroke: '#3f7a42' },
+      icon: '<path d="M20 6L9 17l-5-5"/>',
+      lead: (name) => `Pesanan ini sudah selesai diantar. Terima kasih sudah pesan di Pecup, <strong style="color:var(--text);">${name}</strong>!`,
+    },
+    dibatalkan: {
+      heading: 'Pesanan Dibatalkan',
+      tone: { bg: '#f6dcdc', stroke: '#a13f3f' },
+      icon: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-7 7M8.5 8.5l7 7"/>',
+      lead: (name) => `Pesanan ini dibatalkan, <strong style="color:var(--text);">${name}</strong>. Kalau kamu merasa ini keliru atau sudah terlanjur transfer, hubungi kami lewat WhatsApp ya.`,
+    },
+  };
+  const state = STATE[order.status] || STATE.menunggu;
+
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(0, null, customer)}
   <div class="px-page" style="display:flex;justify-content:center;padding-top:60px;padding-bottom:100px;">
     <div class="success-card" style="background:var(--surface);border:1px solid var(--border);border-radius:28px;max-width:560px;width:100%;display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;">
-      <div style="width:80px;height:80px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;">
-        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#3f7a42" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <div style="width:80px;height:80px;border-radius:50%;background:${state.tone.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="${state.tone.stroke}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${state.icon}</svg>
       </div>
-      <h1 style="font-size:26px;font-weight:800;letter-spacing:-0.3px;">Pesanan Berhasil Dikirim!</h1>
+      <h1 style="font-size:26px;font-weight:800;letter-spacing:-0.3px;">${state.heading}</h1>
+      <span style="font-size:12px;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;color:${status.color};background:${status.bg};padding:6px 14px;border-radius:99px;">${status.label}</span>
       <p style="font-size:15px;color:var(--text-muted);line-height:1.75;max-width:420px;">
-        Terima kasih, <strong style="color:var(--text);">${escapeHtml(order.customer_name)}</strong>! ${emailNote} Kami akan konfirmasi pesananmu lewat WhatsApp.
+        ${state.lead(escapeHtml(order.customer_name))}
       </p>
       <div style="width:100%;background:var(--surface-2);border-radius:14px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;text-align:left;">
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">No. Pesanan</span><span style="font-weight:700;">${escapeHtml(order.order_number)}</span></div>

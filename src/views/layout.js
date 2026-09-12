@@ -72,6 +72,31 @@ const SHARED_STYLE = `
     text-overflow:ellipsis;
   }
   select::-ms-expand{display:none;}
+  /* Fixed-size round things (avatars, steppers, toggles, step numbers) are
+     flex children with an explicit width. Without this a narrow phone squashes
+     them to a sliver — which is why icons looked like they'd gone missing
+     rather than merely got smaller. */
+  .account-avatar, .toggle-pill, .toggle-dot, .step-num, .tier-card-num,
+  .add-btn, .step-btn, .qty-stepper button, .stamp-slot, .carousel-arrow{flex-shrink:0;}
+  .card svg, .adm-cell svg, .side-link svg, button svg, .btn-primary svg, .btn-outline svg{flex-shrink:0;}
+  /* Date fields: iOS Safari draws no calendar affordance at all, so a date
+     field is indistinguishable from a text one — you'd never know it opens a
+     picker. Draw our own icon on every platform and hide the native indicator
+     (kept clickable, just invisible) so there's never two of them. */
+  input[type="date"], input[type="month"], input[type="time"]{
+    appearance:none;-webkit-appearance:none;min-height:46px;
+    padding-right:44px !important;cursor:pointer;background-color:var(--surface);
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23555f6d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='16' rx='2.5'/%3E%3Cpath d='M3 9.5h18M8 2.5v4M16 2.5v4'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 13px center;background-size:18px 18px;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator{
+    opacity:0;cursor:pointer;width:26px;height:26px;margin:0;padding:0;
+  }
+  /* Safari on iOS centres the value oddly once appearance is reset; keep the
+     text left-aligned and vertically centred like every other field. */
+  input[type="date"]::-webkit-date-and-time-value{text-align:left;}
   /* A select inside a fixed-basis flex column must be allowed to shrink, or a
      long option name forces the field wider than its container. */
   select, input, textarea{min-width:0;max-width:100%;}
@@ -338,6 +363,9 @@ const SHARED_STYLE = `
   .admin-burger:hover{background:oklch(36% 0.03 255);}
   .admin-burger:active{transform:scale(0.97);}
   .admin-burger .burger-close{display:none;}
+  /* Desktop keeps the rail in the flow; the scrim only exists for the phone
+     drawer, where the media query turns it on. */
+  .admin-scrim{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-open{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-close{display:inline;}
   table.admin-table{width:100%;border-collapse:collapse;}
@@ -436,24 +464,55 @@ const SHARED_STYLE = `
        the lines instead and let each size to its content. */
     .admin-shell{align-content:flex-start;}
     .admin-topbar{display:flex;}
-    /* The nav collapses behind the hamburger rather than sitting as a tall
-       block above every page. */
-    .admin-sidebar{display:none;flex:0 0 auto;width:100%;min-height:auto;padding:12px 14px 18px;}
-    .admin-nav-toggle:checked ~ .admin-sidebar{display:flex;animation:pecup-fade-up 0.22s ease both;}
-    .admin-sidebar .admin-sidebar-brand{display:none;}
+    /* The nav is a drawer fixed to the viewport, not a block in the document
+       flow. In the flow it opened at the top of the page, so pressing Menu
+       half way down a long order list meant scrolling back up to reach it —
+       and it pushed the content down as it appeared. Fixed, it slides in over
+       whatever you're looking at, wherever you are on the page.
+       A transform transition rather than a keyframe animation: the keyframe
+       replayed whenever the element was re-shown, which is what made the
+       menu look like it animated twice. */
+    .admin-sidebar{
+      position:fixed;top:0;left:0;bottom:0;z-index:70;
+      width:min(290px, 84vw);flex:0 0 auto;min-height:0;height:100%;
+      padding:18px 14px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+      transform:translateX(-100%);box-shadow:0 0 40px rgba(0,0,0,0.4);
+      /* visibility, delayed until the slide-out finishes, keeps a closed
+         drawer out of the tab order instead of leaving focusable links
+         parked off-screen. */
+      visibility:hidden;
+      transition:transform 0.24s cubic-bezier(0.2,0.7,0.3,1), visibility 0s linear 0.24s;}
+    .admin-nav-toggle:checked ~ .admin-sidebar{
+      transform:none;visibility:visible;
+      transition:transform 0.24s cubic-bezier(0.2,0.7,0.3,1), visibility 0s;}
+    /* Tapping the dimmed page closes the drawer — it's a <label> for the same
+       checkbox, so this works without any JavaScript. */
+    .admin-scrim{display:block;position:fixed;inset:0;z-index:65;background:rgba(0,0,0,0.45);
+      opacity:0;pointer-events:none;transition:opacity 0.24s ease;}
+    .admin-nav-toggle:checked ~ .admin-scrim{opacity:1;pointer-events:auto;}
+    .admin-sidebar .admin-sidebar-brand{display:flex !important;margin-bottom:22px;}
     .admin-main{padding:24px 20px;}
     /* Filter bars are built as flex rows with fixed pixel bases for desktop.
-       On a phone those bases fight each other and fields end up clipped, so
-       let every field take the full width and stack. Scoped to the filter
-       forms themselves (direct children of a .card) — an earlier, broader
-       version of this also hit the little forms inside table rows and blew
-       their buttons up to full width. */
-    .admin-main > form.card > div[style*="flex:0 1"],
-    .admin-main > form.card > div[style*="flex:1 1"],
-    .admin-main form.card > div[style*="flex:0 1"],
-    .admin-main form.card > div[style*="flex:1 1"]{flex:1 1 100% !important;}
-    .admin-main form.card > button,
-    .admin-main form.card > a{flex:1 1 100%;text-align:center;justify-content:center;}
+       On a phone those bases fight each other, so the bar becomes a two-column
+       grid instead: every field the same height, sitting on a shared baseline,
+       and a card that stays short rather than stacking seven full-width rows.
+       Scoped by the inline display:flex those bars carry, so the *other* admin
+       forms (settings, new voucher) keep their own layout. An earlier, broader
+       version of this rule also hit the little forms inside table rows and
+       blew their buttons up to full width. */
+    .admin-main form.card[style*="display:flex"]{
+      display:grid !important;grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:12px !important;align-items:end;padding:16px !important;}
+    .admin-main form.card[style*="display:flex"] > div{margin:0 !important;min-width:0;}
+    /* The one that grows on desktop is the free-text search — full width. */
+    .admin-main form.card[style*="display:flex"] > div[style*="flex:1 1"]{grid-column:1 / -1;}
+    .admin-main form.card[style*="display:flex"] > label{grid-column:1 / -1;margin:0 !important;}
+    .admin-main form.card[style*="display:flex"] > button,
+    .admin-main form.card[style*="display:flex"] > a{
+      width:100%;text-align:center;justify-content:center;margin:0;}
+    /* Every control the same height so the grid rows line up. */
+    .admin-main form.card input,
+    .admin-main form.card select{width:100%;padding:11px 12px !important;}
     /* Stat grids read better as two columns than four squeezed ones. */
     .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
     /* Phone type scale. Every inline <p> size in the admin views is 13.5px or
@@ -467,8 +526,42 @@ const SHARED_STYLE = `
     /* Nothing in a row may force the page wider than the screen. */
     .adm-cell form{max-width:100%;}
     .adm-cell input, .adm-cell select{max-width:100%;}
+
+    /* Once the two columns stack, the summary panel kept its 360px desktop
+       cap — so it sat narrower than the cards above it and read as misaligned.
+       Stacked means full width. */
+    .split-layout{flex-direction:column;gap:24px;}
+    .split-main, .split-side{flex:1 1 auto;width:100%;max-width:100%;}
+    /* The order summary belongs ABOVE the send button, not below it: stacked,
+       the left column's submit button came first and the customer could send
+       the order before ever seeing what it cost. */
+    .split-side{order:-1;}
+    .split-side{padding:22px;}
   }
-  @media (max-width: 520px){
+  @media (max-width: 560px){
+    /* Admin cards are sized for a desktop panel. On a phone that padding is
+       what makes every page feel twice as long as it needs to be, so the
+       whole admin side gets a compact pass — same information, less scrolling.
+       Stat cards stay two-up rather than becoming four full-width blocks. */
+    .admin-main{padding:18px 14px;}
+    .admin-main .card{padding:18px 16px;}
+    .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));gap:11px;}
+    .admin-main .grid-4 > div,
+    .admin-main .grid-4 > .card,
+    .admin-main .grid-4 > a > div{padding:14px 13px !important;gap:11px !important;}
+    .admin-main .grid-4 .tnum{font-size:19px !important;}
+    /* Chip rows (category / preset filters) swipe sideways instead of
+       wrapping onto four stacked lines. */
+    .admin-main .card:has(> .chip){flex-wrap:nowrap !important;overflow-x:auto;
+      scrollbar-width:none;-ms-overflow-style:none;}
+    .admin-main .card:has(> .chip)::-webkit-scrollbar{display:none;}
+    .admin-main .card > .chip{flex-shrink:0;}
+    .admin-main > div:has(> .chip){flex-wrap:nowrap;overflow-x:auto;
+      scrollbar-width:none;-ms-overflow-style:none;padding-bottom:4px;}
+    .admin-main > div:has(> .chip)::-webkit-scrollbar{display:none;}
+    .admin-main > div > .chip{flex-shrink:0;}
+  }
+  @media (max-width: 380px){
     .admin-main .grid-4{grid-template-columns:1fr;}
   }
   @media (max-width: 640px){
@@ -916,6 +1009,22 @@ const CART_SCRIPT = `
       .then(function(){ control.dataset.busy = ''; });
   });
 })();
+
+// Tapping anywhere on a date field opens the picker, not just the small icon.
+// On a phone the icon is a ~20px target inside a full-width field; making the
+// whole field the target is the difference between "this is a date" and
+// "why won't this do anything".
+(function(){
+  document.addEventListener('click', function(e){
+    var input = e.target.closest('input[type="date"], input[type="month"], input[type="time"]');
+    if(!input || input.disabled || input.readOnly) return;
+    if(typeof input.showPicker !== 'function') return;
+    // showPicker throws if the browser doesn't consider this a user gesture,
+    // or if the field is already showing one — either way, the native
+    // behaviour still applies, so there's nothing to recover from.
+    try { input.showPicker(); } catch (err) {}
+  });
+})();
 </script>`;
 
 function customerFooter() {
@@ -950,6 +1059,7 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
   // script fails to load.
   return `
   <input type="checkbox" id="adminNavToggle" class="admin-nav-toggle">
+  <label class="admin-scrim" for="adminNavToggle" aria-hidden="true"></label>
   <div class="admin-topbar">
     <div style="display:flex;align-items:center;gap:9px;min-width:0;">
       ${logoMark(28)}

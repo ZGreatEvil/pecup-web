@@ -67,10 +67,10 @@ function admTable({ cols, minWidth = 0, head = [], rows = '', empty = 'Tidak ada
 function statCard(label, value, bg, iconPath, stroke = '#3f7a42') {
   return `
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 22px;display:flex;align-items:center;gap:16px;">
-    <div style="width:44px;height:44px;border-radius:12px;background:${bg};display:flex;align-items:center;justify-content:center;">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="1.8">${iconPath}</svg>
+    <div style="width:44px;height:44px;border-radius:12px;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="1.8" style="flex-shrink:0;">${iconPath}</svg>
     </div>
-    <div><div style="font-size:22px;font-weight:800;">${value}</div><div style="font-size:12.5px;color:var(--text-muted);">${label}</div></div>
+    <div style="min-width:0;"><div style="font-size:22px;font-weight:800;">${value}</div><div style="font-size:12.5px;color:var(--text-muted);">${label}</div></div>
   </div>`;
 }
 
@@ -780,23 +780,25 @@ function whatsappButtons(order, items) {
     return `<p style="font-size:12.5px;color:var(--text-muted);margin-top:16px;">Nomor WhatsApp pemesan tidak valid, jadi tidak bisa dihubungi otomatis.</p>`;
   }
 
-  const lines = items.map((it) => `• ${it.product_name} ×${it.qty}`).join('\n');
+  // Plain ASCII only in these templates: emoji and typographic punctuation
+  // came through as "?" boxes in some WhatsApp builds.
+  const lines = items.map((it) => `- ${it.product_name} x${it.qty}`).join('\n');
   const when = order.delivery_date ? formatDateID(order.delivery_date) : 'segera';
   const templates = [
     {
       label: 'Konfirmasi diterima',
       color: 'var(--green)',
-      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya 🙌\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nPembayaranmu sudah kami cek dan pesanan masuk antrian. Terima kasih sudah pesan di Pecup!`,
+      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nPembayaranmu sudah kami cek dan pesanan masuk antrian. Terima kasih sudah pesan di Pecup!`,
     },
     {
       label: 'Sedang diantar',
       color: 'var(--orange)',
-      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sedang dalam perjalanan ke ${order.address || 'lokasimu'} 🛵\n\nDitunggu ya, sebentar lagi sampai!`,
+      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sedang dalam perjalanan ke ${order.address || 'lokasimu'}\n\nDitunggu ya, sebentar lagi sampai!`,
     },
     {
       label: 'Bukti transfer belum sesuai',
       color: '#c94f4f',
-      text: `Halo ${order.customer_name}, mohon maaf — untuk pesanan ${order.order_number}, bukti transfer yang kami terima belum sesuai dengan total ${formatRupiah(order.total)}.\n\nBoleh dicek dan dikirim ulang buktinya? Terima kasih 🙏`,
+      text: `Halo ${order.customer_name}, mohon maaf, untuk pesanan ${order.order_number}, bukti transfer yang kami terima belum sesuai dengan total ${formatRupiah(order.total)}.\n\nBoleh dicek dan dikirim ulang buktinya? Terima kasih`,
     },
   ];
 
