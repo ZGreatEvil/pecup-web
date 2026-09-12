@@ -16,6 +16,11 @@ const DEFAULTS = {
   delivery_fee: '0',
   free_delivery_over: '0', // 0 = never free
   same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
+  // Data retention (see src/retention.js). Orders are never deleted; these
+  // only govern payment-proof files and the activity log. 0 = keep forever.
+  retention_proof_days: '90',
+  retention_log_months: '12',
+  last_prune_at: '',
 };
 
 // Everything the storefront needs to know about how the shop is operating

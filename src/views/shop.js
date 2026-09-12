@@ -701,9 +701,10 @@ function renderCheckout({
 
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Upload Bukti Transfer <span class="req">*</span></h3>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Format JPG, PNG, atau PDF, maksimal 4MB.</p>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Format JPG, PNG, atau PDF. Foto dari HP otomatis dikecilkan, jadi tidak perlu diedit dulu.</p>
             <div class="dropzone" style="padding:24px;">
-              <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" ${payable > 0 ? 'required' : ''} style="border:none;padding:0;background:transparent;">
+              <input type="file" name="proof" accept="image/jpeg,image/png,application/pdf" data-compress ${payable > 0 ? 'required' : ''} style="border:none;padding:0;background:transparent;">
+              <p data-file-note style="font-size:12.5px;color:var(--green-dark);margin:10px 0 0;font-weight:600;" hidden></p>
             </div>
           </div>
           </div>

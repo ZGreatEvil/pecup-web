@@ -22,6 +22,7 @@ const vouchers = require('../src/vouchers');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const passwordReset = require('../src/passwordReset');
+const retention = require('../src/retention');
 const { logAdminAction, queryAdminLogs, listLogFilters } = require('../src/adminLog');
 const queries = require('../src/queries');
 const {
@@ -823,7 +824,44 @@ router.get('/admin', requireAdmin(async (req, res) => {
     settings.shopConfig(),
   ]);
   sendHtml(res, adminViews.renderDashboard({ admin: req.admin, shop, ...data }));
+
+  // Self-healing fallback for the nightly cron below. If the cron is running,
+  // last_prune_at is never two days old and this does nothing but read one
+  // settings row. If the cron isn't available on this plan — or silently
+  // stopped — the sweep still happens whenever an admin opens the dashboard.
+  // Deliberately after the response: the admin waits for nothing.
+  try {
+    const all = await settings.getAll({ fresh: true });
+    const last = all.last_prune_at ? Date.parse(all.last_prune_at) : 0;
+    if (!last || Date.now() - last > 48 * 60 * 60 * 1000) {
+      const result = await retention.runRetention({ force: true });
+      console.log('retention (fallback):', JSON.stringify(result));
+    }
+  } catch (err) {
+    // Housekeeping must never take the dashboard down with it.
+    console.error('retention fallback failed:', err.message);
+  }
 }));
+
+// Nightly housekeeping, invoked by Vercel Cron (see vercel.json). Vercel sends
+// CRON_SECRET as a bearer token when that env var is set; an admin session
+// works too, so it can be triggered by hand from the settings page.
+router.get('/tugas/pembersihan', async (req, res) => {
+  const secret = process.env.CRON_SECRET || '';
+  const auth = req.headers.authorization || '';
+  const allowed = req.isAdmin || (secret && auth === `Bearer ${secret}`);
+  if (!allowed) {
+    return sendJson(res, { ok: false, error: 'Tidak diizinkan.' }, 401);
+  }
+  try {
+    const result = await retention.runRetention({ force: true });
+    console.log('retention (cron):', JSON.stringify(result));
+    return sendJson(res, { ok: true, ...result });
+  } catch (err) {
+    console.error('retention cron failed:', err.message);
+    return sendJson(res, { ok: false, error: err.message }, 500);
+  }
+});
 
 router.get('/admin/login', (req, res) => {
   if (req.isAdmin) return redirect(res, '/admin/produk');
@@ -1238,6 +1276,10 @@ router.get('/admin/pengaturan', requireSuperadmin(async (req, res, { query }) =>
     adminViews.renderPengaturan({
       admin: req.admin,
       shop: await settings.shopConfig(),
+      retention: {
+        ...(await retention.policy()),
+        lastRun: (await settings.getAll()).last_prune_at || '',
+      },
       flash: query.get('flash') || '',
       error: query.get('error') || '',
     })
@@ -1260,6 +1302,10 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     settings.setValue('delivery_fee', num(fields.deliveryFee)),
     settings.setValue('free_delivery_over', num(fields.freeDeliveryOver)),
     settings.setValue('same_day_cutoff', cutoff),
+    // 0 is meaningful here (keep forever), so these are clamped rather than
+    // coerced through the falsy-to-default path the money fields use.
+    settings.setValue('retention_proof_days', Math.min(3650, num(fields.retentionProofDays))),
+    settings.setValue('retention_log_months', Math.min(120, num(fields.retentionLogMonths))),
   ]);
   await logAdminAction(req.admin, 'settings.update', `toko ${fields.shopOpen ? 'buka' : 'tutup'}`);
   redirect(res, '/admin/pengaturan?flash=' + encodeURIComponent('Pengaturan toko disimpan.'));

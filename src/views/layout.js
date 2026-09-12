@@ -1057,6 +1057,78 @@ const CART_SCRIPT = `
   });
 })();
 
+// Shrinks photos in the browser before they're uploaded.
+//
+// A payment proof straight off a phone camera is 2-4MB, and those files are
+// what actually fills the Blob store — the database rows behind an order are
+// a couple of kilobytes. Re-encoding to 1600px JPEG turns a 3MB photo into
+// roughly 150KB, still far more than enough to read a transfer receipt, and
+// it also stops perfectly good uploads bouncing off the 4MB body limit.
+//
+// Progressive enhancement throughout: PDFs are left alone, already-small
+// images are left alone, and any failure falls back to the original file.
+(function(){
+  var MAX_EDGE = 1600;
+  var QUALITY = 0.72;
+  var SKIP_UNDER = 400 * 1024;
+
+  function readable(bytes){
+    return bytes >= 1024 * 1024
+      ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+      : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  }
+
+  function shrink(file){
+    return new Promise(function(resolve){
+      if(!file || file.type.indexOf('image/') !== 0 || file.size < SKIP_UNDER) return resolve(null);
+      if(typeof createImageBitmap !== 'function' || !window.DataTransfer) return resolve(null);
+      createImageBitmap(file).then(function(bmp){
+        var scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
+        var w = Math.round(bmp.width * scale);
+        var h = Math.round(bmp.height * scale);
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        // White behind transparency: a PNG screenshot re-encoded as JPEG
+        // otherwise gets a black background.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bmp, 0, 0, w, h);
+        bmp.close && bmp.close();
+        canvas.toBlob(function(blob){
+          // Keep the original if re-encoding didn't actually help.
+          if(!blob || blob.size >= file.size) return resolve(null);
+          var name = file.name.replace(/\\.[^.]+$/, '') + '.jpg';
+          resolve(new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() }));
+        }, 'image/jpeg', QUALITY);
+      }).catch(function(){ resolve(null); });
+    });
+  }
+
+  document.addEventListener('change', function(e){
+    var input = e.target;
+    if(!input || input.type !== 'file' || !input.hasAttribute('data-compress')) return;
+    var file = input.files && input.files[0];
+    if(!file) return;
+    var note = input.parentNode && input.parentNode.querySelector('[data-file-note]');
+    var before = file.size;
+
+    shrink(file).then(function(smaller){
+      if(smaller){
+        var dt = new DataTransfer();
+        dt.items.add(smaller);
+        input.files = dt.files;
+      }
+      if(note){
+        note.hidden = false;
+        note.textContent = smaller
+          ? 'Foto dikecilkan otomatis: ' + readable(before) + ' \\u2192 ' + readable(smaller.size) + '. Siap dikirim.'
+          : file.name + ' (' + readable(before) + ') siap dikirim.';
+      }
+    });
+  });
+})();
+
 // Tapping anywhere on a date field opens the picker, not just the small icon.
 // On a phone the icon is a ~20px target inside a full-width field; making the
 // whole field the target is the difference between "this is a date" and

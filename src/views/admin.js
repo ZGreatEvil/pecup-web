@@ -2059,7 +2059,7 @@ function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop
 
 // Shop-wide operating settings: open/closed, notice, minimum order, delivery
 // fee and the same-day cut-off.
-function renderPengaturan({ admin, shop, flash = '', error = '' }) {
+function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { proofDays: 90, logMonths: 12, lastRun: '' } }) {
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pengaturan', { isSuperadmin: true, username: admin.username })}
@@ -2127,6 +2127,34 @@ function renderPengaturan({ admin, shop, flash = '', error = '' }) {
         <div class="field" style="max-width:200px;margin-bottom:0;">
           <label>Jam tutup pesanan (WIB)</label>
           <input type="time" name="sameDayCutoff" value="${escapeAttr(shop.sameDayCutoff || '')}">
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Penyimpanan &amp; Retensi Data</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">
+          <strong>Pesanan tidak pernah dihapus</strong> — itu catatan penjualanmu. Yang dibersihkan otomatis tiap malam
+          hanya dua hal yang memakan tempat: berkas bukti transfer (foto dari HP, ukurannya besar) dan log aktivitas.
+          Isi <strong>0</strong> kalau mau disimpan selamanya.
+        </p>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 220px;margin-bottom:0;">
+            <label>Hapus bukti transfer setelah (hari)</label>
+            <input type="number" name="retentionProofDays" min="0" max="3650" step="1" value="${escapeAttr(retention.proofDays)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Pesanannya tetap ada lengkap dengan nominal dan statusnya — hanya fotonya yang dihapus.</div>
+          </div>
+          <div class="field" style="flex:1 1 220px;margin-bottom:0;">
+            <label>Hapus log aktivitas setelah (bulan)</label>
+            <input type="number" name="retentionLogMonths" min="0" max="120" step="1" value="${escapeAttr(retention.logMonths)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Jejak audit admin. 12 bulan biasanya cukup.</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+          <span style="font-size:12.5px;color:var(--text-muted);">
+            Pembersihan terakhir: <strong>${retention.lastRun ? escapeHtml(formatDateTimeID(retention.lastRun)) : 'belum pernah'}</strong>
+          </span>
+          <a class="btn-outline" href="/tugas/pembersihan" target="_blank" rel="noopener"
+             style="margin-left:auto;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:700;">Jalankan sekarang</a>
         </div>
       </div>
 
