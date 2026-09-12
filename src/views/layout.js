@@ -372,15 +372,37 @@ const SHARED_STYLE = `
   .adm-cell[data-label=""]::before{display:none;}
   .adm-cell > *{min-width:0;max-width:100%;}
   .hide-desktop{display:inline;}
+  .adm-note{font-size:14px;color:var(--text-muted);margin-top:14px;line-height:1.7;}
+  /* Lead cell: product photo + name. The photo is big enough to actually
+     judge on a phone and shrinks to a row-height chip on desktop. */
+  .adm-lead{display:flex;align-items:center;gap:14px;min-width:0;}
+  .adm-thumb{width:104px;flex-shrink:0;}
+  .adm-lead-name{font-size:17px;font-weight:800;min-width:0;}
+  /* A 44-104px thumbnail is smaller than the carousel's own arrows, so they
+     sit on top of the photo instead of beside it. Dots are enough here. */
+  .adm-cell .carousel-arrow{display:none;}
   /* Touch targets. On a phone the row controls are the whole point of the
      page — they get real size rather than the 24px icons that suit a mouse. */
   @media (max-width: 860px){
-    .adm-cell .step-btn{width:38px;height:38px;border:1px solid var(--border);}
-    .adm-cell .stock-input{width:64px;padding:9px 4px;font-size:15px;}
-    .adm-cell .icon-action{padding:9px 13px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
-    .adm-cell .toggle-pill{width:52px;height:30px;}
-    .adm-cell .toggle-dot{width:22px;height:22px;}
-    .adm-cell .lihat-btn{padding:9px 15px;}
+    .adm-cell .step-btn{width:42px;height:42px;border:1px solid var(--border);font-size:19px !important;}
+    .adm-cell .stock-input{width:72px;padding:10px 4px;font-size:17px !important;}
+    .adm-cell .icon-action{padding:10px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
+    .adm-cell .toggle-pill{width:56px;height:32px;}
+    .adm-cell .toggle-dot{width:24px;height:24px;}
+    .adm-cell .lihat-btn{padding:10px 16px;}
+    .adm-cell .carousel-dot{width:8px;height:8px;}
+    .adm-cell .carousel-dot.is-active{width:20px;}
+    /* Row text is written with inline font sizes tuned for a dense desktop
+       table, which read as tiny on a phone. Overriding them needs
+       !important because inline styles always win otherwise. */
+    .adm-cell{font-size:15px;}
+    .adm-cell::before{font-size:12px;letter-spacing:0.4px;}
+    .adm-cell span, .adm-cell a, .adm-cell div, .adm-cell strong,
+    .adm-cell label, .adm-cell button, .adm-cell time{font-size:15px !important;}
+    /* …except the little status pills, which stay badge-sized. */
+    .adm-cell span[style*="border-radius:99px"]{font-size:11.5px !important;}
+    .adm-note{font-size:14.5px;}
+    .adm-empty{font-size:15px;padding:40px 20px;}
   }
 
   @media (min-width: 861px){
@@ -394,6 +416,8 @@ const SHARED_STYLE = `
     .adm-cell::before{display:none;}
     .adm-cell[data-label=""]{padding-bottom:0;}
     .hide-desktop{display:none;}
+    .adm-thumb{width:44px;}
+    .adm-lead-name{font-size:14px;font-weight:700;}
   }
 
   @media (max-width: 1180px){
@@ -432,6 +456,14 @@ const SHARED_STYLE = `
     .admin-main form.card > a{flex:1 1 100%;text-align:center;justify-content:center;}
     /* Stat grids read better as two columns than four squeezed ones. */
     .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
+    /* Phone type scale. Every inline <p> size in the admin views is 13.5px or
+       below, so this floor only ever enlarges. Inputs go to 16px because iOS
+       Safari zooms the whole page when you focus anything smaller. */
+    .admin-main p{font-size:14.5px !important;line-height:1.65;}
+    .admin-main label{font-size:14px !important;}
+    .admin-main .chip{font-size:14px !important;padding:10px 18px !important;}
+    .admin-main input, .admin-main select, .admin-main textarea{font-size:16px !important;}
+    .admin-main h1{font-size:26px;}
     /* Nothing in a row may force the page wider than the screen. */
     .adm-cell form{max-width:100%;}
     .adm-cell input, .adm-cell select{max-width:100%;}

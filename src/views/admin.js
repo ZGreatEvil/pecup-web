@@ -60,7 +60,7 @@ function admTable({ cols, minWidth = 0, head = [], rows = '', empty = 'Tidak ada
         <div class="adm-rows">${rows || `<div class="adm-empty">${empty}</div>`}</div>
       </div>
     </div>
-    ${note ? `<p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;line-height:1.7;">${note}</p>` : ''}`;
+    ${note ? `<p class="adm-note">${note}</p>` : ''}`;
 }
 
 function statCard(label, value, bg, iconPath, stroke = '#3f7a42') {
@@ -141,9 +141,9 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
             [
               {
                 label: '',
-                html: `<div style="display:flex;align-items:center;gap:14px;min-width:0;">
-          <div style="width:44px;flex-shrink:0;">${productThumb(p, { size: 24, radius: 10 })}</div>
-          <span style="font-size:14px;font-weight:700;min-width:0;">${escapeHtml(p.name)}</span>
+                html: `<div class="adm-lead">
+          <div class="adm-thumb">${productThumb(p, { size: 40, radius: 12 })}</div>
+          <span class="adm-lead-name">${escapeHtml(p.name)}</span>
         </div>`,
               },
               {
