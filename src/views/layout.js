@@ -257,15 +257,33 @@ const SHARED_STYLE = `
   .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;position:relative;overflow:clip;}
   /* Two offset washes instead of one flat tint — gives the top of the page
      some depth without putting an image behind it. */
-  .hero::before{content:'';position:absolute;inset:-20% -8% auto;height:170%;pointer-events:none;z-index:0;
-    background:radial-gradient(55% 55% at 78% 25%, oklch(92% 0.09 55 / 0.6), transparent 70%),
-               radial-gradient(45% 45% at 12% 75%, oklch(93% 0.07 152 / 0.45), transparent 70%);}
+  .hero::before{content:'';position:absolute;inset:-20% -8% auto;height:150%;pointer-events:none;z-index:0;
+    background:radial-gradient(50% 48% at 78% 22%, oklch(92% 0.09 55 / 0.55), transparent 72%),
+               radial-gradient(42% 40% at 12% 62%, oklch(93% 0.07 152 / 0.38), transparent 72%);
+    mask-image:linear-gradient(to bottom, #000 55%, transparent 92%);
+    -webkit-mask-image:linear-gradient(to bottom, #000 55%, transparent 92%);}
   .hero > *{position:relative;z-index:1;}
-  /* Fine dotted texture over the hero so large empty areas aren't dead flat. */
-  .hero::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:0.5;
+  /* Fine dotted texture over the hero so large empty areas aren't dead flat.
+     Both washes are masked to fade out well before the section ends, so the
+     colour doesn't run straight into the category bar underneath. */
+  .hero::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:0.45;
     background-image:radial-gradient(oklch(70% 0.03 95 / 0.25) 1px, transparent 1px);background-size:22px 22px;
-    mask-image:radial-gradient(70% 70% at 50% 40%, #000, transparent 75%);
-    -webkit-mask-image:radial-gradient(70% 70% at 50% 40%, #000, transparent 75%);}
+    mask-image:radial-gradient(62% 58% at 50% 34%, #000, transparent 72%);
+    -webkit-mask-image:radial-gradient(62% 58% at 50% 34%, #000, transparent 72%);}
+  /* The category bar: its own quiet band, clearly separated from the hero. */
+  .chip-bar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding-top:26px;padding-bottom:26px;
+    border-top:1px solid var(--border);background:var(--surface);}
+  .chip-bar-label{font-size:11.5px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;
+    color:var(--text-muted);flex-shrink:0;}
+  .chip-bar-list{display:flex;gap:10px;flex-wrap:wrap;min-width:0;}
+  @media (max-width: 560px){
+    .chip-bar{gap:12px;padding-top:20px;padding-bottom:20px;}
+    /* One swipeable row rather than four stacked lines of chips. */
+    .chip-bar-list{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;
+      scrollbar-width:none;-ms-overflow-style:none;}
+    .chip-bar-list::-webkit-scrollbar{display:none;}
+    .chip-bar-list > .chip{flex-shrink:0;}
+  }
   .hero-art{position:relative;}
   /* Soft halo behind the cup illustration. */
   .hero-art::before{content:'';position:absolute;inset:-12%;border-radius:50%;z-index:-1;
@@ -330,35 +348,52 @@ const SHARED_STYLE = `
      Phone: the header is dropped and every row becomes a stacked card, each
      value labelled from its column name. That's what makes the admin usable
      on a phone instead of a wide table you have to drag sideways. */
+  /* MOBILE FIRST, deliberately. The stacked card is the default and the wide
+     grid is layered on at >=861px. Written the other way round, any failure
+     to match the mobile media query leaves the unusable wide table on a
+     phone; this way the worst case is a stacked list, which always works. */
   .adm-table{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
-  .adm-head{display:grid;grid-template-columns:var(--cols);gap:12px;padding:14px 20px;background:var(--surface-2);
-    font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;}
-  .adm-row{display:grid;grid-template-columns:var(--cols);gap:12px;align-items:center;padding:14px 20px;
-    border-top:1px solid var(--border);color:inherit;}
+  /* Safety net at every width: if any row content is wider than the card it
+     scrolls inside the card, instead of widening the whole page and pushing
+     the right-hand buttons off-screen. */
+  .adm-scroll{overflow-x:auto;}
+  .adm-head{display:none;}
+  .adm-row{display:block;padding:15px 16px;border-top:1px solid var(--border);color:inherit;}
+  .adm-row:first-child{border-top:none;}
   .adm-empty{padding:36px 22px;color:var(--text-muted);font-size:14px;text-align:center;}
+  /* Label / value pair per field, with the column name supplied by the cell's
+     data-label so no header row is needed. */
+  .adm-cell{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0;
+    padding:5px 0;flex-wrap:wrap;}
+  .adm-cell::before{content:attr(data-label);flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:0.5px;
+    text-transform:uppercase;color:var(--text-muted);}
+  /* The lead cell (and any actions cell) carries no label and spans the row. */
+  .adm-cell[data-label=""]{display:block;padding-bottom:9px;}
+  .adm-cell[data-label=""]::before{display:none;}
+  .adm-cell > *{min-width:0;max-width:100%;}
+  .hide-desktop{display:inline;}
+  /* Touch targets. On a phone the row controls are the whole point of the
+     page — they get real size rather than the 24px icons that suit a mouse. */
+  @media (max-width: 860px){
+    .adm-cell .step-btn{width:38px;height:38px;border:1px solid var(--border);}
+    .adm-cell .stock-input{width:64px;padding:9px 4px;font-size:15px;}
+    .adm-cell .icon-action{padding:9px 13px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
+    .adm-cell .toggle-pill{width:52px;height:30px;}
+    .adm-cell .toggle-dot{width:22px;height:22px;}
+    .adm-cell .lihat-btn{padding:9px 15px;}
+  }
+
   @media (min-width: 861px){
-    /* Only the inner scroller needs a min-width, and only on desktop — on a
-       phone the stacked layout means there is nothing to scroll sideways. */
     .adm-scroll{overflow-x:auto;}
     .adm-head, .adm-rows{min-width:var(--min, auto);}
-  }
-  /* Icon-only buttons get a text label once they're in a stacked card, where
-     there's room and no column header to explain them. */
-  .hide-desktop{display:none;}
-  @media (max-width: 860px){
-    .hide-desktop{display:inline;}
-    .adm-head{display:none;}
-    .adm-row{grid-template-columns:1fr;gap:9px;padding:16px;}
-    .adm-cell{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0;}
-    .adm-cell::before{content:attr(data-label);flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:0.5px;
-      text-transform:uppercase;color:var(--text-muted);}
-    /* A cell with no label (the lead cell, or an actions cell) spans the
-       full width instead of sitting in a label/value pair. */
-    .adm-cell[data-label=""]{display:block;}
-    .adm-cell[data-label=""]::before{display:none;}
-    .adm-cell > *{min-width:0;}
-    /* Let forms inside a row breathe rather than squashing into a corner. */
-    .adm-cell form{flex-wrap:wrap;justify-content:flex-end;}
+    .adm-head{display:grid;grid-template-columns:var(--cols);gap:12px;padding:14px 20px;
+      background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;}
+    .adm-row{display:grid;grid-template-columns:var(--cols);gap:12px;align-items:center;padding:14px 20px;}
+    .adm-row:first-child{border-top:1px solid var(--border);}
+    .adm-cell{display:block;padding:0;}
+    .adm-cell::before{display:none;}
+    .adm-cell[data-label=""]{padding-bottom:0;}
+    .hide-desktop{display:none;}
   }
 
   @media (max-width: 1180px){
@@ -385,12 +420,21 @@ const SHARED_STYLE = `
     .admin-main{padding:24px 20px;}
     /* Filter bars are built as flex rows with fixed pixel bases for desktop.
        On a phone those bases fight each other and fields end up clipped, so
-       let every field take the full width and stack. */
-    .admin-main form > div[style*="flex:0 1"],
-    .admin-main form > div[style*="flex:1 1"]{flex:1 1 100% !important;}
-    .admin-main form > button, .admin-main form > a{flex:1 1 100%;text-align:center;justify-content:center;}
+       let every field take the full width and stack. Scoped to the filter
+       forms themselves (direct children of a .card) — an earlier, broader
+       version of this also hit the little forms inside table rows and blew
+       their buttons up to full width. */
+    .admin-main > form.card > div[style*="flex:0 1"],
+    .admin-main > form.card > div[style*="flex:1 1"],
+    .admin-main form.card > div[style*="flex:0 1"],
+    .admin-main form.card > div[style*="flex:1 1"]{flex:1 1 100% !important;}
+    .admin-main form.card > button,
+    .admin-main form.card > a{flex:1 1 100%;text-align:center;justify-content:center;}
     /* Stat grids read better as two columns than four squeezed ones. */
     .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
+    /* Nothing in a row may force the page wider than the screen. */
+    .adm-cell form{max-width:100%;}
+    .adm-cell input, .adm-cell select{max-width:100%;}
   }
   @media (max-width: 520px){
     .admin-main .grid-4{grid-template-columns:1fr;}

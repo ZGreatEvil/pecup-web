@@ -1097,7 +1097,36 @@ function stampMeter(c) {
 // The searchable customer directory. Open to every admin (they need to look
 // up a shopper's history day to day); the editing controls on the detail
 // page are what's gated to superadmin.
-function renderPelangganList({ customers, admin, search = '', totalCustomers = 0, tiersEnabled = true, flash = '', error = '' }) {
+const CUSTOMER_SORT_OPTIONS = [
+  { value: 'baru', label: 'Terbaru mendaftar' },
+  { value: 'lama', label: 'Terlama mendaftar' },
+  { value: 'nama', label: 'Nama A → Z' },
+  { value: 'nama-desc', label: 'Nama Z → A' },
+  { value: 'stempel', label: 'Stempel terbanyak' },
+  { value: 'stempel-asc', label: 'Stempel tersedikit' },
+  { value: 'klaim', label: 'Paling sering klaim' },
+  { value: 'tier', label: 'Tier tertinggi' },
+  { value: 'tier-asc', label: 'Tier terendah' },
+];
+
+const CUSTOMER_VIEW_OPTIONS = [
+  { value: '', label: 'Semua pelanggan' },
+  { value: 'penuh', label: 'Kartu penuh (siap klaim)' },
+  { value: 'hangus-dekat', label: 'Stempel segera hangus (14 hari)' },
+  { value: 'belum-klaim', label: 'Belum pernah klaim' },
+];
+
+function renderPelangganList({
+  customers,
+  admin,
+  search = '',
+  totalCustomers = 0,
+  tiersEnabled = true,
+  tierNames = [],
+  view = {},
+  flash = '',
+  error = '',
+}) {
   const rows = customers.length
     ? customers
         .map((c) =>
@@ -1152,14 +1181,46 @@ function renderPelangganList({ customers, admin, search = '', totalCustomers = 0
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
 
-    <form method="get" action="/admin/pelanggan" class="card" style="padding:16px 18px;margin-bottom:20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-      <div style="flex:1 1 280px;position:relative;display:flex;align-items:center;">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:14px;pointer-events:none;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="search" name="q" value="${escapeAttr(search)}" placeholder="Nama atau nomor WhatsApp…" autofocus style="padding-left:40px;">
+    <form method="get" action="/admin/pelanggan" class="card" style="padding:16px 18px;margin-bottom:20px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="flex:1 1 240px;margin:0;">
+        <label style="margin-bottom:5px;">Cari</label>
+        <div style="position:relative;display:flex;align-items:center;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:14px;pointer-events:none;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="q" value="${escapeAttr(search)}" placeholder="Nama atau nomor WhatsApp…" style="padding-left:40px;">
+        </div>
       </div>
-      <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;">Cari</button>
+      <div style="flex:0 1 190px;margin:0;">
+        <label style="margin-bottom:5px;">Urutkan</label>
+        <select name="urut">
+          ${CUSTOMER_SORT_OPTIONS.map(
+            (o) => `<option value="${o.value}" ${(view.urut || 'baru') === o.value ? 'selected' : ''}>${o.label}</option>`
+          ).join('')}
+        </select>
+      </div>
       ${
-        search
+        tiersEnabled && tierNames.length
+          ? `<div style="flex:0 1 160px;margin:0;">
+        <label style="margin-bottom:5px;">Tier</label>
+        <select name="tier">
+          <option value="">Semua tier</option>
+          ${tierNames
+            .map((t) => `<option value="${escapeAttr(t)}" ${view.tier === t ? 'selected' : ''}>${escapeHtml(t)}</option>`)
+            .join('')}
+        </select>
+      </div>`
+          : ''
+      }
+      <div style="flex:0 1 220px;margin:0;">
+        <label style="margin-bottom:5px;">Tampilkan</label>
+        <select name="hanya">
+          ${CUSTOMER_VIEW_OPTIONS.map(
+            (o) => `<option value="${o.value}" ${(view.hanya || '') === o.value ? 'selected' : ''}>${o.label}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;">Terapkan</button>
+      ${
+        search || view.tier || view.hanya || (view.urut && view.urut !== 'baru')
           ? `<a class="btn-outline" href="/admin/pelanggan" style="padding:13px 20px;border-radius:11px;font-size:14px;font-weight:700;">Reset</a>`
           : ''
       }

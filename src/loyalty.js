@@ -302,7 +302,21 @@ async function statusForMany(customerRows) {
 // state — powers the admin's searchable Pelanggan page. `search` matches on
 // name or WhatsApp number; digits typed as 08xx also match the stored 628xx
 // form, since that's how people actually know their own number.
-async function listCustomersWithLoyalty({ search = '', limit = 100 } = {}) {
+// Sorting and tier filtering happen after the loyalty state is resolved,
+// because tier and stamp count are derived values, not columns.
+const CUSTOMER_SORTS = {
+  baru: (a, b) => new Date(b.created_at) - new Date(a.created_at),
+  lama: (a, b) => new Date(a.created_at) - new Date(b.created_at),
+  nama: (a, b) => String(a.name).localeCompare(String(b.name), 'id'),
+  'nama-desc': (a, b) => String(b.name).localeCompare(String(a.name), 'id'),
+  stempel: (a, b) => b.stamps - a.stamps || String(a.name).localeCompare(String(b.name), 'id'),
+  'stempel-asc': (a, b) => a.stamps - b.stamps || String(a.name).localeCompare(String(b.name), 'id'),
+  klaim: (a, b) => b.claims - a.claims || String(a.name).localeCompare(String(b.name), 'id'),
+  tier: (a, b) => b.tier.minClaims - a.tier.minClaims || b.claims - a.claims,
+  'tier-asc': (a, b) => a.tier.minClaims - b.tier.minClaims || a.claims - b.claims,
+};
+
+async function listCustomersWithLoyalty({ search = '', limit = 100, sort = 'baru', tier = '', only = '' } = {}) {
   const term = String(search || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
 
@@ -332,7 +346,19 @@ async function listCustomersWithLoyalty({ search = '', limit = 100 } = {}) {
     rows = await db.query(`select ${columns} from customers order by created_at desc limit $1`, [safeLimit]);
   }
 
-  return statusForMany(rows);
+  let out = await statusForMany(rows);
+
+  if (tier) out = out.filter((c) => c.tier.name === tier);
+  // Quick views an admin actually wants: who can claim right now, whose card
+  // is about to lapse, and who has never claimed anything.
+  if (only === 'penuh') out = out.filter((c) => c.cardComplete);
+  else if (only === 'hangus-dekat') {
+    const soon = Date.now() + 14 * 24 * 60 * 60 * 1000;
+    out = out.filter((c) => c.stamps > 0 && c.expiresAt && new Date(c.expiresAt).getTime() <= soon);
+  } else if (only === 'belum-klaim') out = out.filter((c) => c.claims === 0);
+
+  out.sort(CUSTOMER_SORTS[sort] || CUSTOMER_SORTS.baru);
+  return out;
 }
 
 async function countCustomers() {

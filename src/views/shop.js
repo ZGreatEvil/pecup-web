@@ -183,7 +183,10 @@ function renderBeranda({
     </div>
   </section>
 
-  <section id="menu" class="px-page" style="display:flex;gap:12px;flex-wrap:wrap;">${chips}</section>
+  <section id="menu" class="px-page chip-bar">
+    <span class="chip-bar-label">Kategori</span>
+    <div class="chip-bar-list">${chips}</div>
+  </section>
 
   <section class="px-page" style="padding-top:40px;padding-bottom:100px;">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:16px;">

@@ -1338,8 +1338,13 @@ router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
 // read. Changing stamps (below) stays superadmin-only.
 router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
   const search = (query.get('q') || '').trim();
+  const view = {
+    urut: query.get('urut') || 'baru',
+    tier: query.get('tier') || '',
+    hanya: query.get('hanya') || '',
+  };
   const [customers, totalCustomers, tierConfig] = await Promise.all([
-    loyalty.listCustomersWithLoyalty({ search }),
+    loyalty.listCustomersWithLoyalty({ search, sort: view.urut, tier: view.tier, only: view.hanya }),
     loyalty.countCustomers(),
     loyalty.getTierConfig(),
   ]);
@@ -1350,6 +1355,8 @@ router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
       search,
       totalCustomers,
       tiersEnabled: tierConfig.enabled,
+      tierNames: tierConfig.tiers.map((t) => t.name),
+      view,
       admin: req.admin,
       flash: query.get('flash') || '',
       error: query.get('error') || '',
