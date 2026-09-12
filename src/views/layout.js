@@ -89,6 +89,11 @@ const SHARED_STYLE = `
     background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23555f6d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='16' rx='2.5'/%3E%3Cpath d='M3 9.5h18M8 2.5v4M16 2.5v4'/%3E%3C/svg%3E");
     background-repeat:no-repeat;background-position:right 13px center;background-size:18px 18px;
   }
+  /* A time field gets a clock, not the calendar above — the opening-hours
+     fields read as date pickers otherwise. */
+  input[type="time"]{
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23555f6d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 6.8V12l3.4 2'/%3E%3C/svg%3E");
+  }
   input[type="date"]::-webkit-calendar-picker-indicator,
   input[type="month"]::-webkit-calendar-picker-indicator,
   input[type="time"]::-webkit-calendar-picker-indicator{
@@ -100,6 +105,18 @@ const SHARED_STYLE = `
   /* A select inside a fixed-basis flex column must be allowed to shrink, or a
      long option name forces the field wider than its container. */
   select, input, textarea{min-width:0;max-width:100%;}
+  /* A checkbox is a fixed-size control, but every rule above dresses "input" as
+     a text field — full width, 13px of padding, its own border. That stretched
+     checkboxes across the whole row and pushed their label text outside the
+     box, where the screen edge clipped it. !important is needed rather than
+     tidier: the responsive admin rules set width on ".admin-main form.card
+     input", which outranks any plain selector here. */
+  input[type="checkbox"], input[type="radio"]{
+    width:18px !important;height:18px !important;min-width:18px;
+    flex:0 0 auto;padding:0 !important;margin:0;border-radius:4px;
+    accent-color:var(--orange);cursor:pointer;vertical-align:middle;
+  }
+  input[type="radio"]{border-radius:50%;}
   input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-sm);}
@@ -233,6 +250,10 @@ const SHARED_STYLE = `
   .stamp-grid{display:grid;grid-template-columns:repeat(5, minmax(0,1fr));gap:14px;}
   .stamp-slot{aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;}
   .stamp-empty{border:2px dashed var(--border);background:var(--surface-2);color:var(--text-muted);font-size:13px;font-weight:700;}
+  /* The last slot says GRATIS rather than a digit. At the stamp size a phone
+     gives us (~44px across) that word is wider than the circle and spilled out
+     over both edges, so it gets its own size. */
+  .stamp-free-label{font-size:9px;letter-spacing:0.2px;line-height:1;text-align:center;padding:0 1px;}
   .stamp-filled{border:2px solid var(--green-soft);background:var(--green-soft);}
   .stamp-filled img{width:72%;height:72%;object-fit:contain;transform:rotate(-30deg);}
   .stamp-reward{border:2px solid var(--orange);background:var(--orange-soft);}
@@ -536,9 +557,15 @@ const SHARED_STYLE = `
     .admin-main form.card[style*="display:flex"] > button,
     .admin-main form.card[style*="display:flex"] > a{
       width:100%;text-align:center;justify-content:center;margin:0;}
-    /* Every control the same height so the grid rows line up. */
+    /* Every control the same height so the grid rows line up — but ONLY the
+       vertical padding. Fields reserve horizontal room for the icons drawn
+       over them: 38px right for a select's arrow, 44px right for a date/time
+       icon, 40px left for the search magnifier. The padding shorthand wiped
+       every one of those reservations out and the icons ended up sitting on
+       top of the field's own text. */
     .admin-main form.card input,
-    .admin-main form.card select{width:100%;padding:11px 12px !important;}
+    .admin-main form.card select{
+      width:100%;padding-top:11px !important;padding-bottom:11px !important;}
     /* Stat grids read better as two columns than four squeezed ones. */
     .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
     /* Phone type scale. Every inline <p> size in the admin views is 13.5px or
@@ -549,6 +576,11 @@ const SHARED_STYLE = `
     .admin-main .chip{font-size:14px !important;padding:10px 18px !important;}
     .admin-main input, .admin-main select, .admin-main textarea{font-size:16px !important;}
     .admin-main h1{font-size:26px;}
+    /* A field capped to a tidy desktop width (a short time or code box) reads
+       as a misaligned stub once it's the only thing on the row — every other
+       field on the card runs the full width. !important because the cap is an
+       inline style. */
+    .admin-main .field[style*="max-width"]{max-width:100% !important;}
     /* Nothing in a row may force the page wider than the screen. */
     .adm-cell form{max-width:100%;}
     .adm-cell input, .adm-cell select{max-width:100%;}

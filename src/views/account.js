@@ -166,7 +166,9 @@ function stampCard(loyalty, stampHistory = []) {
       );
     } else {
       slots.push(
-        `<div class="stamp-slot stamp-empty" title="Stempel ke-${i + 1}">${isReward ? 'GRATIS' : i + 1}</div>`
+        `<div class="stamp-slot stamp-empty${isReward ? ' stamp-free-label' : ''}" title="${
+          isReward ? 'Cup gratis di stempel ke-' + (i + 1) : 'Stempel ke-' + (i + 1)
+        }">${isReward ? 'GRATIS' : i + 1}</div>`
       );
     }
   }

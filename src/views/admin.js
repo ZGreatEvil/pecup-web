@@ -720,7 +720,7 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       }">${p.label}</a>`
   ).join('');
 
-  const statusOptions = [{ value: '', label: 'Semua status' }, ...ORDER_STATUSES]
+  const statusOptions = [{ value: '', label: 'Semua' }, ...ORDER_STATUSES]
     .map((s) => `<option value="${s.value}" ${view.status === s.value ? 'selected' : ''}>${s.label}</option>`)
     .join('');
 
@@ -759,8 +759,8 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       <div style="margin:0;flex:0 1 170px;">
         <label style="margin-bottom:5px;">Filter tanggal pakai</label>
         <select name="jenisTanggal" style="padding:10px 12px;">
-          <option value="dipesan" ${view.jenisTanggal !== 'dikirim' ? 'selected' : ''}>Tanggal pesan</option>
-          <option value="dikirim" ${view.jenisTanggal === 'dikirim' ? 'selected' : ''}>Tanggal kirim</option>
+          <option value="dipesan" ${view.jenisTanggal !== 'dikirim' ? 'selected' : ''}>Dipesan</option>
+          <option value="dikirim" ${view.jenisTanggal === 'dikirim' ? 'selected' : ''}>Dikirim</option>
         </select>
       </div>
       <div style="margin:0;flex:0 1 150px;">
@@ -1160,9 +1160,12 @@ function stampMeter(c) {
 // The searchable customer directory. Open to every admin (they need to look
 // up a shopper's history day to day); the editing controls on the detail
 // page are what's gated to superadmin.
+// Labels stay short on purpose: in the two-column filter bar a phone gives a
+// select about 105px of text, and anything longer was cut to "Terbaru me…".
+// The field's own label ("Urutkan", "Tampilkan") carries the context.
 const CUSTOMER_SORT_OPTIONS = [
-  { value: 'baru', label: 'Terbaru mendaftar' },
-  { value: 'lama', label: 'Terlama mendaftar' },
+  { value: 'baru', label: 'Terbaru' },
+  { value: 'lama', label: 'Terlama' },
   { value: 'nama', label: 'Nama A → Z' },
   { value: 'nama-desc', label: 'Nama Z → A' },
   { value: 'stempel', label: 'Stempel terbanyak' },
@@ -1173,10 +1176,10 @@ const CUSTOMER_SORT_OPTIONS = [
 ];
 
 const CUSTOMER_VIEW_OPTIONS = [
-  { value: '', label: 'Semua pelanggan' },
-  { value: 'penuh', label: 'Kartu penuh (siap klaim)' },
-  { value: 'hangus-dekat', label: 'Stempel segera hangus (14 hari)' },
-  { value: 'belum-klaim', label: 'Belum pernah klaim' },
+  { value: '', label: 'Semua' },
+  { value: 'penuh', label: 'Kartu penuh' },
+  { value: 'hangus-dekat', label: 'Segera hangus' },
+  { value: 'belum-klaim', label: 'Belum klaim' },
 ];
 
 function renderPelangganList({
@@ -1687,7 +1690,10 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
     display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .tier-fields{display:grid;grid-template-columns:1.2fr 1.1fr 0.8fr 1.4fr;gap:14px;align-items:start;}
   .tier-field{display:flex;flex-direction:column;min-width:0;}
-  .tier-field label{font-size:12px;font-weight:700;margin-bottom:5px;min-height:2.6em;display:flex;align-items:flex-end;}
+  /* Direct child only: the benefit checkboxes are labels too, and this caption
+     styling (flex-end, a 2.6em floor) was landing on them — which is why the
+     checkbox sat pinned to the bottom of an over-tall empty box. */
+  .tier-field > label{font-size:12px;font-weight:700;margin-bottom:5px;min-height:2.6em;display:flex;align-items:flex-end;}
   .tier-field input[type="text"], .tier-field input[type="number"]{padding:9px 11px;}
   .tier-hint{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;}
   .tier-perks{display:flex;flex-direction:column;gap:8px;padding-top:2px;}
@@ -1697,9 +1703,15 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
   .tier-check input{width:16px;height:16px;margin:0;padding:0;flex-shrink:0;}
   @media (max-width: 1100px){
     .tier-fields{grid-template-columns:1fr 1fr;}
-    .tier-field label{min-height:0;}
+    .tier-field > label{min-height:0;}
   }
-  @media (max-width: 620px){ .tier-fields{grid-template-columns:1fr;} }
+  @media (max-width: 620px){
+    .tier-fields{grid-template-columns:1fr;}
+    /* Once the header wraps, the right-aligned caption ("Mulai dari N klaim")
+       lands on its own line still pushed right by margin-left:auto, which reads
+       as a stray indent. Wrapped means left-aligned, full width. */
+    .tier-card-head > span:last-child{margin-left:0 !important;width:100%;}
+  }
   /* The ladder preview: fixed-width pill column keeps the names, ranges and
      benefits in three straight columns. */
   .ladder-row{display:grid;grid-template-columns:112px 1fr auto;gap:12px;align-items:center;padding:7px 0;font-size:13px;}
@@ -2342,7 +2354,7 @@ function renderVoucher({ admin, vouchers: list, kinds, flash = '', error = '' })
         <div class="field" style="flex:1 1 150px;">
           <label>Nilai <span class="req">*</span></label>
           <input type="number" name="amount" required min="1" placeholder="10">
-          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Persen atau rupiah, sesuai jenis di sebelah.</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Persen atau rupiah, sesuai jenis potongan yang dipilih.</div>
         </div>
         <div class="field" style="flex:1 1 170px;">
           <label>Maks. potongan (Rp)</label>
@@ -2502,7 +2514,7 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
       <div style="margin:0;flex:0 1 150px;">
         <label style="margin-bottom:5px;">Admin</label>
         <select name="admin" style="padding:10px 12px;">
-          <option value="">Semua admin</option>
+          <option value="">Semua</option>
           ${(options.admins || [])
             .map((a) => `<option value="${escapeAttr(a)}" ${filters.admin === a ? 'selected' : ''}>${escapeHtml(a)}</option>`)
             .join('')}
@@ -2511,7 +2523,7 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
       <div style="margin:0;flex:0 1 190px;">
         <label style="margin-bottom:5px;">Jenis Aksi</label>
         <select name="aksi" style="padding:10px 12px;">
-          <option value="">Semua aksi</option>
+          <option value="">Semua</option>
           ${(options.actions || [])
             .map((a) => `<option value="${escapeAttr(a)}" ${filters.aksi === a ? 'selected' : ''}>${escapeHtml(actionLabel(a))}</option>`)
             .join('')}

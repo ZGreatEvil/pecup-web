@@ -8,9 +8,12 @@
 const db = require('./db');
 const { toDateKey } = require('./utils');
 
+// Short labels: the select sits in a narrow column on a phone and anything
+// longer was cut to "Potongan persen…". Its field label is "Jenis potongan",
+// so the word "Potongan" was only repeating that.
 const KINDS = [
-  { value: 'persen', label: 'Potongan persen (%)' },
-  { value: 'nominal', label: 'Potongan rupiah (Rp)' },
+  { value: 'persen', label: 'Persen (%)' },
+  { value: 'nominal', label: 'Rupiah (Rp)' },
 ];
 
 function normalizeCode(raw) {
