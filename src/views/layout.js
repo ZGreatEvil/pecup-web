@@ -283,7 +283,11 @@ const SHARED_STYLE = `
   .meter-fill{height:100%;border-radius:99px;background:var(--orange);transition:width 0.3s ease;}
   .meter-fill.is-full{background:var(--green);}
   .stat-card:hover{border-color:var(--orange);transform:translateY(-2px);box-shadow:var(--shadow-md);}
-  .icon-action{background:transparent;border:none;}
+  /* Row actions come in two flavours — Edit is an <a>, Hapus a <button> — and
+     a button does not inherit the body's line-height, so it computed "normal"
+     (~18px) against the link's 24px and sat 6px shorter beside it. Pinning the
+     line-height makes the pair the same height whichever element they are. */
+  .icon-action{background:transparent;border:none;line-height:1.6;vertical-align:top;}
   .lihat-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);}
   .toggle-pill{width:44px;height:26px;border-radius:99px;padding:3px;display:inline-flex;border:none;cursor:pointer;}
   .toggle-on{background:var(--green);justify-content:flex-end;}
@@ -456,7 +460,9 @@ const SHARED_STYLE = `
   @media (max-width: 860px){
     .adm-cell .step-btn{width:42px;height:42px;border:1px solid var(--border);font-size:19px !important;}
     .adm-cell .stock-input{width:72px;padding:10px 4px;font-size:17px !important;}
-    .adm-cell .icon-action{padding:10px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
+    /* !important because these carry an inline padding:6px tuned for the dense
+       desktop table, which otherwise wins and leaves a 32px tap target. */
+    .adm-cell .icon-action{padding:10px 14px !important;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
     .adm-cell .toggle-pill{width:56px;height:32px;}
     .adm-cell .toggle-dot{width:24px;height:24px;}
     .adm-cell .lihat-btn{padding:10px 16px;}
