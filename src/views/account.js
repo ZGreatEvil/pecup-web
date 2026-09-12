@@ -7,6 +7,7 @@ const {
   formatWhatsapp,
   formatShortDateID,
   orderStatus,
+  toDateKey,
 } = require('../utils');
 const { discountLines } = require('../orderMoney');
 
@@ -141,7 +142,7 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
         <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
         <div class="field">
           <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
-          <input type="date" name="birthday" value="${escapeAttr(values.birthday || '')}" max="${new Date().toISOString().slice(0, 10)}">
+          <input type="date" name="birthday" value="${escapeAttr(values.birthday || '')}" max="${toDateKey(new Date())}">
           <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
             Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong> — kami hanya pakai tanggalnya untuk itu. Boleh dikosongkan.
           </span>
@@ -453,7 +454,7 @@ function renderAkun({
             <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
             <div class="field" style="margin-bottom:8px;">
               <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
-              <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${new Date().toISOString().slice(0, 10)}">
+              <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${toDateKey(new Date())}">
               <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
                 Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong>${
                   loyalty && loyalty.tier && loyalty.tier.birthdayFreeCup

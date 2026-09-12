@@ -126,7 +126,11 @@ function renderBeranda({
   const chips = categories
     .map((c) => {
       const isActive = (category || 'Semua') === c;
-      const href = c === 'Semua' ? '/' : `/?kategori=${encodeURIComponent(c)}`;
+      // #menu keeps the browser at the product list after the reload. Without
+      // it, picking a category landed you back at the top of the page — on a
+      // phone that reads as being thrown back to the home screen, because the
+      // hero fills the whole viewport and the menu is well below the fold.
+      const href = c === 'Semua' ? '/#menu' : `/?kategori=${encodeURIComponent(c)}#menu`;
       return `<a class="chip ${isActive ? 'chip-active' : ''}" href="${href}" style="padding:11px 22px;border-radius:99px;font-size:14px;font-weight:600;display:inline-block;${
         isActive ? '' : 'color:var(--text);'
       }">${escapeHtml(c)}</a>`;
@@ -228,7 +232,10 @@ function renderBeranda({
           }
         </p>
       </div>
-      <form method="get" action="/" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <!-- action carries #menu so searching or re-sorting also comes back to
+           the list rather than the top of the page (a GET submission keeps the
+           action URL's fragment and replaces only the query). -->
+      <form method="get" action="/#menu" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         ${category && category !== 'Semua' ? `<input type="hidden" name="kategori" value="${escapeAttr(category)}">` : ''}
         <div style="position:relative;display:flex;align-items:center;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:13px;pointer-events:none;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>

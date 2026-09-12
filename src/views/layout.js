@@ -707,7 +707,7 @@ function page({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
+<title>${escapeHtml(String(title == null ? '' : title))}</title>
 <meta name="description" content="${desc}">
 <meta name="theme-color" content="#e88a3a">
 ${noindex ? '<meta name="robots" content="noindex, nofollow">' : '<meta name="robots" content="index, follow">'}

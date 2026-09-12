@@ -2681,7 +2681,9 @@ function renderResetSandi({ requests, admin, flash = '', issued = null, error = 
 // purchases can earn stamps. The password is generated and shown once — the
 // admin passes it on, and the customer changes it from their account page.
 function renderPelangganTambah({ admin, errors = [], values = {}, created = null }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
+  // would pre-fill the wrong day.
+  const today = toDateKey(new Date());
   const waText = created
     ? encodeURIComponent(
         `Halo ${created.name}, akun Pecup kamu sudah dibuat. Masuk pakai nomor ini dengan password sementara: ${created.password}. Ganti passwordnya setelah masuk ya.`
@@ -2759,7 +2761,9 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
 // in afterwards. It runs through the same create_order path as a web checkout,
 // so stock, stamps, tier perks and the books all move together.
 function renderPesananTambah({ admin, products, customers, errors = [], values = {} }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
+  // would pre-fill the wrong day.
+  const today = toDateKey(new Date());
   const qty = values.qty || {};
   const rows = products
     .map(
@@ -2797,20 +2801,37 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
         <h2 style="font-size:16px;font-weight:800;margin-bottom:16px;">Pemesan</h2>
         <div class="field">
           <label>Akun Pelanggan</label>
-          <select name="customerId">
+          <!-- The <select> stays as the real form control and the only thing
+               posted, so this works with no JavaScript at all. When JS runs it
+               hides the select and drives it from the search box below. -->
+          <select name="customerId" id="custSelect" class="cust-fallback">
             <option value="">Tanpa akun (tamu)</option>
             ${customers
               .map(
                 (c) =>
-                  `<option value="${c.id}" ${String(values.customerId || '') === String(c.id) ? 'selected' : ''}>${escapeHtml(
-                    c.name
-                  )} — ${escapeHtml(formatWhatsapp(c.whatsapp))}</option>`
+                  `<option value="${c.id}" ${String(values.customerId || '') === String(c.id) ? 'selected' : ''}
+                     data-name="${escapeAttr(c.name)}" data-wa="${escapeAttr(formatWhatsapp(c.whatsapp))}"
+                     data-digits="${escapeAttr(String(c.whatsapp || '').replace(/\D/g, ''))}"
+                     data-address="${escapeAttr(c.address || '')}">${escapeHtml(c.name)} — ${escapeHtml(
+                    formatWhatsapp(c.whatsapp)
+                  )}</option>`
               )
               .join('')}
           </select>
+
+          <div class="cust-picker" id="custPicker" hidden>
+            <div class="cust-chosen" id="custChosen"></div>
+            <div class="cust-search-wrap">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input type="search" id="custSearch" autocomplete="off" placeholder="Cari nama atau nomor WhatsApp…"
+                     aria-label="Cari pelanggan" aria-controls="custResults">
+            </div>
+            <div class="cust-results" id="custResults" role="listbox"></div>
+          </div>
+
           <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">
-            Pilih akun supaya pesanan ini menambah stempel. Belum punya akun?
-            <a href="/admin/pelanggan/tambah">Buat dulu di sini</a>.
+            Pilih akun supaya pesanan ini menambah stempel — nama, nomor dan alamatnya ikut terisi.
+            Belum punya akun? <a href="/admin/pelanggan/tambah">Buat dulu di sini</a>.
           </div>
         </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
@@ -2878,7 +2899,118 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
       </p>
     </form>
   </main>
-</div>`;
+</div>
+<style>
+  /* Searchable account picker. Sizes are in relative units and the results box
+     is capped by viewport height, so it behaves on a small phone as well as a
+     desktop panel. */
+  .cust-search-wrap{position:relative;display:flex;align-items:center;}
+  .cust-search-wrap svg{position:absolute;left:13px;pointer-events:none;}
+  .cust-search-wrap input[type="search"]{padding-left:38px !important;}
+  .cust-results{margin-top:8px;border:1.5px solid var(--border);border-radius:12px;
+    background:var(--surface);max-height:min(46vh,300px);overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .cust-results:empty{display:none;}
+  .cust-opt{display:block;width:100%;text-align:left;background:none;border:0;
+    border-bottom:1px solid var(--border);padding:12px 14px;font-size:14px;cursor:pointer;
+    font-family:inherit;color:var(--text);line-height:1.45;}
+  .cust-opt:last-child{border-bottom:0;}
+  .cust-opt:hover, .cust-opt:focus-visible{background:var(--orange-soft);outline:none;}
+  .cust-opt[aria-selected="true"]{background:var(--orange-soft);}
+  .cust-opt .cust-opt-name{font-weight:700;display:block;}
+  .cust-opt .cust-opt-wa{font-size:12.5px;color:var(--text-muted);display:block;margin-top:2px;}
+  .cust-empty{padding:14px;font-size:13px;color:var(--text-muted);}
+  .cust-chosen{display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;
+    padding:11px 14px;border:1.5px solid var(--green-soft);background:var(--green-soft);border-radius:12px;}
+  .cust-chosen.is-on{display:flex;}
+  .cust-chosen .cust-chosen-text{font-size:13.5px;font-weight:700;min-width:0;word-break:break-word;flex:1 1 auto;}
+  .cust-chosen button{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;color:var(--text);}
+</style>
+<script>
+(function(){
+  var sel=document.getElementById('custSelect');
+  var picker=document.getElementById('custPicker');
+  if(!sel||!picker||!sel.options)return;
+  var search=document.getElementById('custSearch');
+  var results=document.getElementById('custResults');
+  var chosen=document.getElementById('custChosen');
+  // Only swap in the search UI once we know the script runs: without JS the
+  // plain <select> stays and the form still works.
+  sel.style.display='none';
+  picker.hidden=false;
+
+  var opts=[];
+  for(var i=0;i<sel.options.length;i++){
+    var o=sel.options[i];
+    opts.push({value:o.value,name:o.getAttribute('data-name')||o.text,
+      wa:o.getAttribute('data-wa')||'',digits:o.getAttribute('data-digits')||'',
+      address:o.getAttribute('data-address')||'',guest:!o.value});
+  }
+  function field(n){return document.querySelector('[name="'+n+'"]');}
+  function setChosen(o){
+    sel.value=o.value;
+    if(o.guest){ chosen.className='cust-chosen'; chosen.innerHTML=''; return; }
+    chosen.className='cust-chosen is-on';
+    var t=document.createElement('span'); t.className='cust-chosen-text';
+    t.textContent=o.name+(o.wa?' — '+o.wa:'');
+    var b=document.createElement('button'); b.type='button'; b.textContent='Ganti';
+    b.addEventListener('click',function(){ setChosen({value:'',guest:true}); search.value=''; render(''); search.focus(); });
+    chosen.innerHTML=''; chosen.appendChild(t); chosen.appendChild(b);
+    // Fill the order fields from the account — that is the point of picking one.
+    var n=field('customerName'), w=field('whatsapp'), a=field('address');
+    if(n) n.value=o.name;
+    if(w) w.value=o.wa||o.digits;
+    if(a && o.address && !a.value) a.value=o.address;
+  }
+  // Numbers are stored as 62xxx but people type 0xxx, so try every spelling of
+  // the same number - the server-side customer search does exactly this too.
+  function phoneForms(digits){
+    if(!digits) return [];
+    var forms=[digits];
+    if(digits.charAt(0)==='0') forms.push('62'+digits.slice(1));
+    if(digits.slice(0,2)==='62') forms.push('0'+digits.slice(2));
+    if(digits.slice(0,3)==='620') forms.push('62'+digits.slice(3));
+    return forms;
+  }
+  function render(q){
+    var term=String(q||'').trim().toLowerCase();
+    var forms=phoneForms(term.replace(/\\D/g,''));
+    var list=opts.filter(function(o){
+      if(o.guest) return !term;
+      if(!term) return true;
+      if(o.name.toLowerCase().indexOf(term)>=0) return true;
+      for(var i=0;i<forms.length;i++){ if(forms[i].length>=3 && o.digits.indexOf(forms[i])>=0) return true; }
+      return false;
+    });
+    results.innerHTML='';
+    if(!list.length){
+      var e=document.createElement('div'); e.className='cust-empty';
+      e.textContent='Tidak ada pelanggan yang cocok. Pesanan bisa tetap dicatat tanpa akun.';
+      results.appendChild(e); return;
+    }
+    list.slice(0,60).forEach(function(o){
+      var b=document.createElement('button');
+      b.type='button'; b.className='cust-opt'; b.setAttribute('role','option');
+      b.setAttribute('aria-selected', String(sel.value===o.value));
+      var nm=document.createElement('span'); nm.className='cust-opt-name';
+      nm.textContent=o.guest?'Tanpa akun (tamu)':o.name;
+      b.appendChild(nm);
+      if(!o.guest){ var wa=document.createElement('span'); wa.className='cust-opt-wa'; wa.textContent=o.wa; b.appendChild(wa); }
+      b.addEventListener('click',function(){ setChosen(o); render(search.value); });
+      results.appendChild(b);
+    });
+  }
+  search.addEventListener('input',function(){ render(search.value); });
+  // Enter must not submit the whole order form from the search box.
+  search.addEventListener('keydown',function(ev){
+    if(ev.key==='Enter'){ ev.preventDefault();
+      var first=results.querySelector('.cust-opt'); if(first) first.click(); }
+  });
+  var pre=opts.filter(function(o){return o.value===sel.value;})[0];
+  if(pre&&!pre.guest) setChosen(pre);
+  render('');
+})();
+</script>`;
   return page({ title: 'Catat Pesanan Manual — Admin Pecup', bodyHtml: body, noindex: true });
 }
 

@@ -491,7 +491,7 @@ function parseBirthday(raw) {
   const value = String(raw || '').trim();
   if (!value) return '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) return null;
-  if (value > new Date().toISOString().slice(0, 10)) return null;
+  if (value > toDateKey(new Date())) return null;
   return value;
 }
 
@@ -998,7 +998,21 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     return sendHtml(res, adminViews.renderProdukForm({ product: fields, error, categories, admin: req.admin }));
   }
 
-  const images = await uploadGalleryFiles(fileLists.image);
+  let images;
+  try {
+    images = await uploadGalleryFiles(fileLists.image);
+  } catch (err) {
+    const categories = await queries.listCategories();
+    return sendHtml(
+      res,
+      adminViews.renderProdukForm({
+        product: fields,
+        error: err.userMessage || 'Gagal mengunggah foto. Coba lagi.',
+        categories,
+        admin: req.admin,
+      })
+    );
+  }
   await queries.createProduct({
     name: fields.name.trim(),
     description: (fields.description || '').trim(),
@@ -1055,7 +1069,21 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   // at the end rather than silently disappearing.
   const ordered = [...requested, ...onProduct.filter((url) => !requested.includes(url))];
   const kept = Array.from(new Set(ordered)).filter((url) => !removed.has(url));
-  const uploaded = await uploadGalleryFiles(fileLists.image);
+  let uploaded;
+  try {
+    uploaded = await uploadGalleryFiles(fileLists.image);
+  } catch (err) {
+    const categories = await queries.listCategories();
+    return sendHtml(
+      res,
+      adminViews.renderProdukForm({
+        product: { ...fields, id, image: existing.image, images: existing.images },
+        error: err.userMessage || 'Gagal mengunggah foto. Coba lagi.',
+        categories,
+        admin: req.admin,
+      })
+    );
+  }
   const images = [...kept, ...uploaded];
 
   await queries.updateProduct(id, {
@@ -2272,11 +2300,21 @@ function saveCartCookie(res, cart) {
   setCookie(res, cartLib.COOKIE_NAME, cartLib.serializeCart(cart), { maxAge: cartLib.MAX_AGE_SECONDS });
 }
 
+// Product photos land in the PUBLIC blob store, so the type is checked here
+// and not only by the file input's accept="" (which any client can ignore).
+// Payment proofs are already checked the same way at checkout.
+const PRODUCT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 // Uploads every photo picked in the (multiple) gallery input, in order.
 async function uploadGalleryFiles(list) {
   const urls = [];
   for (const file of list || []) {
     if (!file || !file.buffer.length) continue;
+    if (!PRODUCT_IMAGE_TYPES.includes(file.mimetype)) {
+      const err = new Error('Format foto harus JPG, PNG atau WEBP.');
+      err.userMessage = 'Format foto harus JPG, PNG atau WEBP.';
+      throw err;
+    }
     urls.push(await saveProductImage(file));
   }
   return urls;

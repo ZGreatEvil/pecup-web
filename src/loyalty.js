@@ -380,7 +380,9 @@ async function listCustomersWithLoyalty({ search = '', limit = 100, sort = 'baru
   const term = String(search || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
 
-  const columns = 'id, name, whatsapp, birthday, rewards_claimed, created_at';
+  // address comes along so the manual-order form can fill in a saved delivery
+  // address the moment an account is picked.
+  const columns = 'id, name, whatsapp, address, birthday, rewards_claimed, created_at';
   let rows;
   if (term) {
     const digits = term.replace(/\D/g, '');

@@ -59,11 +59,43 @@ async function createCustomer({ whatsapp, name, password, address, birthday }) {
   return publicShape(rows[0]);
 }
 
+// Same brute-force brake the admin login uses (src/adminAuth.js): a serverless
+// instance is short-lived so this isn't airtight across the fleet, but it stops
+// a script running a password list against one known number. Keyed on the
+// number rather than the IP so one account can't be ground down from a botnet.
+const FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILURES = 8;
+const failures = new Map();
+
+function failureState(whatsapp) {
+  const key = String(whatsapp || '').replace(/\D/g, '');
+  const entry = failures.get(key);
+  if (!entry || Date.now() - entry.first > FAILURE_WINDOW_MS) return { key, count: 0 };
+  return { key, count: entry.count };
+}
+
+function recordFailure(key) {
+  const entry = failures.get(key);
+  if (!entry || Date.now() - entry.first > FAILURE_WINDOW_MS) failures.set(key, { count: 1, first: Date.now() });
+  else entry.count += 1;
+  if (failures.size > 500) {
+    for (const [k, v] of failures) {
+      if (Date.now() - v.first > FAILURE_WINDOW_MS) failures.delete(k);
+    }
+  }
+}
+
 async function checkCredentials(whatsapp, password) {
   if (!whatsapp || !password) return null;
+  const state = failureState(whatsapp);
+  if (state.count >= MAX_FAILURES) return null;
+
   const row = await findByWhatsapp(whatsapp);
-  if (!row) return null;
-  if (!verifyPassword(password, row.password_hash)) return null;
+  if (!row || !verifyPassword(password, row.password_hash)) {
+    recordFailure(state.key);
+    return null;
+  }
+  failures.delete(state.key);
   return publicShape(row);
 }
 
