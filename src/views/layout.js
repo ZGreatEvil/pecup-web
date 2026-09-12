@@ -502,17 +502,38 @@ const SHARED_STYLE = `
        blew their buttons up to full width. */
     .admin-main form.card[style*="display:flex"]{
       display:grid !important;grid-template-columns:repeat(2, minmax(0, 1fr));
-      gap:12px !important;align-items:end;padding:16px !important;}
-    .admin-main form.card[style*="display:flex"] > div{margin:0 !important;min-width:0;}
+      gap:12px !important;align-items:stretch;padding:16px !important;}
+    /* Each cell is a column with its control pinned to the bottom. Without
+       this, a label that wraps onto two lines ("Filter tanggal pakai") pushes
+       its input down while the one-line label beside it ("Dari") does not, and
+       the two fields in a row sit at visibly different heights. */
+    .admin-main form.card[style*="display:flex"] > div{
+      margin:0 !important;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;}
+    .admin-main form.card[style*="display:flex"] > div > label{margin-bottom:6px !important;}
     /* The one that grows on desktop is the free-text search — full width. */
     .admin-main form.card[style*="display:flex"] > div[style*="flex:1 1"]{grid-column:1 / -1;}
     .admin-main form.card[style*="display:flex"] > label{grid-column:1 / -1;margin:0 !important;}
     .admin-main form.card[style*="display:flex"] > button,
     .admin-main form.card[style*="display:flex"] > a{
       width:100%;text-align:center;justify-content:center;margin:0;}
-    /* Every control the same height so the grid rows line up. */
+    /* Every control the same height so the grid rows line up — a date field
+       carries a min-height for its icon, so a select beside it has to match
+       or the two sit a few pixels out. */
     .admin-main form.card input,
-    .admin-main form.card select{width:100%;padding:11px 12px !important;}
+    .admin-main form.card select,
+    .admin-main form.card button,
+    .admin-main form.card > a{width:100%;min-height:46px;padding:11px 12px !important;}
+    .admin-main form.card select{padding-right:38px !important;}
+    /* Two date fields side by side in a 390px-wide grid leave ~105px for the
+       value. At the default padding the year gets clipped ("14/08/20"), so
+       the date field trims its own padding and icon rather than the date. */
+    .admin-main form.card input[type="date"]{
+      padding-left:10px !important;padding-right:32px !important;font-size:15px !important;
+      background-position:right 8px center;background-size:16px 16px;}
+    .admin-main form.card > a{display:inline-flex;align-items:center;}
+    /* A checkbox is not a full-width control. */
+    .admin-main form.card input[type="checkbox"]{width:19px;min-height:19px;height:19px;padding:0 !important;}
+    .admin-main form.card > label{display:flex;align-items:center;gap:9px;}
     /* Stat grids read better as two columns than four squeezed ones. */
     .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
     /* Phone type scale. Every inline <p> size in the admin views is 13.5px or
@@ -556,10 +577,16 @@ const SHARED_STYLE = `
       scrollbar-width:none;-ms-overflow-style:none;}
     .admin-main .card:has(> .chip)::-webkit-scrollbar{display:none;}
     .admin-main .card > .chip{flex-shrink:0;}
-    .admin-main > div:has(> .chip){flex-wrap:nowrap;overflow-x:auto;
+    /* !important because these rows carry flex-wrap:wrap as an inline style,
+       which otherwise wins and leaves the presets stacked three rows deep. */
+    .admin-main > div:has(> .chip){flex-wrap:nowrap !important;overflow-x:auto;
       scrollbar-width:none;-ms-overflow-style:none;padding-bottom:4px;}
     .admin-main > div:has(> .chip)::-webkit-scrollbar{display:none;}
     .admin-main > div > .chip{flex-shrink:0;}
+    /* Stat cards: the uppercase caption wraps to two lines on some cards and
+       one on others, which knocked every figure in the row out of line. Give
+       the caption a two-line floor so the numbers sit on the same baseline. */
+    .admin-main .grid-4 > .card > div:first-child{min-height:2.6em;}
   }
   @media (max-width: 380px){
     .admin-main .grid-4{grid-template-columns:1fr;}

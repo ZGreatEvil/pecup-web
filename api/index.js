@@ -2083,7 +2083,15 @@ function extractPgErrorMessage(err) {
 }
 
 function sendHtml(res, html, status = 200) {
-  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+  // Every page carries its stylesheet inline, so a cached page is a cached
+  // stylesheet: after a deploy the phone can keep rendering the old layout
+  // until its cache happens to expire. These pages are cheap to generate and
+  // half of them are personalised (cart, account, admin) — none of them
+  // should ever be reused from a cache, shared or private.
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+  });
   res.end(html);
 }
 
