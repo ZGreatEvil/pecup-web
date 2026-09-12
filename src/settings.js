@@ -2,6 +2,12 @@
 // redeploy (see the `settings` table in schema.sql).
 const db = require('./db');
 
+// 'HH:MM' right now in Jakarta. Fixed +7 offset — Indonesia has no DST, so
+// this is exact rather than an approximation.
+function nowWIB(at = new Date()) {
+  return new Date(at.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(11, 16);
+}
+
 const DEFAULTS = {
   stamps_per_reward: '10',
   // Operational settings a shop actually needs day to day: closing for a
@@ -16,6 +22,10 @@ const DEFAULTS = {
   delivery_fee: '0',
   free_delivery_over: '0', // 0 = never free
   same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
+  // Opening hours in WIB. Outside them the shop is closed automatically, the
+  // same as flipping the switch off. Empty = no hour limit.
+  open_time: '',
+  close_time: '',
   // Data retention (see src/retention.js). Orders are never deleted; these
   // only govern payment-proof files and the activity log. 0 = keep forever.
   retention_proof_days: '90',
@@ -32,9 +42,31 @@ async function shopConfig() {
     const n = Number(all[key]);
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
   };
-  const cutoff = /^\d{2}:\d{2}$/.test(all.same_day_cutoff || '') ? all.same_day_cutoff : '';
+  const time = (key) => (/^\d{2}:\d{2}$/.test(all[key] || '') ? all[key] : '');
+  const cutoff = time('same_day_cutoff');
+  const openTime = time('open_time');
+  const closeTime = time('close_time');
+
+  // "Open" is the switch AND the clock. Both are checked here, once, so every
+  // surface (banner, cart, checkout, the order insert) agrees.
+  const switchedOn = all.shop_open !== '0';
+  const nowHM = nowWIB();
+  let withinHours = true;
+  if (openTime && closeTime) {
+    // A window that ends before it starts runs past midnight (e.g. 18:00-02:00).
+    withinHours = closeTime > openTime
+      ? nowHM >= openTime && nowHM < closeTime
+      : nowHM >= openTime || nowHM < closeTime;
+  } else if (openTime) withinHours = nowHM >= openTime;
+  else if (closeTime) withinHours = nowHM < closeTime;
+
   return {
-    open: all.shop_open !== '0',
+    open: switchedOn && withinHours,
+    switchedOn,
+    withinHours,
+    openTime,
+    closeTime,
+    hoursLabel: openTime && closeTime ? `${openTime}-${closeTime} WIB` : '',
     notice: all.shop_notice || '',
     whatsapp: all.shop_whatsapp || '',
     minOrder: num('min_order'),
@@ -85,4 +117,4 @@ async function setValue(key, value) {
   cache = null;
 }
 
-module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor };
+module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor, nowWIB };

@@ -365,20 +365,21 @@ const SHARED_STYLE = `
   .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
   /* Mobile-only bar carrying the brand and the hamburger. Hidden on desktop,
      where the full rail is always visible. */
+  /* Fixed height (not padding-driven) so the drawer below can be positioned
+     against it exactly, with no guessing and no seam. */
   .admin-topbar{display:none;flex:0 0 100%;align-items:center;justify-content:space-between;gap:12px;
-    background:var(--sidebar);padding:12px 16px;position:sticky;top:0;z-index:60;}
+    background:var(--sidebar);padding:0 14px;height:var(--topbar-h);position:sticky;top:0;z-index:75;}
   .admin-nav-toggle{position:absolute;opacity:0;pointer-events:none;width:0;height:0;}
+  :root{--topbar-h:58px;}
   .admin-burger{display:inline-flex;align-items:center;gap:9px;margin:0;cursor:pointer;color:#fff;
     font-size:13px;font-weight:700;border:1px solid oklch(40% 0.03 255);border-radius:10px;padding:8px 13px;
     background:oklch(30% 0.03 255);transition:background 0.16s ease;}
   .admin-burger:hover{background:oklch(36% 0.03 255);}
   .admin-burger:active{transform:scale(0.97);}
   .admin-burger .burger-close{display:none;}
-  /* Desktop keeps the rail in the flow; the scrim and the drawer's close
-     button only exist for the phone drawer, where the media query turns
-     them on. */
+  /* Desktop keeps the rail in the flow; the scrim only exists for the phone
+     drawer, where the media query turns it on. */
   .admin-scrim{display:none;}
-  .drawer-close{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-open{display:none;}
   .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-close{display:inline;}
   table.admin-table{width:100%;border-collapse:collapse;}
@@ -485,32 +486,30 @@ const SHARED_STYLE = `
        A transform transition rather than a keyframe animation: the keyframe
        replayed whenever the element was re-shown, which is what made the
        menu look like it animated twice. */
+    /* The panel hangs off the Menu button: pinned to the right edge, starting
+       directly below the bar, and growing out of its top-right corner. The
+       button stays visible and flips to "Tutup", so the thing you tapped is
+       also the thing that closes it. */
     .admin-sidebar{
-      /* Anchored to the right, because that's the side the Menu button is on.
-         A drawer that flies in from the opposite edge to the control that
-         opened it reads as two unrelated things happening. */
-      position:fixed;top:0;right:0;bottom:0;left:auto;z-index:70;
-      width:min(290px, 84vw);flex:0 0 auto;min-height:0;height:100%;
-      padding:18px 14px;overflow-y:auto;-webkit-overflow-scrolling:touch;
-      transform:translateX(100%);box-shadow:0 0 40px rgba(0,0,0,0.4);
-      /* visibility, delayed until the slide-out finishes, keeps a closed
-         drawer out of the tab order instead of leaving focusable links
-         parked off-screen. */
+      position:fixed;top:var(--topbar-h);right:0;bottom:0;left:auto;z-index:70;
+      width:min(290px, 86vw);flex:0 0 auto;min-height:0;height:auto;
+      padding:14px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+      border-bottom-left-radius:18px;box-shadow:-14px 18px 44px rgba(0,0,0,0.45);
+      transform-origin:top right;
+      transform:translateY(-10px) scale(0.94);opacity:0;
+      /* visibility, delayed until the close finishes, keeps a shut drawer out
+         of the tab order instead of leaving focusable links parked off-screen. */
       visibility:hidden;
-      transition:transform 0.24s cubic-bezier(0.2,0.7,0.3,1), visibility 0s linear 0.24s;}
+      transition:transform 0.2s cubic-bezier(0.2,0.7,0.3,1), opacity 0.2s ease, visibility 0s linear 0.2s;}
     .admin-nav-toggle:checked ~ .admin-sidebar{
-      transform:none;visibility:visible;
-      transition:transform 0.24s cubic-bezier(0.2,0.7,0.3,1), visibility 0s;}
+      transform:none;opacity:1;visibility:visible;
+      transition:transform 0.2s cubic-bezier(0.2,0.7,0.3,1), opacity 0.16s ease, visibility 0s;}
     /* Tapping the dimmed page closes the drawer — it's a <label> for the same
        checkbox, so this works without any JavaScript. */
-    .admin-scrim{display:block;position:fixed;inset:0;z-index:65;background:rgba(0,0,0,0.45);
+    .admin-scrim{display:block;position:fixed;left:0;right:0;bottom:0;top:var(--topbar-h);z-index:65;background:rgba(0,0,0,0.45);
       opacity:0;pointer-events:none;transition:opacity 0.24s ease;}
     .admin-nav-toggle:checked ~ .admin-scrim{opacity:1;pointer-events:auto;}
-    .admin-sidebar .admin-sidebar-brand{display:flex !important;margin-bottom:22px;}
-    .drawer-close{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;
-      width:36px;height:36px;border-radius:10px;cursor:pointer;color:#fff;flex-shrink:0;
-      background:oklch(30% 0.03 255);border:1px solid oklch(40% 0.03 255);}
-    .drawer-close:active{transform:scale(0.94);}
+    .admin-sidebar .admin-sidebar-brand{display:none !important;}
     .admin-main{padding:24px 20px;}
     /* Filter bars are built as flex rows with fixed pixel bases for desktop.
        On a phone those bases fight each other, so the bar becomes a two-column
@@ -1129,6 +1128,62 @@ const CART_SCRIPT = `
   });
 })();
 
+// Warns before leaving a form with edits that were never saved.
+//
+// Admin settings, product forms and the tier editor all only persist on a
+// button press, and the back button (or a nav link) silently discarded
+// everything typed. This watches any form carrying data-warn-unsaved, marks it
+// dirty on first change, and clears the mark once it's submitted.
+(function(){
+  var dirty = null;
+
+  function forms(){ return document.querySelectorAll('form[data-warn-unsaved]'); }
+
+  document.addEventListener('input', function(e){
+    var form = e.target.closest && e.target.closest('form[data-warn-unsaved]');
+    if(form) dirty = form;
+  }, true);
+  document.addEventListener('change', function(e){
+    var form = e.target.closest && e.target.closest('form[data-warn-unsaved]');
+    if(form) dirty = form;
+  }, true);
+
+  // Submitting is saving — stop warning about it.
+  document.addEventListener('submit', function(e){
+    if(e.target === dirty) dirty = null;
+  }, true);
+
+  // Covers the browser back button, tab close and reload. The message itself
+  // is the browser's own; the string is ignored by every modern browser.
+  window.addEventListener('beforeunload', function(e){
+    if(!dirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  });
+
+  // In-page links don't fire beforeunload consistently on mobile, so they get
+  // their own confirm — worded in Indonesian, unlike the browser's dialog.
+  document.addEventListener('click', function(e){
+    if(!dirty) return;
+    var link = e.target.closest && e.target.closest('a[href]');
+    if(!link) return;
+    var href = link.getAttribute('href') || '';
+    if(!href || href.charAt(0) === '#' || link.target === '_blank') return;
+    if(link.closest('form[data-warn-unsaved]') === dirty) return;
+    if(!window.confirm('Ada perubahan yang belum disimpan. Tinggalkan halaman ini dan buang perubahannya?')){
+      e.preventDefault();
+      e.stopPropagation();
+    } else {
+      dirty = null;
+    }
+  }, true);
+
+  // A form that arrives already-focused shouldn't count as dirty.
+  window.addEventListener('pageshow', function(){ dirty = null; });
+  if(!forms().length) dirty = null;
+})();
+
 // Tapping anywhere on a date field opens the picker, not just the small icon.
 // On a phone the icon is a ~20px target inside a full-width field; making the
 // whole field the target is the difference between "this is a date" and
@@ -1223,12 +1278,6 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     <div class="admin-sidebar-brand" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
-      <!-- Open, the drawer covers the Menu button that opened it, so it
-           carries its own close control rather than leaving the dimmed
-           backdrop as the only way out. Phone-only (see .drawer-close). -->
-      <label class="drawer-close" for="adminNavToggle" aria-label="Tutup menu">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </label>
     </div>
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin', 'dashboard', 'Ringkasan', '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>')}

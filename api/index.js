@@ -23,11 +23,12 @@ const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const passwordReset = require('../src/passwordReset');
 const retention = require('../src/retention');
-const { logAdminAction, queryAdminLogs, listLogFilters } = require('../src/adminLog');
+const { logAdminAction, queryAdminLogs, queryAllAdminLogs, listLogFilters } = require('../src/adminLog');
 const queries = require('../src/queries');
 const {
   toDateKey,
   toDateOnly,
+  formatTimeID,
   csvEscape,
   formatRupiah,
   normalizeWhatsapp,
@@ -237,7 +238,13 @@ router.get('/keranjang', async (req, res) => {
   const { items, subtotal } = await cartLib.buildCartItems(req.cart);
   sendHtml(
     res,
-    shopViews.renderKeranjang({ items, subtotal, cartCount: cartLib.cartCount(req.cart), customer: req.customer })
+    shopViews.renderKeranjang({
+      items,
+      subtotal,
+      cartCount: cartLib.cartCount(req.cart),
+      customer: req.customer,
+      shop: await settings.shopConfig(),
+    })
   );
 });
 
@@ -1290,8 +1297,11 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
   const { fields } = await parseBody(req);
   const num = (value) => Math.max(0, Math.round(Number(value) || 0));
   const cutoff = (fields.sameDayCutoff || '').trim();
-  if (cutoff && !/^\d{2}:\d{2}$/.test(cutoff)) {
-    return redirect(res, '/admin/pengaturan?error=' + encodeURIComponent('Format jam tutup tidak valid.'));
+  const openTime = (fields.openTime || '').trim();
+  const closeTime = (fields.closeTime || '').trim();
+  const validTime = (value) => !value || /^\d{2}:\d{2}$/.test(value);
+  if (!validTime(cutoff) || !validTime(openTime) || !validTime(closeTime)) {
+    return redirect(res, '/admin/pengaturan?error=' + encodeURIComponent('Format jam tidak valid.'));
   }
 
   await Promise.all([
@@ -1302,6 +1312,8 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     settings.setValue('delivery_fee', num(fields.deliveryFee)),
     settings.setValue('free_delivery_over', num(fields.freeDeliveryOver)),
     settings.setValue('same_day_cutoff', cutoff),
+    settings.setValue('open_time', openTime),
+    settings.setValue('close_time', closeTime),
     // 0 is meaningful here (keep forever), so these are clamped rather than
     // coerced through the falsy-to-default path the money fields use.
     settings.setValue('retention_proof_days', Math.min(3650, num(fields.retentionProofDays))),
@@ -1813,6 +1825,44 @@ router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
 // admin: activity log (superadmin only)
 // ---------------------------------------------------------------------
 
+// CSV of the activity log, honouring whatever filters are on screen — the
+// export follows the filters, not just the visible page.
+router.get('/admin/log-aktivitas/export', requireSuperadmin(async (req, res, { query }) => {
+  const dari = query.get('dari') || '';
+  const sampai = query.get('sampai') || '';
+  const logs = await queryAllAdminLogs({
+    sort: query.get('urut') === 'asc' ? 'asc' : 'desc',
+    username: query.get('admin') || '',
+    action: query.get('aksi') || '',
+    from: dari,
+    to: sampai,
+  });
+
+  const header = ['Tanggal (WIB)', 'Jam (WIB)', 'Admin', 'Aksi', 'Detail'];
+  const lines = [header.map(csvEscape).join(',')];
+  for (const row of logs) {
+    lines.push(
+      [
+        toDateOnly(row.created_at),
+        formatTimeID(row.created_at),
+        row.admin_username || '',
+        row.action || '',
+        row.detail || '',
+      ]
+        .map(csvEscape)
+        .join(',')
+    );
+  }
+  // UTF-8 BOM so Excel on Windows renders Indonesian text correctly.
+  const csv = '﻿' + lines.join('\r\n');
+  const label = dari || sampai ? `${dari || 'awal'}_sampai_${sampai || 'sekarang'}` : 'semua';
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="log-aktivitas-pecup-${label}.csv"`,
+  });
+  res.end(csv);
+}));
+
 router.get('/admin/log-aktivitas', requireSuperadmin(async (req, res, { query }) => {
   const filters = {
     dari: query.get('dari') || '',
@@ -2129,7 +2179,15 @@ function extractPgErrorMessage(err) {
 }
 
 function sendHtml(res, html, status = 200) {
-  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+  // Every page carries its stylesheet inline, so a cached page is a cached
+  // stylesheet: after a deploy a phone can keep rendering the old layout until
+  // its cache happens to turn over. These pages are cheap to generate and half
+  // of them are personalised (cart, account, admin) — none should ever be
+  // reused from a cache, shared or private.
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+  });
   res.end(html);
 }
 

@@ -355,9 +355,14 @@ function photoReorder(photos) {
          and the green frame follow the order instead of being baked in. */
       .foto-tile:first-child .foto-utama{display:block;}
       .foto-tile:first-child .foto-frame{border:2px solid var(--green);}
-      .foto-grip{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:6px;
-        background:rgba(255,255,255,0.9);color:#5a5a60;display:flex;align-items:center;justify-content:center;
-        box-shadow:0 1px 4px rgba(0,0,0,0.18);}
+      .foto-grip{position:absolute;top:4px;right:4px;width:30px;height:30px;border-radius:8px;
+        background:rgba(255,255,255,0.92);color:#3a3a40;display:flex;align-items:center;justify-content:center;
+        box-shadow:0 1px 4px rgba(0,0,0,0.18);cursor:grab;
+        /* The browser must not claim the gesture for scrolling, or a touch
+           drag turns into a page scroll and the tile never moves. */
+        touch-action:none;}
+      .foto-grip:active{cursor:grabbing;}
+      @media (max-width: 560px){ .foto-grip{width:34px;height:34px;} }
       /* The tile being carried. */
       .foto-tile.is-dragging{opacity:0.4;transform:scale(0.96);}
       /* Where it would land. */
@@ -371,7 +376,8 @@ function photoReorder(photos) {
     </style>
     <div class="foto-grid" id="fotoGaleri" role="list">${tiles}</div>
     <p style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin:0 0 14px;">
-      Seret foto untuk mengurutkan. Bisa juga pilih foto lalu tekan tombol panah &larr; &rarr; di keyboard.
+      Seret foto untuk mengurutkan — di HP, tahan ikon titik-titik di pojok foto lalu geser.
+      Bisa juga pilih foto lalu tekan tombol panah &larr; &rarr; di keyboard. Foto pertama jadi foto utama.
     </p>
     <script>
     (function(){
@@ -414,6 +420,51 @@ function photoReorder(photos) {
       });
 
       grid.addEventListener('drop', function(e){ e.preventDefault(); clearOver(); });
+
+      // ---- touch / pen dragging ------------------------------------------
+      // HTML5 drag-and-drop (the handlers above) never fires on a touch
+      // screen, so phones got a gallery that looked draggable and wasn't.
+      // Pointer events cover mouse, pen and touch uniformly; the grip is the
+      // handle so a normal swipe still scrolls the page.
+      var touchTile = null;
+
+      function tileFromPoint(x, y){
+        var el = document.elementFromPoint(x, y);
+        return el && el.closest ? el.closest('.foto-tile') : null;
+      }
+
+      grid.addEventListener('pointerdown', function(e){
+        if(e.pointerType === 'mouse') return;      // mouse keeps native DnD
+        var grip = e.target.closest('.foto-grip');
+        if(!grip) return;
+        touchTile = grip.closest('.foto-tile');
+        if(!touchTile) return;
+        e.preventDefault();
+        touchTile.classList.add('is-dragging');
+        // Keep receiving moves even when the finger leaves the grip.
+        try{ grip.setPointerCapture(e.pointerId); }catch(err){}
+      });
+
+      grid.addEventListener('pointermove', function(e){
+        if(!touchTile) return;
+        e.preventDefault();
+        var over = tileFromPoint(e.clientX, e.clientY);
+        if(!over || over === touchTile) return;
+        clearOver();
+        over.classList.add('is-over');
+        var box = over.getBoundingClientRect();
+        var after = (e.clientX - box.left) > box.width / 2;
+        grid.insertBefore(touchTile, after ? over.nextSibling : over);
+      });
+
+      function endTouchDrag(){
+        if(!touchTile) return;
+        touchTile.classList.remove('is-dragging');
+        touchTile = null;
+        clearOver();
+      }
+      grid.addEventListener('pointerup', endTouchDrag);
+      grid.addEventListener('pointercancel', endTouchDrag);
 
       // Keyboard equivalent, so reordering doesn't require a mouse.
       grid.addEventListener('keydown', function(e){
@@ -460,7 +511,7 @@ function renderProdukForm({ product, error, categories = [], admin }) {
   ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
-    <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data" style="margin-top:20px;">
+    <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data" data-warn-unsaved style="margin-top:20px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px;">
         <div>
           <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Produk / ${isEdit ? 'Edit' : 'Tambah Baru'}</div>
@@ -1399,7 +1450,7 @@ function renderPelangganDetail({
             ? `<div class="card" style="padding:22px;">
           <h3 style="font-size:15px;font-weight:800;margin-bottom:4px;">Ubah Data Pelanggan</h3>
           <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Nomor WhatsApp juga dipakai sebagai username untuk masuk, jadi mengubahnya ikut mengubah cara pelanggan login.</p>
-          <form method="post" action="/admin/pelanggan/${customer.id}/ubah">
+          <form method="post" action="/admin/pelanggan/${customer.id}/ubah" data-warn-unsaved>
             <div class="field" style="margin-bottom:14px;">
               <label>Nama lengkap <span class="req">*</span></label>
               <input type="text" name="name" value="${escapeAttr(customer.name)}" required style="padding:10px 12px;">
@@ -1658,7 +1709,7 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
       ${statCard('Stempel Aktif', stats.activeStamps, 'oklch(93% 0.05 245)', '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', '#1f5aa1')}
     </div>
 
-    <form method="post" action="/admin/pengaturan/stempel" class="card" style="padding:22px;margin-bottom:20px;">
+    <form method="post" action="/admin/pengaturan/stempel" class="card" data-warn-unsaved style="padding:22px;margin-bottom:20px;">
       <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Aturan Stempel</h2>
       <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Satu stempel diberikan tiap pesanan berstatus <strong>Selesai</strong>.</p>
       <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
@@ -1675,7 +1726,7 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
       <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin:14px 0 0;">Masa berlaku dihitung sejak stempel <strong>pertama</strong> di kartu berjalan — lewat itu seluruh kartu hangus dan mulai lagi dari nol. Cup yang digratiskan selalu cup <strong>termurah</strong> di pesanan tersebut.</p>
     </form>
 
-    <form method="post" action="/admin/pengaturan/tier" class="card" style="padding:22px;">
+    <form method="post" action="/admin/pengaturan/tier" class="card" data-warn-unsaved style="padding:22px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;">
         <h2 style="font-size:16px;font-weight:800;">Membership Tier</h2>
         <label style="display:flex;align-items:center;gap:9px;margin:0;font-size:13.5px;font-weight:700;">
@@ -2072,7 +2123,7 @@ function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { 
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
 
-    <form method="post" action="/admin/pengaturan/toko">
+    <form method="post" action="/admin/pengaturan/toko" data-warn-unsaved>
       <div class="card" style="margin-bottom:20px;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
           <div style="flex:1 1 300px;">
@@ -2122,10 +2173,33 @@ function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { 
       </div>
 
       <div class="card" style="margin-bottom:24px;">
-        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Batas Pesan Hari Ini</h2>
-        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">Setelah jam ini, pembeli tidak bisa lagi memilih tanggal antar hari ini — hanya besok atau setelahnya. Kosongkan kalau tidak ada batas.</p>
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Jam Operasional</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">
+          Di luar jam ini toko otomatis tutup — sama seperti mematikan tombol &ldquo;Toko buka&rdquo; di atas: menu tetap
+          bisa dilihat, tapi checkout ditutup. Kosongkan keduanya kalau tidak mau dibatasi jam.
+          ${
+            shop.hoursLabel
+              ? `<br><strong>Sekarang: ${shop.withinHours ? 'dalam jam buka' : 'di luar jam buka'} (${escapeHtml(shop.hoursLabel)}).</strong>`
+              : ''
+          }
+        </p>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 180px;margin-bottom:0;">
+            <label>Jam buka (WIB)</label>
+            <input type="time" name="openTime" value="${escapeAttr(shop.openTime || '')}">
+          </div>
+          <div class="field" style="flex:1 1 180px;margin-bottom:0;">
+            <label>Jam tutup (WIB)</label>
+            <input type="time" name="closeTime" value="${escapeAttr(shop.closeTime || '')}">
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Batas Pesan untuk Diantar Hari Ini</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">Beda dengan jam operasional di atas: toko tetap buka, tapi setelah jam ini pembeli tidak bisa lagi memilih tanggal antar <strong>hari ini</strong> — hanya besok atau setelahnya. Kosongkan kalau tidak ada batas.</p>
         <div class="field" style="max-width:200px;margin-bottom:0;">
-          <label>Jam tutup pesanan (WIB)</label>
+          <label>Batas pesan hari ini (WIB)</label>
           <input type="time" name="sameDayCutoff" value="${escapeAttr(shop.sameDayCutoff || '')}">
         </div>
       </div>
@@ -2380,8 +2454,23 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
   ${adminSidebar('log', { isSuperadmin: true, username: admin.username })}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
-    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Log Aktivitas</div>
-    <h1 style="font-size:24px;font-weight:800;margin-bottom:20px;">Log Aktivitas</h1>
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:20px;margin-top:20px;">
+      <div>
+        <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Log Aktivitas</div>
+        <h1 style="font-size:24px;font-weight:800;">Log Aktivitas</h1>
+      </div>
+      <a class="btn-primary" href="/admin/log-aktivitas/export?${new URLSearchParams({
+        dari: filters.dari || '',
+        sampai: filters.sampai || '',
+        admin: filters.admin || '',
+        aksi: filters.aksi || '',
+        urut: sort === 'asc' ? 'asc' : 'desc',
+      }).toString()}"
+         style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        Unduh CSV
+      </a>
+    </div>
 
     <form method="get" action="/admin/log-aktivitas" class="card" style="padding:18px 20px;margin-bottom:20px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
       <div style="margin:0;flex:0 1 150px;">
@@ -2440,6 +2529,7 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
       head: ['AKSI', 'WAKTU (WIB)', 'ADMIN', 'DETAIL'],
       rows,
       empty: 'Tidak ada aktivitas yang cocok dengan filter ini.',
+      note: 'Unduh CSV mengikuti filter yang sedang aktif — seluruh baris yang cocok, bukan cuma halaman ini.',
     })}
     ${pager(filters, current, totalPages)}
   </main>

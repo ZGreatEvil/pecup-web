@@ -17,15 +17,10 @@ async function logAdminAction(admin, action, detail) {
 // Paged + filtered view for the Log Aktivitas page. Date bounds are WIB
 // calendar days ('YYYY-MM-DD' from the date pickers), converted to an
 // instant range so they line up with what the timestamps display as.
-async function queryAdminLogs({
-  page = 1,
-  perPage = 25,
-  sort = 'desc',
-  username = '',
-  action = '',
-  from = '',
-  to = '',
-} = {}) {
+// One filter builder for both the paged table and the CSV export, so a
+// download can never contain a different set of rows than the screen it was
+// started from.
+function logFilterSql({ username = '', action = '', from = '', to = '' } = {}) {
   const where = [];
   const params = [];
 
@@ -45,8 +40,19 @@ async function queryAdminLogs({
     params.push(`${to} 23:59:59.999+07`);
     where.push(`created_at <= $${params.length}::timestamptz`);
   }
+  return { whereSql: where.length ? `where ${where.join(' and ')}` : '', params };
+}
 
-  const whereSql = where.length ? `where ${where.join(' and ')}` : '';
+async function queryAdminLogs({
+  page = 1,
+  perPage = 25,
+  sort = 'desc',
+  username = '',
+  action = '',
+  from = '',
+  to = '',
+} = {}) {
+  const { whereSql, params } = logFilterSql({ username, action, from, to });
   const direction = sort === 'asc' ? 'asc' : 'desc';
   const safePerPage = Math.min(Math.max(Number(perPage) || 25, 5), 100);
 
@@ -77,4 +83,15 @@ async function listLogFilters() {
   };
 }
 
-module.exports = { logAdminAction, queryAdminLogs, listLogFilters };
+// Every matching row, for the CSV export — not just the page on screen.
+// Capped so a runaway export can't exhaust the function's memory.
+async function queryAllAdminLogs({ sort = 'desc', username = '', action = '', from = '', to = '', limit = 20000 } = {}) {
+  const { whereSql, params } = logFilterSql({ username, action, from, to });
+  const direction = sort === 'asc' ? 'asc' : 'desc';
+  return db.query(
+    `select * from admin_logs ${whereSql} order by created_at ${direction}, id ${direction} limit $${params.length + 1}`,
+    [...params, Math.min(Math.max(Number(limit) || 20000, 1), 50000)]
+  );
+}
+
+module.exports = { logAdminAction, queryAdminLogs, queryAllAdminLogs, listLogFilters };

@@ -65,11 +65,29 @@ function qtyControl({ key, productId, stock, qty }) {
 
 // Site-wide banner: "closed today", a holiday note, or a minimum-order
 // reminder. Rendered above everything so it can't be missed.
+// "Closed" has to be impossible to miss: a thin tinted strip read as
+// decoration, and shoppers filled a whole checkout form before the server
+// turned them away. This is a full-width red board with an icon, a heading,
+// and — when the shop is merely outside its hours — when it opens again.
+function closedReason(shop) {
+  if (shop.notice) return shop.notice;
+  if (!shop.switchedOn) return 'Kami sedang tidak menerima pesanan. Sampai jumpa lagi nanti!';
+  if (shop.hoursLabel) return `Pecup buka setiap hari pukul ${shop.hoursLabel}. Pesanan dibuka lagi jam ${shop.openTime}.`;
+  if (shop.openTime) return `Pesanan dibuka mulai pukul ${shop.openTime} WIB.`;
+  if (shop.closeTime) return `Pesanan ditutup setiap hari pukul ${shop.closeTime} WIB.`;
+  return 'Kami sedang tidak menerima pesanan. Sampai jumpa lagi nanti!';
+}
+
 function shopBanner(shop) {
   if (!shop) return '';
   if (!shop.open) {
-    return `<div style="background:#f6dcdc;color:#a13f3f;padding:14px 20px;text-align:center;font-size:13.5px;font-weight:700;line-height:1.6;">
-      ${escapeHtml(shop.notice || 'Pecup sedang tutup dan belum menerima pesanan. Sampai jumpa lagi nanti!')}
+    return `<div style="background:#a13f3f;color:#fff;padding:18px 20px;text-align:center;line-height:1.6;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span style="font-size:17px;font-weight:800;letter-spacing:-0.2px;">Toko Sedang Tutup</span>
+      </div>
+      <div style="font-size:13.5px;margin-top:6px;opacity:0.95;">${escapeHtml(closedReason(shop))}</div>
+      <div style="font-size:12.5px;margin-top:8px;opacity:0.85;">Kamu masih bisa lihat-lihat menu dan isi keranjang — pesanannya dikirim saat toko buka lagi.</div>
     </div>`;
   }
   if (shop.notice) {
@@ -444,7 +462,7 @@ function stepHeader(activeIndex) {
   return html;
 }
 
-function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
+function renderKeranjang({ items, subtotal, cartCount, customer = null, shop = null }) {
   const rows = items.length
     ? items
         .map(
@@ -495,6 +513,7 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
 
   const body = `
 <div class="frame-scroll"><div class="frame">
+  ${shopBanner(shop)}
   ${customerHeader(cartCount, stepHeader(1), customer)}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
     ${backButton('/', 'Lanjut Belanja')}
@@ -510,7 +529,14 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
         <h3 style="font-size:18px;font-weight:800;margin-bottom:22px;">Ringkasan Pesanan</h3>
         <div style="display:flex;justify-content:space-between;font-size:14.5px;color:var(--text-muted);margin-bottom:12px;"><span>Subtotal</span><span style="color:var(--text);font-weight:600;" data-cart-subtotal>${formatRupiah(subtotal)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:16px;border-top:1px solid var(--border);margin-bottom:24px;"><span>Total</span><span style="color:var(--green-dark);" data-cart-total>${formatRupiah(subtotal)}</span></div>
-        <a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>
+        ${
+          shop && !shop.open
+            ? `<div style="background:#f6dcdc;color:#a13f3f;border-radius:12px;padding:14px 16px;font-size:13px;font-weight:700;line-height:1.6;text-align:center;">
+                Toko sedang tutup, jadi pesanan belum bisa dikirim.<br>
+                <span style="font-weight:600;">Keranjangmu tersimpan — tinggal checkout saat buka lagi.</span>
+              </div>`
+            : `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
+        }
       </div>
     </div>`
         : emptyCart
@@ -593,8 +619,39 @@ function renderCheckout({
     : '';
   const todayKey = toDateKey(new Date());
 
+  // A closed shop gets a wall, not a form. The server already refuses the
+  // order, but letting someone fill in their details, upload a transfer proof
+  // and press send — only to be told the shop is shut — is the wrong place to
+  // find out.
+  if (shop && !shop.open) {
+    const closedBody = `
+<div class="frame-scroll"><div class="frame">
+  ${shopBanner(shop)}
+  ${customerHeader(cartCount, stepHeader(2), customer)}
+  <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
+    ${backButton('/keranjang', 'Kembali ke Keranjang')}
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:10px;margin-top:20px;">Checkout Pesanan</h1>
+    <div class="card" style="margin-top:20px;text-align:center;padding:44px 24px;display:flex;flex-direction:column;align-items:center;gap:16px;">
+      <div style="width:84px;height:84px;border-radius:50%;background:#f6dcdc;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#a13f3f" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </div>
+      <h2 style="font-size:20px;font-weight:800;">Pesanan belum bisa dikirim</h2>
+      <p style="font-size:14px;color:var(--text-muted);line-height:1.75;max-width:380px;margin:0;">${escapeHtml(closedReason(shop))}</p>
+      <p style="font-size:13.5px;color:var(--green-dark);font-weight:700;margin:0;">Keranjangmu tetap tersimpan — tinggal lanjut checkout begitu toko buka.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
+        <a href="/keranjang" class="btn-outline" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;">Lihat Keranjang</a>
+        <a href="/#menu" class="btn-primary" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;">Lihat Menu</a>
+      </div>
+    </div>
+  </section>
+  ${customerFooter()}
+</div></div>`;
+    return page({ title: 'Toko Tutup — Pecup', bodyHtml: closedBody, noindex: true });
+  }
+
   const body = `
 <div class="frame-scroll"><div class="frame">
+  ${shopBanner(shop)}
   ${customerHeader(cartCount, stepHeader(2), customer)}
   <section class="px-page" style="padding-top:48px;padding-bottom:100px;">
     ${backButton('/keranjang', 'Kembali ke Keranjang')}
