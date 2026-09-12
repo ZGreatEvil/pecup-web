@@ -40,14 +40,51 @@ async function ensureBootstrapAdmin() {
   ]);
 }
 
+// Simple in-memory brute-force brake. A serverless instance is short-lived so
+// this isn't airtight across the fleet, but it does stop the common case: a
+// script hammering one warm instance with a password list. Deliberately keyed
+// on username, not IP, so one targeted account can't be ground down.
+const FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILURES = 8;
+const failures = new Map();
+
+function failureState(username) {
+  const key = String(username || '').toLowerCase();
+  const entry = failures.get(key);
+  if (!entry || Date.now() - entry.first > FAILURE_WINDOW_MS) return { key, count: 0 };
+  return { key, count: entry.count };
+}
+
+function recordFailure(key) {
+  const entry = failures.get(key);
+  if (!entry || Date.now() - entry.first > FAILURE_WINDOW_MS) {
+    failures.set(key, { count: 1, first: Date.now() });
+  } else {
+    entry.count += 1;
+  }
+  // Keep the map from growing without bound on a long-lived instance.
+  if (failures.size > 500) {
+    for (const [k, v] of failures) {
+      if (Date.now() - v.first > FAILURE_WINDOW_MS) failures.delete(k);
+    }
+  }
+}
+
 async function checkCredentials(username, password) {
   if (!username || !password) return null;
   await ensureBootstrapAdmin();
 
+  const state = failureState(username);
+  if (state.count >= MAX_FAILURES) return { lockedOut: true };
+
   const rows = await db.query('select * from admins where username = $1', [username]);
   const admin = rows[0];
-  if (!admin) return null;
-  if (!verifyPassword(password, admin.password_hash)) return null;
+  if (!admin || !verifyPassword(password, admin.password_hash)) {
+    recordFailure(state.key);
+    return null;
+  }
+
+  failures.delete(state.key);
   return { id: Number(admin.id), username: admin.username, role: admin.role };
 }
 

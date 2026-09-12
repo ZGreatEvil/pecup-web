@@ -32,7 +32,35 @@ function renderLogin({ error }) {
     </form>
   </div>
 </div>`;
-  return page({ title: 'Masuk Admin — Pecup', bodyHtml: body });
+  return page({ title: 'Masuk Admin — Pecup', bodyHtml: body, noindex: true });
+}
+
+// ---- responsive admin table -------------------------------------------
+// One row definition drives both layouts: a grid on desktop, a stacked
+// labelled card on a phone (see .adm-* in layout.js). Every admin table goes
+// through here so none of them can drift back to being a wide table that only
+// works sideways on mobile.
+//
+// cells: [{ label, html, label:'' to span full width }]
+function admRow(cells, { href = null, style = '' } = {}) {
+  const inner = cells
+    .map((c) => `<div class="adm-cell" data-label="${escapeAttr(c.label || '')}">${c.html}</div>`)
+    .join('');
+  return href
+    ? `<a class="adm-row row-hover" href="${href}" style="${style}">${inner}</a>`
+    : `<div class="adm-row row-hover" style="${style}">${inner}</div>`;
+}
+
+function admTable({ cols, minWidth = 0, head = [], rows = '', empty = 'Tidak ada data.', note = '' }) {
+  const vars = `--cols:${cols};${minWidth ? `--min:${minWidth}px;` : ''}`;
+  return `
+    <div class="adm-table" style="${vars}">
+      <div class="adm-scroll">
+        ${head.length ? `<div class="adm-head">${head.map((h) => `<span>${h}</span>`).join('')}</div>` : ''}
+        <div class="adm-rows">${rows || `<div class="adm-empty">${empty}</div>`}</div>
+      </div>
+    </div>
+    ${note ? `<p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;line-height:1.7;">${note}</p>` : ''}`;
 }
 
 function statCard(label, value, bg, iconPath, stroke = '#3f7a42') {
@@ -108,42 +136,52 @@ function stockCell(p) {
 function renderProdukList({ products, stats, flash, admin, view = {}, categories = [], totalCount = 0 }) {
   const rows = products.length
     ? products
-        .map(
-          (p) => `
-      <div class="row-hover" style="display:grid;grid-template-columns:2.2fr 1.1fr 1fr 1.6fr 1fr 1fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);${
-        Number(p.stock) <= 0 ? 'background:oklch(99% 0.012 25);' : ''
-      }">
-        <div style="display:flex;align-items:center;gap:14px;">
-          <div style="width:44px;height:44px;flex-shrink:0;">${productThumb(p, { size: 24, radius: 10 })}</div>
-          <span style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</span>
-        </div>
-        <a href="${produkUrl(view, { kategori: p.category, halaman: '' })}" style="font-size:13.5px;color:var(--text-muted);">${escapeHtml(p.category)}</a>
-        <span style="font-size:13.5px;font-weight:600;">${formatRupiah(p.price)}</span>
-        ${stockCell(p)}
-        <form method="post" action="/admin/produk/${p.id}/toggle">
+        .map((p) =>
+          admRow(
+            [
+              {
+                label: '',
+                html: `<div style="display:flex;align-items:center;gap:14px;min-width:0;">
+          <div style="width:44px;flex-shrink:0;">${productThumb(p, { size: 24, radius: 10 })}</div>
+          <span style="font-size:14px;font-weight:700;min-width:0;">${escapeHtml(p.name)}</span>
+        </div>`,
+              },
+              {
+                label: 'Kategori',
+                html: `<a href="${produkUrl(view, { kategori: p.category, halaman: '' })}" style="font-size:13.5px;color:var(--text-muted);">${escapeHtml(p.category)}</a>`,
+              },
+              { label: 'Harga', html: `<span class="tnum" style="font-size:13.5px;font-weight:600;">${formatRupiah(p.price)}</span>` },
+              { label: 'Stok', html: stockCell(p) },
+              {
+                label: 'Status',
+                html: `<form method="post" action="/admin/produk/${p.id}/toggle" style="display:flex;align-items:center;">
           <button type="submit" class="toggle-pill ${p.active ? 'toggle-on' : 'toggle-off'}" title="Klik untuk ${p.active ? 'nonaktifkan' : 'aktifkan'}">
             <span class="toggle-dot"></span>
           </button>
           <span style="font-size:11.5px;font-weight:700;margin-left:8px;color:${p.active ? '#3f7a42' : 'var(--text-muted)'};">${p.active ? 'Aktif' : 'Nonaktif'}</span>
-        </form>
-        <div style="display:flex;gap:6px;">
-          <a class="icon-action" href="/admin/produk/${p.id}/edit" style="padding:6px;display:inline-flex;" title="Edit">
+        </form>`,
+              },
+              {
+                label: 'Aksi',
+                html: `<div style="display:flex;gap:6px;justify-content:flex-end;">
+          <a class="icon-action" href="/admin/produk/${p.id}/edit" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#3f7a42;font-size:12px;font-weight:700;" title="Edit">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+            <span class="hide-desktop">Edit</span>
           </a>
-          <form method="post" action="/admin/produk/${p.id}/hapus" onsubmit="return confirm('Hapus produk ini?');">
-            <button type="submit" class="icon-action" style="padding:6px;" title="Hapus">
+          <form method="post" action="/admin/produk/${p.id}/hapus" onsubmit="return confirm('Hapus produk ${escapeAttr(p.name)}?');">
+            <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+              <span class="hide-desktop">Hapus</span>
             </button>
           </form>
-        </div>
-      </div>`
+        </div>`,
+              },
+            ],
+            { style: Number(p.stock) <= 0 ? 'background:oklch(99% 0.012 25);' : '' }
+          )
         )
         .join('')
-    : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">${
-        totalCount > 0
-          ? 'Tidak ada produk yang cocok dengan filter ini.'
-          : 'Belum ada produk. Klik "Tambah Produk Baru" untuk mulai mengisi inventori.'
-      }</div>`;
+    : '';
 
   // Each card is a link that filters the table to exactly what it counts.
   const clickableStat = (label, value, statusKey, bg, iconPath, stroke) => {
@@ -163,7 +201,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
   const body = `
 <div class="admin-shell">
   ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
       <div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Produk</div><h1 style="font-size:24px;font-weight:800;">Kelola Produk</h1></div>
@@ -206,17 +244,24 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
       }${view.status && view.status !== 'semua' ? ` · <strong>${escapeHtml(STATUS_LABELS[view.status] || view.status)}</strong>` : ''}
     </p>
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:2.2fr 1.1fr 1fr 1.6fr 1fr 1fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:800px;">
-        <span>${sortHeader('PRODUK', 'nama', view)}</span>
-        <span>${sortHeader('KATEGORI', 'kategori', view)}</span>
-        <span>${sortHeader('HARGA', 'harga', view)}</span>
-        <span>${sortHeader('STOK', 'stok', view)}</span>
-        <span>STATUS</span><span>AKSI</span>
-      </div>
-      <div style="min-width:800px;">${rows}</div>
-    </div>
-    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;">Stok tersimpan otomatis — pakai tombol &minus;/+ atau ketik angkanya langsung. Klik judul kolom untuk mengurutkan.</p>
+    ${admTable({
+      cols: '2.2fr 1.1fr 1fr 1.6fr 1fr 1fr',
+      minWidth: 820,
+      head: [
+        sortHeader('PRODUK', 'nama', view),
+        sortHeader('KATEGORI', 'kategori', view),
+        sortHeader('HARGA', 'harga', view),
+        sortHeader('STOK', 'stok', view),
+        'STATUS',
+        'AKSI',
+      ],
+      rows,
+      empty:
+        totalCount > 0
+          ? 'Tidak ada produk yang cocok dengan filter ini.'
+          : 'Belum ada produk. Klik &ldquo;Tambah Produk Baru&rdquo; untuk mulai mengisi inventori.',
+      note: 'Stok tersimpan otomatis — pakai tombol &minus;/+ atau ketik angkanya langsung. Klik judul kolom untuk mengurutkan.',
+    })}
   </main>
 </div>
 <script>
@@ -266,7 +311,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
 })();
 </script>`;
 
-  return page({ title: 'Kelola Produk — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Kelola Produk — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 // The gallery editor: each photo carries a hidden `fotoUrutan` input, so the
@@ -274,79 +319,115 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
 // no separate "position" field to keep in sync. The first tile is the main
 // photo and is labelled as such, which is why moving one left matters.
 function photoReorder(photos) {
-  const arrow = (dir) =>
-    dir === 'left'
-      ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>'
-      : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
-
   const tiles = photos
     .map(
       (url) => `
-      <div class="foto-tile" data-url="${escapeAttr(url)}">
+      <div class="foto-tile" draggable="true" data-url="${escapeAttr(url)}" tabindex="0"
+           role="listitem" aria-label="Foto produk — seret untuk mengurutkan, atau tekan panah kiri/kanan">
         <input type="hidden" name="fotoUrutan" value="${escapeAttr(url)}">
         <div class="foto-frame">
-          <img src="${escapeAttr(url)}" alt="Foto produk">
+          <img src="${escapeAttr(url)}" alt="Foto produk" draggable="false">
           <span class="foto-utama">UTAMA</span>
+          <span class="foto-grip" aria-hidden="true">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
         </div>
-        <div class="foto-actions">
-          <button type="button" class="foto-move" data-dir="-1" title="Geser ke kiri" aria-label="Geser ke kiri">${arrow('left')}</button>
-          <label class="foto-hapus" title="Centang untuk menghapus foto ini saat disimpan">
-            <input type="checkbox" name="hapusFoto" value="${escapeAttr(url)}"> Hapus
-          </label>
-          <button type="button" class="foto-move" data-dir="1" title="Geser ke kanan" aria-label="Geser ke kanan">${arrow('right')}</button>
-        </div>
+        <label class="foto-hapus" title="Centang untuk menghapus foto ini saat disimpan">
+          <input type="checkbox" name="hapusFoto" value="${escapeAttr(url)}"> Hapus
+        </label>
       </div>`
     )
     .join('');
 
   return `
     <style>
-      .foto-grid{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:10px;margin-bottom:16px;}
-      .foto-tile{display:flex;flex-direction:column;gap:5px;}
+      .foto-grid{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:10px;margin-bottom:10px;}
+      .foto-tile{display:flex;flex-direction:column;gap:5px;cursor:grab;border-radius:12px;
+        transition:opacity 0.16s ease, transform 0.16s ease;}
+      .foto-tile:active{cursor:grabbing;}
+      .foto-tile:focus-visible{outline:2.5px solid var(--orange);outline-offset:3px;}
       .foto-frame{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2);}
-      .foto-frame img{width:100%;height:100%;object-fit:cover;display:block;}
+      .foto-frame img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
       .foto-utama{display:none;position:absolute;top:4px;left:4px;background:var(--green);color:#fff;font-size:8.5px;
         font-weight:800;letter-spacing:0.3px;padding:3px 7px;border-radius:99px;}
       /* Whichever tile is first in the DOM is the main photo — so the badge
          and the green frame follow the order instead of being baked in. */
       .foto-tile:first-child .foto-utama{display:block;}
       .foto-tile:first-child .foto-frame{border:2px solid var(--green);}
-      .foto-actions{display:flex;align-items:center;justify-content:space-between;gap:4px;}
-      .foto-move{width:24px;height:24px;border-radius:7px;border:1px solid var(--border);background:var(--surface);
-        color:var(--text);display:flex;align-items:center;justify-content:center;flex-shrink:0;
-        transition:background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;}
-      .foto-move:hover:not(:disabled){background:var(--orange-soft);border-color:var(--orange);}
-      .foto-move:active:not(:disabled){transform:scale(0.9);}
-      .foto-move:disabled{opacity:0.28;cursor:not-allowed;}
-      .foto-tile:first-child .foto-move[data-dir="-1"],
-      .foto-tile:last-child .foto-move[data-dir="1"]{opacity:0.28;pointer-events:none;}
-      .foto-hapus{display:flex;align-items:center;gap:3px;margin:0;font-size:9.5px;font-weight:700;color:#a13f3f;cursor:pointer;}
+      .foto-grip{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:6px;
+        background:rgba(255,255,255,0.9);color:#5a5a60;display:flex;align-items:center;justify-content:center;
+        box-shadow:0 1px 4px rgba(0,0,0,0.18);}
+      /* The tile being carried. */
+      .foto-tile.is-dragging{opacity:0.4;transform:scale(0.96);}
+      /* Where it would land. */
+      .foto-tile.is-over .foto-frame{outline:2.5px dashed var(--orange);outline-offset:2px;}
+      .foto-hapus{display:flex;align-items:center;justify-content:center;gap:4px;margin:0;font-size:10px;
+        font-weight:700;color:#a13f3f;cursor:pointer;}
       .foto-hapus input{width:12px;height:12px;margin:0;padding:0;}
       /* A photo marked for deletion stays put but visibly steps back. */
       .foto-tile.is-removing .foto-frame{opacity:0.35;filter:grayscale(1);}
+      @media (max-width: 560px){ .foto-grid{grid-template-columns:repeat(2, minmax(0,1fr));} }
     </style>
-    <div class="foto-grid" id="fotoGaleri">${tiles}</div>
+    <div class="foto-grid" id="fotoGaleri" role="list">${tiles}</div>
+    <p style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin:0 0 14px;">
+      Seret foto untuk mengurutkan. Bisa juga pilih foto lalu tekan tombol panah &larr; &rarr; di keyboard.
+    </p>
     <script>
     (function(){
       var grid = document.getElementById('fotoGaleri');
       if(!grid) return;
-      grid.addEventListener('click', function(e){
-        var btn = e.target.closest('.foto-move');
-        if(!btn) return;
-        e.preventDefault();
-        var tile = btn.closest('.foto-tile');
-        var dir = Number(btn.dataset.dir);
-        var sibling = dir < 0 ? tile.previousElementSibling : tile.nextElementSibling;
-        if(!sibling) return;
-        // Moving the node moves its hidden input with it, so submit order
-        // follows what the admin sees.
-        if(dir < 0) grid.insertBefore(tile, sibling);
-        else grid.insertBefore(sibling, tile);
-        tile.animate(
-          [{ transform: 'scale(0.94)' }, { transform: 'scale(1)' }],
-          { duration: 180, easing: 'cubic-bezier(0.2,0.7,0.3,1)' }
-        );
+      var dragging = null;
+
+      function tiles(){ return Array.prototype.slice.call(grid.querySelectorAll('.foto-tile')); }
+      function clearOver(){ tiles().forEach(function(t){ t.classList.remove('is-over'); }); }
+
+      grid.addEventListener('dragstart', function(e){
+        var tile = e.target.closest('.foto-tile');
+        if(!tile) return;
+        dragging = tile;
+        tile.classList.add('is-dragging');
+        // Firefox refuses to start a drag unless some data is set.
+        try{ e.dataTransfer.setData('text/plain', tile.dataset.url || ''); }catch(err){}
+        e.dataTransfer.effectAllowed = 'move';
       });
+
+      grid.addEventListener('dragend', function(){
+        if(dragging) dragging.classList.remove('is-dragging');
+        dragging = null;
+        clearOver();
+      });
+
+      grid.addEventListener('dragover', function(e){
+        if(!dragging) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        var over = e.target.closest('.foto-tile');
+        if(!over || over === dragging) return;
+        clearOver();
+        over.classList.add('is-over');
+        // Insert before or after depending on which half we're over, so the
+        // tile lands where the pointer actually is.
+        var box = over.getBoundingClientRect();
+        var after = (e.clientX - box.left) > box.width / 2;
+        grid.insertBefore(dragging, after ? over.nextSibling : over);
+      });
+
+      grid.addEventListener('drop', function(e){ e.preventDefault(); clearOver(); });
+
+      // Keyboard equivalent, so reordering doesn't require a mouse.
+      grid.addEventListener('keydown', function(e){
+        var tile = e.target.closest('.foto-tile');
+        if(!tile) return;
+        if(e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        if(e.key === 'ArrowLeft' && tile.previousElementSibling){
+          grid.insertBefore(tile, tile.previousElementSibling);
+        } else if(e.key === 'ArrowRight' && tile.nextElementSibling){
+          grid.insertBefore(tile.nextElementSibling, tile);
+        }
+        tile.focus();
+      });
+
       grid.addEventListener('change', function(e){
         var box = e.target;
         if(!box.matches || !box.matches('.foto-hapus input')) return;
@@ -376,7 +457,7 @@ function renderProdukForm({ product, error, categories = [], admin }) {
   const body = `
 <div class="admin-shell">
   ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data" style="margin-top:20px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px;">
@@ -396,7 +477,7 @@ function renderProdukForm({ product, error, categories = [], admin }) {
         <div style="flex:0 0 320px;display:flex;flex-direction:column;gap:20px;">
           <div class="card">
             <h3 style="font-size:15px;font-weight:800;margin-bottom:6px;">Foto Produk</h3>
-            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Foto pertama jadi <strong>foto utama</strong>. Pakai panah &#9664; &#9654; untuk mengurutkan ulang. Kalau lebih dari satu, pembeli bisa geser-geser fotonya.</p>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Foto pertama jadi <strong>foto utama</strong>. Kalau lebih dari satu, pembeli bisa geser-geser fotonya di halaman produk.</p>
             ${isEdit && existingPhotos.length ? photoReorder(existingPhotos) : ''}
             <div class="dropzone" style="padding:24px;text-align:center;">
               <input type="file" name="image" accept="image/jpeg,image/png,image/webp" multiple style="border:none;padding:0;background:transparent;">
@@ -475,7 +556,7 @@ function renderProdukForm({ product, error, categories = [], admin }) {
   </main>
 </div>`;
 
-  return page({ title: `${isEdit ? 'Edit' : 'Tambah'} Produk — Admin Pecup`, bodyHtml: body });
+  return page({ title: `${isEdit ? 'Edit' : 'Tambah'} Produk — Admin Pecup`, bodyHtml: body, noindex: true });
 }
 
 // Builds a /admin/pesanan URL carrying the current view, changing only what's
@@ -541,27 +622,44 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
         .map((o) => {
           const status = orderStatus(o.status);
           const kirim = deliveryLabel(o.delivery_date, todayKey);
-          return `
-      <a class="row-hover" href="/admin/pesanan/${o.id}" style="display:grid;grid-template-columns:1.1fr 1.5fr 1.1fr 1fr 1fr 0.9fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);gap:10px;color:inherit;">
-        <div>
-          <div style="font-size:13px;font-weight:600;">${escapeHtml(formatShortDateID(o.created_at))}</div>
-          <div class="tnum" style="font-size:11.5px;color:var(--text-muted);">${formatTimeID(o.created_at)} WIB</div>
-        </div>
-        <div style="min-width:0;">
-          <div style="font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(o.customer_name)}</div>
-          <div class="tnum" style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(o.order_number)}</div>
-        </div>
-        <div>
-          <div style="font-size:13px;font-weight:${kirim.weight};color:${kirim.tone};">${escapeHtml(kirim.text)}</div>
-          ${kirim.note ? `<div style="font-size:11.5px;color:${kirim.tone};opacity:0.85;">${escapeHtml(kirim.note)}</div>` : ''}
-        </div>
-        <span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
-        <div><span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span></div>
-        <span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;justify-self:end;">Detail &rsaquo;</span>
-      </a>`;
+          return admRow(
+            [
+              {
+                label: '',
+                html: `<div style="min-width:0;">
+                  <div style="font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(o.customer_name)}</div>
+                  <div class="tnum" style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(o.order_number)}</div>
+                </div>`,
+              },
+              {
+                label: 'Dipesan',
+                html: `<div style="text-align:right;">
+                  <div style="font-size:13px;font-weight:600;">${escapeHtml(formatShortDateID(o.created_at))}</div>
+                  <div class="tnum" style="font-size:11.5px;color:var(--text-muted);">${formatTimeID(o.created_at)} WIB</div>
+                </div>`,
+              },
+              {
+                label: 'Dikirim',
+                html: `<div style="text-align:right;">
+                  <div style="font-size:13px;font-weight:${kirim.weight};color:${kirim.tone};">${escapeHtml(kirim.text)}</div>
+                  ${kirim.note ? `<div style="font-size:11.5px;color:${kirim.tone};opacity:0.85;">${escapeHtml(kirim.note)}</div>` : ''}
+                </div>`,
+              },
+              { label: 'Total', html: `<span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>` },
+              {
+                label: 'Status',
+                html: `<span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span>`,
+              },
+              {
+                label: '',
+                html: `<span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;display:inline-block;">Detail &rsaquo;</span>`,
+              },
+            ],
+            { href: `/admin/pesanan/${o.id}` }
+          );
         })
         .join('')
-    : `<div style="padding:36px 22px;color:var(--text-muted);font-size:14px;text-align:center;">Tidak ada pesanan yang cocok dengan filter ini.</div>`;
+    : '';
 
   const presetChips = PESANAN_PRESETS.map(
     (p) =>
@@ -577,7 +675,7 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
       <div>
         <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div>
@@ -651,27 +749,80 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       }${stats.revenue ? ` · omzet selesai <strong>${formatRupiah(stats.revenue)}</strong>` : ''}
     </p>
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:1.1fr 1.5fr 1.1fr 1fr 1fr 0.9fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:820px;gap:10px;">
-        <span>${pesananSortHeader('DIPESAN', 'dipesan', view)}</span>
-        <span>${pesananSortHeader('PEMESAN', 'nama', view)}</span>
-        <span>${pesananSortHeader('DIKIRIM', 'dikirim', view)}</span>
-        <span>${pesananSortHeader('TOTAL', 'total', view)}</span>
-        <span>${pesananSortHeader('STATUS', 'status', view)}</span>
-        <span></span>
-      </div>
-      <div style="min-width:820px;">${rows}</div>
-    </div>
+    ${admTable({
+      cols: '1.5fr 1.1fr 1.1fr 1fr 1fr 0.9fr',
+      minWidth: 820,
+      head: [
+        pesananSortHeader('PEMESAN', 'nama', view),
+        pesananSortHeader('DIPESAN', 'dipesan', view),
+        pesananSortHeader('DIKIRIM', 'dikirim', view),
+        pesananSortHeader('TOTAL', 'total', view),
+        pesananSortHeader('STATUS', 'status', view),
+        '',
+      ],
+      rows,
+      empty: 'Tidak ada pesanan yang cocok dengan filter ini.',
+      note: 'Klik judul kolom untuk mengurutkan. Unduh CSV mengikuti filter yang sedang aktif — termasuk seluruh halaman, bukan cuma yang tampil.',
+    })}
     ${pagination ? pageLinks((p) => pesananUrl(view, { halaman: p }), pagination.page, pagination.totalPages) : ''}
-    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;">Klik judul kolom untuk mengurutkan. Unduh CSV mengikuti filter yang sedang aktif — termasuk seluruh halaman, bukan cuma yang tampil.</p>
   </main>
 </div>`;
 
-  return page({ title: 'Pesanan — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Pesanan — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
-function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) {
+// Pre-written WhatsApp messages for the three things an admin says all day.
+// Saves retyping the order number and total into WhatsApp by hand.
+function whatsappButtons(order, items) {
+  const wa = normalizeWhatsapp(order.whatsapp);
+  if (!wa) {
+    return `<p style="font-size:12.5px;color:var(--text-muted);margin-top:16px;">Nomor WhatsApp pemesan tidak valid, jadi tidak bisa dihubungi otomatis.</p>`;
+  }
+
+  const lines = items.map((it) => `• ${it.product_name} ×${it.qty}`).join('\n');
+  const when = order.delivery_date ? formatDateID(order.delivery_date) : 'segera';
+  const templates = [
+    {
+      label: 'Konfirmasi diterima',
+      color: 'var(--green)',
+      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya 🙌\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nPembayaranmu sudah kami cek dan pesanan masuk antrian. Terima kasih sudah pesan di Pecup!`,
+    },
+    {
+      label: 'Sedang diantar',
+      color: 'var(--orange)',
+      text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sedang dalam perjalanan ke ${order.address || 'lokasimu'} 🛵\n\nDitunggu ya, sebentar lagi sampai!`,
+    },
+    {
+      label: 'Bukti transfer belum sesuai',
+      color: '#c94f4f',
+      text: `Halo ${order.customer_name}, mohon maaf — untuk pesanan ${order.order_number}, bukti transfer yang kami terima belum sesuai dengan total ${formatRupiah(order.total)}.\n\nBoleh dicek dan dikirim ulang buktinya? Terima kasih 🙏`,
+    },
+  ];
+
+  return `
+    <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border);">
+      <h3 style="font-size:14px;font-weight:800;margin-bottom:4px;">Hubungi Pemesan</h3>
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">Buka WhatsApp dengan pesan yang sudah terisi — tinggal kirim.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${templates
+          .map(
+            (t) => `<a class="btn-outline" href="https://wa.me/${wa}?text=${encodeURIComponent(t.text)}" target="_blank" rel="noopener"
+              style="padding:10px 15px;border-radius:10px;font-size:12.5px;font-weight:700;display:inline-flex;align-items:center;gap:7px;border-left:3px solid ${t.color};">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.7 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2zm5.8 14.2c-.2.7-1.4 1.3-2 1.4-.5.1-1.2.1-1.9-.1a13 13 0 0 1-6.2-5.4c-.5-.8-.8-1.7-.8-2.5 0-.9.5-1.4.7-1.6.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 1.9c.1.2 0 .4-.1.5l-.4.5c-.1.1-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.1 1 2 1.3 2.3 1.4.2.1.4.1.6-.1l.7-.8c.2-.2.3-.2.6-.1l1.8.9c.3.1.4.2.5.3.1.2.1.6-.1 1.3z"/></svg>
+              ${t.label}
+            </a>`
+          )
+          .join('')}
+      </div>
+    </div>`;
+}
+
+function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, flash = '', error = '' }) {
   const rewardDiscount = Number(order.reward_discount) || 0;
+  const voucherDiscount = Number(order.voucher_discount) || 0;
+  const deliveryFee = Number(order.delivery_fee) || 0;
+  const itemCount = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+  const waButtons = whatsappButtons(order, items);
   const itemRows = items
     .map(
       (it) => `
@@ -697,10 +848,18 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main" style="max-width:900px;">
+  <main class="admin-main" id="konten" style="max-width:900px;">
     ${backButton('/admin/pesanan', 'Kembali ke Pesanan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
-    <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Detail Pesanan ${escapeHtml(order.order_number)}</h1>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:18px;">Detail Pesanan ${escapeHtml(order.order_number)}</h1>
+
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+    ${
+      order.status === 'dibatalkan'
+        ? `<div class="flash flash-error" style="align-items:flex-start;">Pesanan ini <strong>dibatalkan</strong> dan ${itemCount} cup sudah dikembalikan ke stok.</div>`
+        : ''
+    }
 
     <div style="display:flex;gap:24px;flex-wrap:wrap;">
       <div class="card" style="flex:1 1 380px;">
@@ -756,18 +915,37 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
         <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;">Item Dipesan</h3>
         ${itemRows}
         ${
-          rewardDiscount > 0
+          rewardDiscount > 0 || voucherDiscount > 0 || deliveryFee > 0
             ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:10px 0 0;color:var(--text-muted);">
                 <span>Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
+              </div>`
+            : ''
+        }
+        ${
+          rewardDiscount > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
                 <span>Cup gratis — ${escapeHtml(order.reward_item || '1 cup termurah')}</span>
                 <span class="tnum">&minus;${formatRupiah(rewardDiscount)}</span>
               </div>`
             : ''
         }
+        ${
+          voucherDiscount > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
+                <span>Voucher ${escapeHtml(order.voucher_code || '')}</span>
+                <span class="tnum">&minus;${formatRupiah(voucherDiscount)}</span>
+              </div>`
+            : ''
+        }
+        ${
+          deliveryFee > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0;color:var(--text-muted);">
+                <span>Ongkos antar</span><span class="tnum">${formatRupiah(deliveryFee)}</span>
+              </div>`
+            : ''
+        }
         <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;padding-top:16px;"><span>${
-          rewardDiscount > 0 ? 'Total Dibayar' : 'Total'
+          rewardDiscount > 0 || voucherDiscount > 0 ? 'Total Dibayar' : 'Total'
         }</span><span class="tnum" style="color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
         ${
           rewardDiscount > 0
@@ -778,12 +956,17 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
             : ''
         }
 
-        <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:20px;display:flex;gap:10px;">
-          <select name="status" style="flex:1;">
+        <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
+          <select name="status" style="flex:1 1 180px;">
             ${ORDER_STATUSES.map((s) => `<option value="${s.value}" ${order.status === s.value ? 'selected' : ''}>${s.label}</option>`).join('')}
           </select>
-          <button class="btn-primary" type="submit" style="padding:0 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Update Status</button>
+          <button class="btn-primary" type="submit" style="padding:13px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Update Status</button>
         </form>
+        <p style="font-size:12px;color:var(--text-muted);line-height:1.7;margin-top:10px;">
+          Memilih <strong>Dibatalkan</strong> otomatis mengembalikan ${itemCount} cup ke stok. Mengembalikannya ke status lain akan memotong stok lagi.
+        </p>
+
+        ${waButtons}
       </div>
 
       <div class="card" style="flex:1 1 300px;">
@@ -794,7 +977,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
   </main>
 </div>`;
 
-  return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body });
+  return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body, noindex: true });
 }
 
 function renderAdminList({ admins, admin, error, flash = '' }) {
@@ -806,36 +989,43 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
         a.role === 'superadmin'
           ? `<span style="font-size:11.5px;font-weight:700;color:#a15a1f;background:var(--orange-soft);padding:5px 11px;border-radius:99px;">Superadmin</span>`
           : `<span style="font-size:11.5px;font-weight:700;color:#3f7a42;background:var(--green-soft);padding:5px 11px;border-radius:99px;">Admin</span>`;
-      return `
-      <div class="row-hover" style="display:grid;grid-template-columns:1.4fr 0.9fr 1fr 1.9fr 0.5fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);gap:12px;">
-        <span style="font-size:14px;font-weight:700;">${escapeHtml(a.username)}${isSelf ? ' <span style="color:var(--text-muted);font-weight:500;font-size:12px;">(kamu)</span>' : ''}</span>
-        <div>${roleBadge}</div>
-        <span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(a.created_at)}</span>
-        <form method="post" action="/admin/akun/${a.id}/password" style="display:flex;align-items:center;gap:7px;"
+      return admRow([
+        {
+          label: '',
+          html: `<span style="font-size:14px;font-weight:700;">${escapeHtml(a.username)}${
+            isSelf ? ' <span style="color:var(--text-muted);font-weight:500;font-size:12px;">(kamu)</span>' : ''
+          }</span>`,
+        },
+        { label: 'Peran', html: roleBadge },
+        { label: 'Dibuat', html: `<span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(a.created_at)}</span>` },
+        {
+          label: 'Password',
+          html: `<form method="post" action="/admin/akun/${a.id}/password" style="display:flex;align-items:center;gap:7px;"
               onsubmit="return confirm('Ganti password ${escapeAttr(a.username)}? Mereka harus pakai password baru ini untuk masuk.');">
           <input type="password" name="password" required minlength="6" placeholder="Password baru (min. 6)"
                  autocomplete="new-password" style="padding:8px 11px;font-size:12.5px;border-radius:8px;">
           <button class="btn-outline" type="submit" style="padding:8px 13px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap;">Ganti</button>
-        </form>
-        <div style="justify-self:end;">
-          ${
-            isSelf
-              ? ''
-              : `<form method="post" action="/admin/akun/${a.id}/hapus" onsubmit="return confirm('Hapus admin ${escapeAttr(a.username)}?');">
-                <button type="submit" class="icon-action" style="padding:6px;" title="Hapus">
+        </form>`,
+        },
+        {
+          label: '',
+          html: isSelf
+            ? ''
+            : `<form method="post" action="/admin/akun/${a.id}/hapus" onsubmit="return confirm('Hapus admin ${escapeAttr(a.username)}?');" style="display:flex;justify-content:flex-end;">
+                <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+                  <span class="hide-desktop">Hapus admin</span>
                 </button>
-              </form>`
-          }
-        </div>
-      </div>`;
+              </form>`,
+        },
+      ]);
     })
     .join('');
 
   const body = `
 <div class="admin-shell">
   ${adminSidebar('akun', { isSuperadmin: true, username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kelola Admin</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Kelola Admin</h1>
@@ -859,19 +1049,18 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
       </form>
     </div>
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:1.4fr 0.9fr 1fr 1.9fr 0.5fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:720px;gap:12px;">
-        <span>USERNAME</span><span>PERAN</span><span>DIBUAT</span><span>GANTI PASSWORD</span><span></span>
-      </div>
-      <div style="min-width:720px;">${rows}</div>
-    </div>
-    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;line-height:1.7;">
-      Password disimpan dalam bentuk hash (scrypt + salt acak) — tidak pernah disimpan apa adanya, dan tidak bisa dilihat lagi oleh siapa pun termasuk superadmin. Kalau admin lupa password, set yang baru di sini lalu beri tahu orangnya.
-    </p>
+    ${admTable({
+      cols: '1.4fr 0.9fr 1fr 1.9fr 0.5fr',
+      minWidth: 760,
+      head: ['USERNAME', 'PERAN', 'DIBUAT', 'GANTI PASSWORD', ''],
+      rows,
+      note:
+        'Password disimpan dalam bentuk hash (scrypt + salt acak) — tidak pernah disimpan apa adanya, dan tidak bisa dilihat lagi oleh siapa pun termasuk superadmin. Kalau admin lupa password, set yang baru di sini lalu beri tahu orangnya.',
+    })}
   </main>
 </div>`;
 
-  return page({ title: 'Kelola Admin — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Kelola Admin — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 function tierPill(c, tiersEnabled) {
@@ -911,10 +1100,12 @@ function stampMeter(c) {
 function renderPelangganList({ customers, admin, search = '', totalCustomers = 0, tiersEnabled = true, flash = '', error = '' }) {
   const rows = customers.length
     ? customers
-        .map(
-          (c) => `
-      <a class="row-hover" href="/admin/pelanggan/${c.id}" style="display:grid;grid-template-columns:2fr 1.2fr 1.4fr 1fr 0.8fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);gap:12px;color:inherit;">
-        <div style="min-width:0;display:flex;align-items:center;gap:12px;">
+        .map((c) =>
+          admRow(
+            [
+              {
+                label: '',
+                html: `<div style="min-width:0;display:flex;align-items:center;gap:12px;">
           <span style="width:36px;height:36px;border-radius:50%;background:var(--green-soft);color:var(--green-dark);font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(
             String(c.name || '?').charAt(0).toUpperCase()
           )}</span>
@@ -922,29 +1113,37 @@ function renderPelangganList({ customers, admin, search = '', totalCustomers = 0
             <div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.name)}</div>
             <div class="tnum" style="font-size:12px;color:var(--text-muted);">${escapeHtml(formatWhatsapp(c.whatsapp))}</div>
           </div>
-        </div>
-        <div>
+        </div>`,
+              },
+              {
+                label: 'Tier',
+                html: `<div style="text-align:right;">
           ${tierPill(c, tiersEnabled)}
           <div class="tnum" style="font-size:11.5px;color:var(--text-muted);margin-top:4px;">${c.claims}&times; klaim gratis</div>
-        </div>
-        ${stampMeter(c)}
-        <span style="font-size:12px;color:var(--text-muted);">${
-          c.expiresLabel ? `Hangus<br><strong style="color:var(--text);">${escapeHtml(c.expiresLabel)}</strong>` : '&mdash;'
-        }</span>
-        <span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;justify-self:end;">Detail &rsaquo;</span>
-      </a>`
+        </div>`,
+              },
+              { label: 'Stempel', html: stampMeter(c) },
+              {
+                label: 'Kedaluwarsa',
+                html: `<span style="font-size:12px;color:var(--text-muted);text-align:right;">${
+                  c.expiresLabel ? `<strong style="color:var(--text);">${escapeHtml(c.expiresLabel)}</strong>` : '&mdash;'
+                }</span>`,
+              },
+              {
+                label: '',
+                html: `<span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;display:inline-block;">Detail &rsaquo;</span>`,
+              },
+            ],
+            { href: `/admin/pelanggan/${c.id}` }
+          )
         )
         .join('')
-    : `<div style="padding:36px 22px;color:var(--text-muted);font-size:14px;text-align:center;">${
-        search
-          ? `Tidak ada pelanggan yang cocok dengan &ldquo;<strong>${escapeHtml(search)}</strong>&rdquo;.`
-          : 'Belum ada pelanggan yang mendaftar akun.'
-      }</div>`;
+    : '';
 
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Cari Pelanggan</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Cari Pelanggan</h1>
@@ -964,6 +1163,14 @@ function renderPelangganList({ customers, admin, search = '', totalCustomers = 0
           ? `<a class="btn-outline" href="/admin/pelanggan" style="padding:13px 20px;border-radius:11px;font-size:14px;font-weight:700;">Reset</a>`
           : ''
       }
+      ${
+        admin.role === 'superadmin'
+          ? `<a class="btn-outline" href="/admin/pelanggan/unduh" style="padding:13px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+              Unduh CSV
+            </a>`
+          : ''
+      }
     </form>
 
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">
@@ -974,16 +1181,19 @@ function renderPelangganList({ customers, admin, search = '', totalCustomers = 0
       }
     </p>
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:2fr 1.2fr 1.4fr 1fr 0.8fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:780px;gap:12px;">
-        <span>PELANGGAN</span><span>TIER</span><span>KARTU STEMPEL</span><span>KEDALUWARSA</span><span></span>
-      </div>
-      <div style="min-width:780px;">${rows}</div>
-    </div>
+    ${admTable({
+      cols: '2fr 1.2fr 1.4fr 1fr 0.8fr',
+      minWidth: 780,
+      head: ['PELANGGAN', 'TIER', 'KARTU STEMPEL', 'KEDALUWARSA', ''],
+      rows,
+      empty: search
+        ? `Tidak ada pelanggan yang cocok dengan &ldquo;<strong>${escapeHtml(search)}</strong>&rdquo;.`
+        : 'Belum ada pelanggan yang mendaftar akun.',
+    })}
   </main>
 </div>`;
 
-  return page({ title: 'Cari Pelanggan — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Cari Pelanggan — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 const STAMP_STATUS_LABELS = {
@@ -1023,25 +1233,36 @@ function renderPelangganDetail({
     ? orders
         .map((o) => {
           const status = orderStatus(o.status);
-          return `
-      <a class="row-hover" href="/admin/pesanan/${o.id}" style="display:grid;grid-template-columns:1.2fr 1fr 0.9fr 1fr;align-items:center;padding:12px 18px;border-top:1px solid var(--border);gap:10px;color:inherit;">
-        <div>
+          return admRow(
+            [
+              {
+                label: '',
+                html: `<div>
           <div style="font-size:13px;font-weight:700;">${escapeHtml(o.order_number)}</div>
           <div style="font-size:11.5px;color:var(--text-muted);">${escapeHtml(formatDateTimeID(o.created_at))}</div>
-        </div>
-        <span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
-        <span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:4px 10px;border-radius:99px;width:fit-content;white-space:nowrap;">${status.label}</span>
-        <span style="font-size:12px;color:var(--text-muted);">${
-          Number(o.reward_discount) > 0
-            ? `Gratis: ${escapeHtml(o.reward_item || '1 cup')}`
-            : o.delivery_date
-            ? escapeHtml(formatShortDateID(o.delivery_date))
-            : '&mdash;'
-        }</span>
-      </a>`;
+        </div>`,
+              },
+              { label: 'Total', html: `<span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>` },
+              {
+                label: 'Status',
+                html: `<span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:4px 10px;border-radius:99px;width:fit-content;white-space:nowrap;display:inline-block;">${status.label}</span>`,
+              },
+              {
+                label: 'Catatan',
+                html: `<span style="font-size:12px;color:var(--text-muted);text-align:right;">${
+                  Number(o.reward_discount) > 0
+                    ? `Gratis: ${escapeHtml(o.reward_item || '1 cup')}`
+                    : o.delivery_date
+                    ? escapeHtml(formatShortDateID(o.delivery_date))
+                    : '&mdash;'
+                }</span>`,
+              },
+            ],
+            { href: `/admin/pesanan/${o.id}` }
+          );
         })
         .join('')
-    : `<div style="padding:28px 20px;color:var(--text-muted);font-size:13.5px;">Belum ada pesanan dari pelanggan ini.</div>`;
+    : '';
 
   const stampRows = stamps.length
     ? stamps
@@ -1069,7 +1290,7 @@ function renderPelangganDetail({
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;"><a href="/admin/pelanggan">Admin / Cari Pelanggan</a> / ${escapeHtml(customer.name)}</div>
 
@@ -1195,8 +1416,8 @@ function renderPelangganDetail({
       </div>
 
       <div style="flex:1 1 400px;min-width:0;">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-          <div style="padding:18px 20px 14px;">
+        <div>
+          <div style="padding:0 2px 14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
               <h3 style="font-size:15px;font-weight:800;">Riwayat Pesanan</h3>
               <span style="font-size:12px;color:var(--text-muted);">${
@@ -1219,12 +1440,13 @@ function renderPelangganDetail({
               <button class="btn-outline" type="submit" style="padding:9px 15px;border-radius:9px;font-size:12.5px;font-weight:700;">Filter</button>
             </form>
           </div>
-          <div class="table-scroll">
-            <div style="display:grid;grid-template-columns:1.2fr 1fr 0.9fr 1fr;padding:10px 18px;background:var(--surface-2);font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;gap:10px;">
-              <span>PESANAN</span><span>TOTAL</span><span>STATUS</span><span>CATATAN</span>
-            </div>
-            <div style="min-width:520px;">${orderRows}</div>
-          </div>
+          ${admTable({
+            cols: '1.2fr 1fr 0.9fr 1fr',
+            minWidth: 520,
+            head: ['PESANAN', 'TOTAL', 'STATUS', 'CATATAN'],
+            rows: orderRows,
+            empty: 'Belum ada pesanan dari pelanggan ini.',
+          })}
         </div>
         ${pagination ? pageLinks((p) => detailUrl({ halaman: p }), pagination.page, pagination.totalPages) : ''}
       </div>
@@ -1232,7 +1454,7 @@ function renderPelangganDetail({
   </main>
 </div>`;
 
-  return page({ title: `${customer.name} — Admin Pecup`, bodyHtml: body });
+  return page({ title: `${customer.name} — Admin Pecup`, bodyHtml: body, noindex: true });
 }
 
 // The stamp-and-tier rulebook, split off from the customer directory so the
@@ -1355,7 +1577,7 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
 </style>
 <div class="admin-shell">
   ${adminSidebar('loyalitas', { isSuperadmin: true, username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Program Stempel</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Program Stempel &amp; Tier</h1>
@@ -1420,7 +1642,7 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
   </main>
 </div>`;
 
-  return page({ title: 'Program Stempel — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Program Stempel — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 // Shared date-range presets. Every date filter in the admin uses the same
@@ -1496,41 +1718,48 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
         .map((s) => {
           const pct = Math.round((s.net / maxNet) * 100);
           const label = view.kelompok === 'bulan' ? s.periode : formatShortDateID(s.periode);
-          return `
-      <div class="row-hover" style="display:grid;grid-template-columns:1.1fr 0.6fr 1fr 1fr 1.4fr;align-items:center;gap:12px;padding:11px 20px;border-top:1px solid var(--border);">
-        <span style="font-size:13px;font-weight:700;">${escapeHtml(label)}</span>
-        <span class="tnum" style="font-size:13px;color:var(--text-muted);">${s.orders}</span>
-        <span class="tnum" style="font-size:13px;">${formatRupiah(s.gross)}</span>
-        <span class="tnum" style="font-size:13px;color:${s.discount ? '#a15a1f' : 'var(--text-muted)'};">${
-            s.discount ? `−${formatRupiah(s.discount)}` : '—'
-          }</span>
-        <div style="display:flex;align-items:center;gap:10px;">
+          return admRow([
+            { label: '', html: `<span style="font-size:13px;font-weight:700;">${escapeHtml(label)}</span>` },
+            { label: 'Pesanan', html: `<span class="tnum" style="font-size:13px;color:var(--text-muted);">${s.orders}</span>` },
+            { label: 'Kotor', html: `<span class="tnum" style="font-size:13px;">${formatRupiah(s.gross)}</span>` },
+            {
+              label: 'Promo',
+              html: `<span class="tnum" style="font-size:13px;color:${s.discount ? '#a15a1f' : 'var(--text-muted)'};">${
+                s.discount ? `−${formatRupiah(s.discount)}` : '—'
+              }</span>`,
+            },
+            {
+              label: 'Uang masuk',
+              html: `<div style="display:flex;align-items:center;gap:10px;flex:1;">
           <div class="meter" style="flex:1;margin:0;"><div class="meter-fill is-full" style="width:${pct}%;"></div></div>
           <span class="tnum" style="font-size:13px;font-weight:800;color:var(--green-dark);white-space:nowrap;">${formatRupiah(s.net)}</span>
-        </div>
-      </div>`;
+        </div>`,
+            },
+          ]);
         })
         .join('')
-    : `<div style="padding:32px 20px;color:var(--text-muted);font-size:14px;text-align:center;">Tidak ada penjualan pada rentang ini.</div>`;
+    : '';
 
   const maxProduct = Math.max(1, ...report.byProduct.map((p) => p.gross));
   const productRows = report.byProduct.length
     ? report.byProduct
-        .map(
-          (p) => `
-      <div class="row-hover" style="display:grid;grid-template-columns:1.6fr 0.6fr 1.4fr;align-items:center;gap:12px;padding:11px 20px;border-top:1px solid var(--border);">
-        <span style="font-size:13px;font-weight:700;">${escapeHtml(p.name)}</span>
-        <span class="tnum" style="font-size:13px;color:var(--text-muted);">${p.cups} cup</span>
-        <div style="display:flex;align-items:center;gap:10px;">
+        .map((p) =>
+          admRow([
+            { label: '', html: `<span style="font-size:13px;font-weight:700;">${escapeHtml(p.name)}</span>` },
+            { label: 'Terjual', html: `<span class="tnum" style="font-size:13px;color:var(--text-muted);">${p.cups} cup</span>` },
+            {
+              label: 'Nilai',
+              html: `<div style="display:flex;align-items:center;gap:10px;flex:1;">
           <div class="meter" style="flex:1;margin:0;"><div class="meter-fill" style="width:${Math.round(
             (p.gross / maxProduct) * 100
           )}%;"></div></div>
           <span class="tnum" style="font-size:13px;font-weight:700;white-space:nowrap;">${formatRupiah(p.gross)}</span>
-        </div>
-      </div>`
+        </div>`,
+            },
+          ])
         )
         .join('')
-    : `<div style="padding:28px 20px;color:var(--text-muted);font-size:13.5px;text-align:center;">Belum ada produk terjual.</div>`;
+    : '';
 
   const exportQs = new URLSearchParams({
     dari: view.dari || '',
@@ -1541,7 +1770,7 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
   const body = `
 <div class="admin-shell">
   ${adminSidebar('laporan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
       <div>
         <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Laporan</div>
@@ -1603,29 +1832,336 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
         : ''
     }
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:24px;">
-      <div style="display:grid;grid-template-columns:1.1fr 0.6fr 1fr 1fr 1.4fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:700px;gap:12px;">
-        <span>${view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL'}</span><span>PESANAN</span><span>KOTOR</span><span>PROMO</span><span>UANG MASUK</span>
-      </div>
-      <div style="min-width:700px;">${seriesRows}</div>
+    <div style="margin-bottom:24px;">
+      ${admTable({
+        cols: '1.1fr 0.6fr 1fr 1fr 1.4fr',
+        minWidth: 700,
+        head: [view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL', 'PESANAN', 'KOTOR', 'PROMO', 'UANG MASUK'],
+        rows: seriesRows,
+        empty: 'Tidak ada penjualan pada rentang ini.',
+      })}
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="padding:18px 20px 4px;">
-        <h3 style="font-size:15px;font-weight:800;">Produk Terlaris</h3>
-        <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">Berdasarkan nilai penjualan pada rentang yang dipilih.</p>
-      </div>
-      <div class="table-scroll" style="margin-top:12px;">
-        <div style="display:grid;grid-template-columns:1.6fr 0.6fr 1.4fr;padding:12px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;gap:12px;">
-          <span>PRODUK</span><span>TERJUAL</span><span>NILAI</span>
+    <h3 class="section-title" style="font-size:17px;font-weight:800;margin-bottom:6px;">Produk Terlaris</h3>
+    <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Berdasarkan nilai penjualan pada rentang yang dipilih.</p>
+    ${admTable({
+      cols: '1.6fr 0.6fr 1.4fr',
+      minWidth: 520,
+      head: ['PRODUK', 'TERJUAL', 'NILAI'],
+      rows: productRows,
+      empty: 'Belum ada produk terjual.',
+    })}
+  </main>
+</div>`;
+
+  return page({ title: 'Laporan Penjualan — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
+// Landing page for the admin: what needs doing right now, in one screen.
+function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop, revenue }) {
+  const tile = (label, value, sub, accent, href) => {
+    const inner = `
+      <div class="card stat-card" style="padding:18px 20px;border-left:4px solid ${accent};height:100%;">
+        <div style="font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;text-transform:uppercase;">${label}</div>
+        <div class="tnum" style="font-size:24px;font-weight:800;margin-top:7px;letter-spacing:-0.5px;">${value}</div>
+        ${sub ? `<div style="font-size:12px;color:var(--text-muted);margin-top:3px;">${sub}</div>` : ''}
+      </div>`;
+    return href ? `<a href="${href}" style="color:inherit;display:block;">${inner}</a>` : inner;
+  };
+
+  const orderList = pendingOrders.length
+    ? pendingOrders
+        .map((o) => {
+          const status = orderStatus(o.status);
+          return `<a class="row-hover" href="/admin/pesanan/${o.id}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-top:1px solid var(--border);color:inherit;flex-wrap:wrap;">
+            <div style="min-width:0;">
+              <div style="font-size:13.5px;font-weight:700;">${escapeHtml(o.customer_name)}</div>
+              <div class="tnum" style="font-size:11.5px;color:var(--text-muted);">${escapeHtml(o.order_number)} · ${formatTimeID(o.created_at)} WIB</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
+              <span style="font-size:11px;font-weight:700;color:${status.color};background:${status.bg};padding:4px 10px;border-radius:99px;white-space:nowrap;">${status.label}</span>
+            </div>
+          </a>`;
+        })
+        .join('')
+    : `<div style="padding:26px 16px;color:var(--text-muted);font-size:13.5px;text-align:center;">Tidak ada pesanan yang menunggu. Mantap.</div>`;
+
+  const stockList = lowStock.length
+    ? lowStock
+        .map(
+          (p) => `<a class="row-hover" href="/admin/produk/${p.id}/edit" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 16px;border-top:1px solid var(--border);color:inherit;">
+            <span style="font-size:13.5px;font-weight:600;">${escapeHtml(p.name)}</span>
+            <span style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:99px;white-space:nowrap;color:${
+              Number(p.stock) <= 0 ? '#a13f3f' : '#a15a1f'
+            };background:${Number(p.stock) <= 0 ? '#f6dcdc' : 'var(--orange-soft)'};">${
+            Number(p.stock) <= 0 ? 'HABIS' : `SISA ${p.stock}`
+          }</span>
+          </a>`
+        )
+        .join('')
+    : `<div style="padding:26px 16px;color:var(--text-muted);font-size:13.5px;text-align:center;">Semua stok aman.</div>`;
+
+  const upcomingList = upcoming.length
+    ? upcoming
+        .map(
+          (row) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 16px;border-top:1px solid var(--border);">
+            <span style="font-size:13.5px;font-weight:600;">${escapeHtml(formatShortDateID(row.day))}</span>
+            <span class="tnum" style="font-size:13px;color:var(--text-muted);">${row.orders} pesanan · ${row.cups} cup</span>
+          </div>`
+        )
+        .join('')
+    : `<div style="padding:26px 16px;color:var(--text-muted);font-size:13.5px;text-align:center;">Belum ada pengantaran terjadwal.</div>`;
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('dashboard', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  <main class="admin-main" id="konten">
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Ringkasan</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:4px;">Halo, ${escapeHtml(admin.username)}</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:22px;">Ringkasan hari ini, ${escapeHtml(formatDateID(new Date()))}.</p>
+
+    ${
+      !shop.open
+        ? `<div class="flash flash-error" style="align-items:flex-start;">
+            <strong>Toko sedang TUTUP</strong> — pembeli tidak bisa mengirim pesanan.
+            <a href="/admin/pengaturan" style="margin-left:auto;font-weight:700;white-space:nowrap;">Buka toko →</a>
+          </div>`
+        : ''
+    }
+
+    <div class="grid-4" style="gap:16px;margin-bottom:26px;">
+      ${tile('Pesanan Hari Ini', today.total, `${today.pending} menunggu verifikasi`, 'var(--orange)', '/admin/pesanan?tampilan=hari-ini')}
+      ${tile('Uang Masuk Hari Ini', formatRupiah(today.revenue), 'dari pesanan selesai', 'var(--green)', '/admin/laporan?rentang=hari-ini')}
+      ${tile('Uang Masuk Bulan Ini', formatRupiah(revenue.month), `${revenue.monthOrders} pesanan selesai`, 'oklch(60% 0.12 245)', '/admin/laporan?rentang=bulan-ini')}
+      ${tile('Perlu Restock', lowStock.length, 'produk menipis atau habis', lowStock.length ? '#c94f4f' : 'var(--text-muted)', '/admin/produk?status=menipis')}
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="flex:1 1 380px;min-width:0;">
+        <div class="adm-table">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;">
+            <h2 style="font-size:15px;font-weight:800;">Perlu Ditangani</h2>
+            <a href="/admin/pesanan" style="font-size:12.5px;font-weight:700;">Semua pesanan →</a>
+          </div>
+          ${orderList}
         </div>
-        <div style="min-width:520px;">${productRows}</div>
+      </div>
+
+      <div style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:20px;">
+        <div class="adm-table">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;">
+            <h2 style="font-size:15px;font-weight:800;">Stok Menipis</h2>
+            <a href="/admin/produk" style="font-size:12.5px;font-weight:700;">Kelola →</a>
+          </div>
+          ${stockList}
+        </div>
+
+        <div class="adm-table">
+          <div style="padding:16px 18px;">
+            <h2 style="font-size:15px;font-weight:800;">Pengantaran Mendatang</h2>
+            <p style="font-size:12px;color:var(--text-muted);margin-top:3px;">Yang harus disiapkan.</p>
+          </div>
+          ${upcomingList}
+        </div>
       </div>
     </div>
   </main>
 </div>`;
+  return page({ title: 'Ringkasan — Admin Pecup', bodyHtml: body, noindex: true });
+}
 
-  return page({ title: 'Laporan Penjualan — Admin Pecup', bodyHtml: body });
+// Shop-wide operating settings: open/closed, notice, minimum order, delivery
+// fee and the same-day cut-off.
+function renderPengaturan({ admin, shop, flash = '', error = '' }) {
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('pengaturan', { isSuperadmin: true, username: admin.username })}
+  <main class="admin-main" id="konten" style="max-width:760px;">
+    ${backButton('/admin/produk', 'Kembali ke Produk')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pengaturan Toko</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Pengaturan Toko</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:22px;">Aturan yang berlaku untuk seluruh pesanan yang masuk.</p>
+
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+
+    <form method="post" action="/admin/pengaturan/toko">
+      <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1 1 300px;">
+            <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Status Toko</h2>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin:0;">Kalau dimatikan, pembeli masih bisa lihat menu tapi tidak bisa mengirim pesanan. Pakai ini untuk libur, tanggal merah, atau kalau stok habis semua.</p>
+          </div>
+          <label style="display:flex;align-items:center;gap:10px;margin:0;font-size:14px;font-weight:700;white-space:nowrap;">
+            <input type="checkbox" name="shopOpen" value="1" ${shop.open ? 'checked' : ''} style="width:20px;height:20px;">
+            Toko buka
+          </label>
+        </div>
+        <div class="field" style="margin-top:20px;margin-bottom:0;">
+          <label>Pengumuman di atas halaman</label>
+          <input type="text" name="shopNotice" maxlength="200" value="${escapeAttr(shop.notice || '')}"
+                 placeholder="Contoh: Libur Lebaran 1–5 April, pesanan dibuka lagi tanggal 6.">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Tampil sebagai banner di atas halaman depan. Kosongkan kalau tidak ada pengumuman.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Ongkos Antar &amp; Minimal Belanja</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">Ongkos antar ditambahkan setelah diskon — promo memotong harga buahnya, bukan biaya antarnya.</p>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 200px;margin-bottom:0;">
+            <label>Minimal belanja (Rp)</label>
+            <input type="number" name="minOrder" min="0" step="1000" value="${escapeAttr(shop.minOrder)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">0 = tanpa minimal.</div>
+          </div>
+          <div class="field" style="flex:1 1 200px;margin-bottom:0;">
+            <label>Ongkos antar (Rp)</label>
+            <input type="number" name="deliveryFee" min="0" step="1000" value="${escapeAttr(shop.deliveryFee)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">0 = gratis ongkir selalu.</div>
+          </div>
+          <div class="field" style="flex:1 1 200px;margin-bottom:0;">
+            <label>Gratis ongkir di atas (Rp)</label>
+            <input type="number" name="freeDeliveryOver" min="0" step="1000" value="${escapeAttr(shop.freeDeliveryOver)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">0 = tidak ada gratis ongkir.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Batas Pesan Hari Ini</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">Setelah jam ini, pembeli tidak bisa lagi memilih tanggal antar hari ini — hanya besok atau setelahnya. Kosongkan kalau tidak ada batas.</p>
+        <div class="field" style="max-width:200px;margin-bottom:0;">
+          <label>Jam tutup pesanan (WIB)</label>
+          <input type="time" name="sameDayCutoff" value="${escapeAttr(shop.sameDayCutoff || '')}">
+        </div>
+      </div>
+
+      <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Pengaturan</button>
+    </form>
+  </main>
+</div>`;
+  return page({ title: 'Pengaturan Toko — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
+// Promo codes.
+function renderVoucher({ admin, vouchers: list, kinds, flash = '', error = '' }) {
+  const rows = list.length
+    ? list
+        .map((v) => {
+          const expired = v.expires_at && toDateKey(v.expires_at) < toDateKey(new Date());
+          const usedUp = v.usage_limit !== null && Number(v.used_count) >= Number(v.usage_limit);
+          const state = !v.active
+            ? { label: 'Nonaktif', color: 'var(--text-muted)', bg: 'var(--surface-2)' }
+            : expired
+            ? { label: 'Kedaluwarsa', color: '#a13f3f', bg: '#f6dcdc' }
+            : usedUp
+            ? { label: 'Kuota habis', color: '#a13f3f', bg: '#f6dcdc' }
+            : { label: 'Aktif', color: '#3f7a42', bg: 'var(--green-soft)' };
+          return admRow([
+            {
+              label: '',
+              html: `<div>
+                <div class="tnum" style="font-size:14px;font-weight:800;letter-spacing:0.5px;">${escapeHtml(v.code)}</div>
+                <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">${
+                  v.kind === 'nominal' ? `Potong ${formatRupiah(v.amount)}` : `Potong ${v.amount}%`
+                }${v.max_discount ? ` (maks ${formatRupiah(v.max_discount)})` : ''}</div>
+              </div>`,
+            },
+            {
+              label: 'Min. belanja',
+              html: `<span class="tnum" style="font-size:13px;">${v.min_spend > 0 ? formatRupiah(v.min_spend) : '—'}</span>`,
+            },
+            {
+              label: 'Terpakai',
+              html: `<span class="tnum" style="font-size:13px;">${v.used_count}${v.usage_limit !== null ? ` / ${v.usage_limit}` : ''}</span>`,
+            },
+            {
+              label: 'Berlaku sampai',
+              html: `<span style="font-size:12.5px;color:var(--text-muted);">${v.expires_at ? escapeHtml(formatShortDateID(v.expires_at)) : 'Tanpa batas'}</span>`,
+            },
+            {
+              label: 'Status',
+              html: `<span style="font-size:11.5px;font-weight:700;color:${state.color};background:${state.bg};padding:4px 11px;border-radius:99px;white-space:nowrap;display:inline-block;">${state.label}</span>`,
+            },
+            {
+              label: '',
+              html: `<div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;">
+                <form method="post" action="/admin/voucher/${v.id}/toggle">
+                  <button class="btn-outline" type="submit" style="padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap;">${v.active ? 'Nonaktifkan' : 'Aktifkan'}</button>
+                </form>
+                <form method="post" action="/admin/voucher/${v.id}/hapus" onsubmit="return confirm('Hapus voucher ${escapeAttr(v.code)}?');">
+                  <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+                    <span class="hide-desktop">Hapus</span>
+                  </button>
+                </form>
+              </div>`,
+            },
+          ]);
+        })
+        .join('')
+    : '';
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('voucher', { isSuperadmin: true, username: admin.username })}
+  <main class="admin-main" id="konten">
+    ${backButton('/admin/produk', 'Kembali ke Produk')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kode Promo</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Kode Promo</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:22px;">Pembeli memasukkan kodenya di halaman checkout. Potongan dihitung dari harga buah, setelah cup gratis dan sebelum ongkos antar.</p>
+
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+
+    <form method="post" action="/admin/voucher/tambah" class="card" style="margin-bottom:24px;">
+      <h2 style="font-size:16px;font-weight:800;margin-bottom:18px;">Buat Kode Baru</h2>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div class="field" style="flex:1 1 170px;">
+          <label>Kode <span class="req">*</span></label>
+          <input type="text" name="code" required maxlength="24" placeholder="HEMAT10" style="text-transform:uppercase;">
+        </div>
+        <div class="field" style="flex:1 1 190px;">
+          <label>Jenis potongan</label>
+          <select name="kind">${kinds.map((k) => `<option value="${k.value}">${k.label}</option>`).join('')}</select>
+        </div>
+        <div class="field" style="flex:1 1 150px;">
+          <label>Nilai <span class="req">*</span></label>
+          <input type="number" name="amount" required min="1" placeholder="10">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Persen atau rupiah, sesuai jenis di sebelah.</div>
+        </div>
+        <div class="field" style="flex:1 1 170px;">
+          <label>Maks. potongan (Rp)</label>
+          <input type="number" name="maxDiscount" min="0" placeholder="Opsional">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Hanya untuk potongan persen.</div>
+        </div>
+        <div class="field" style="flex:1 1 170px;">
+          <label>Min. belanja (Rp)</label>
+          <input type="number" name="minSpend" min="0" placeholder="0">
+        </div>
+        <div class="field" style="flex:1 1 150px;">
+          <label>Batas pemakaian</label>
+          <input type="number" name="usageLimit" min="0" placeholder="Tanpa batas">
+        </div>
+        <div class="field" style="flex:1 1 170px;">
+          <label>Berlaku sampai</label>
+          <input type="date" name="expiresAt">
+        </div>
+      </div>
+      <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;margin-top:6px;">Buat Kode</button>
+    </form>
+
+    ${admTable({
+      cols: '1.4fr 1fr 0.9fr 1.1fr 1fr 1.3fr',
+      minWidth: 860,
+      head: ['KODE', 'MIN. BELANJA', 'TERPAKAI', 'BERLAKU SAMPAI', 'STATUS', ''],
+      rows,
+      empty: 'Belum ada kode promo. Buat satu di atas.',
+    })}
+  </main>
+</div>`;
+  return page({ title: 'Kode Promo — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 function actionLabel(action) {
@@ -1642,6 +2178,9 @@ function actionLabel(action) {
     'customer.update': 'Mengubah data pelanggan',
     'customer.password': 'Mengganti password pelanggan',
     'customer.delete': 'Menghapus akun pelanggan',
+    'voucher.create': 'Membuat kode promo',
+    'voucher.update': 'Mengubah kode promo',
+    'voucher.delete': 'Menghapus kode promo',
     'product.stock': 'Mengubah stok produk',
     'loyalty.redeem': 'Menukar cup gratis',
     'loyalty.stamps': 'Mengubah stempel pelanggan',
@@ -1697,17 +2236,19 @@ function pager(filters, current, totalPages) {
 function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPages = 1, total = 0, sort = 'desc', options = {} }) {
   const rows = logs.length
     ? logs
-        .map(
-          (l) => `
-      <div class="row-hover" style="display:grid;grid-template-columns:1.3fr 1fr 1.4fr 1.6fr;align-items:center;padding:12px 20px;border-top:1px solid var(--border);">
-        <span style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;">${escapeHtml(formatDateTimeID(l.created_at))}</span>
-        <span style="font-size:13.5px;font-weight:700;">${escapeHtml(l.admin_username)}</span>
-        <span style="font-size:13px;">${escapeHtml(actionLabel(l.action))}</span>
-        <span style="font-size:12.5px;color:var(--text-muted);">${l.detail ? escapeHtml(l.detail) : '—'}</span>
-      </div>`
+        .map((l) =>
+          admRow([
+            {
+              label: '',
+              html: `<span style="font-size:13px;font-weight:700;">${escapeHtml(actionLabel(l.action))}</span>`,
+            },
+            { label: 'Waktu', html: `<span style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;">${escapeHtml(formatDateTimeID(l.created_at))}</span>` },
+            { label: 'Admin', html: `<span style="font-size:13.5px;font-weight:700;">${escapeHtml(l.admin_username)}</span>` },
+            { label: 'Detail', html: `<span style="font-size:12.5px;color:var(--text-muted);text-align:right;">${l.detail ? escapeHtml(l.detail) : '—'}</span>` },
+          ])
         )
         .join('')
-    : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">Tidak ada aktivitas yang cocok dengan filter ini.</div>`;
+    : '';
 
   const firstShown = total === 0 ? 0 : (current - 1) * (filters.per || 25) + 1;
   const lastShown = Math.min(current * (filters.per || 25), total);
@@ -1716,7 +2257,7 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
   const body = `
 <div class="admin-shell">
   ${adminSidebar('log', { isSuperadmin: true, username: admin.username })}
-  <main class="admin-main">
+  <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Log Aktivitas</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:20px;">Log Aktivitas</h1>
@@ -1772,17 +2313,18 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
       </a>
     </div>
 
-    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:1.3fr 1fr 1.4fr 1.6fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:660px;">
-        <span>WAKTU (WIB)</span><span>ADMIN</span><span>AKSI</span><span>DETAIL</span>
-      </div>
-      <div style="min-width:660px;">${rows}</div>
-    </div>
+    ${admTable({
+      cols: '1.4fr 1.3fr 1fr 1.6fr',
+      minWidth: 680,
+      head: ['AKSI', 'WAKTU (WIB)', 'ADMIN', 'DETAIL'],
+      rows,
+      empty: 'Tidak ada aktivitas yang cocok dengan filter ini.',
+    })}
     ${pager(filters, current, totalPages)}
   </main>
 </div>`;
 
-  return page({ title: 'Log Aktivitas — Admin Pecup', bodyHtml: body });
+  return page({ title: 'Log Aktivitas — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
 module.exports = {
@@ -1790,6 +2332,9 @@ module.exports = {
   renderPelangganDetail,
   renderLoyalitas,
   renderLaporan,
+  renderDashboard,
+  renderPengaturan,
+  renderVoucher,
   renderLogin,
   renderProdukList,
   renderProdukForm,

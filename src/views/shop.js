@@ -1,6 +1,8 @@
 const { page, customerHeader, customerFooter, backButton } = require('./layout');
-const { productThumb } = require('./productIcon');
+const { productThumb, productPhotos } = require('./productIcon');
 const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID } = require('../utils');
+
+const DEFAULT_PRODUCT_DESCRIPTION = 'Buah potong segar, dipotong higienis dan dikemas rapi dalam cup.';
 
 // Best Seller takes priority if a product is somehow flagged as both.
 function productBadge(p) {
@@ -39,23 +41,68 @@ const MINUS_ICON =
 const PLUS_ICON =
   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
 
-// Mirrors stepperMarkup() in layout.js's client script: the server renders
-// the first paint, the script re-renders the same shape after every change.
+// Mirrors stepperMarkup() in layout.js. The exact stock level is deliberately
+// NOT sent to the browser — it's competitive information, and shoppers don't
+// need it. The server clamps every quantity change and reports back only
+// whether the cap has been reached, so the "+" still greys out at the limit.
 function qtyControl({ key, productId, stock, qty }) {
+  const atMax = qty > 0 && qty >= stock;
   const inner =
     qty > 0
       ? `<span class="qty-stepper">
           <button class="qty-step" data-delta="-1" type="button" aria-label="Kurangi">${MINUS_ICON}</button>
           <span class="qty-value">${qty}</span>
           <button class="qty-step" data-delta="1" type="button" aria-label="Tambah"${
-            qty >= stock ? ' disabled title="Stok maksimum"' : ''
+            atMax ? ' disabled title="Stok tidak mencukupi"' : ''
           }>${PLUS_ICON}</button>
         </span>`
       : `<button class="add-btn qty-step" data-delta="1" type="button" title="Tambah ke keranjang" style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;">${PLUS_ICON}</button>`;
-  return `<div class="qty-control" data-key="${escapeAttr(key)}" data-product-id="${productId}" data-stock="${stock}" data-qty="${qty}">${inner}</div>`;
+  return `<div class="qty-control" data-key="${escapeAttr(key)}" data-product-id="${productId}" data-atmax="${
+    atMax ? '1' : ''
+  }" data-qty="${qty}">${inner}</div>`;
 }
 
-function renderBeranda({ products, cartCount, category, categories: dbCategories = [], cart = {}, customer = null }) {
+// Site-wide banner: "closed today", a holiday note, or a minimum-order
+// reminder. Rendered above everything so it can't be missed.
+function shopBanner(shop) {
+  if (!shop) return '';
+  if (!shop.open) {
+    return `<div style="background:#f6dcdc;color:#a13f3f;padding:14px 20px;text-align:center;font-size:13.5px;font-weight:700;line-height:1.6;">
+      ${escapeHtml(shop.notice || 'Pecup sedang tutup dan belum menerima pesanan. Sampai jumpa lagi nanti!')}
+    </div>`;
+  }
+  if (shop.notice) {
+    return `<div style="background:var(--orange-soft);color:#7a4a1f;padding:13px 20px;text-align:center;font-size:13.5px;font-weight:600;line-height:1.6;">
+      ${escapeHtml(shop.notice)}
+    </div>`;
+  }
+  return '';
+}
+
+function sortOptions(active) {
+  const opts = [
+    { value: '', label: 'Paling baru' },
+    { value: 'murah', label: 'Harga termurah' },
+    { value: 'mahal', label: 'Harga tertinggi' },
+    { value: 'nama', label: 'Nama A–Z' },
+  ];
+  return opts
+    .map((o) => `<option value="${o.value}" ${active === o.value ? 'selected' : ''}>${o.label}</option>`)
+    .join('');
+}
+
+function renderBeranda({
+  products,
+  cartCount,
+  category,
+  categories: dbCategories = [],
+  cart = {},
+  customer = null,
+  shop = null,
+  search = '',
+  sort = '',
+  totalProducts = 0,
+}) {
   const categories = ['Semua', ...dbCategories];
   const chips = categories
     .map((c) => {
@@ -109,9 +156,10 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
 
   const body = `
 <div class="frame-scroll"><div class="frame">
+  ${shopBanner(shop)}
   ${customerHeader(cartCount, null, customer)}
 
-  <section class="hero px-page" style="padding-top:88px;padding-bottom:72px;">
+  <section class="hero px-page" id="konten" style="padding-top:88px;padding-bottom:72px;">
     <div class="hero-copy">
       <div style="display:inline-flex;align-items:center;gap:8px;background:var(--green-soft);color:var(--green-dark);padding:8px 16px;border-radius:99px;font-size:13px;font-weight:600;width:fit-content;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
@@ -138,16 +186,55 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
   <section id="menu" class="px-page" style="display:flex;gap:12px;flex-wrap:wrap;">${chips}</section>
 
   <section class="px-page" style="padding-top:40px;padding-bottom:100px;">
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:8px;">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:16px;">
       <div>
         <span class="eyebrow">Segar hari ini</span>
         <h2 class="section-title" style="font-size:28px;font-weight:800;letter-spacing:-0.5px;">Menu Hari Ini</h2>
-        <p style="color:var(--text-muted);font-size:14.5px;margin-top:8px;">${products.length} produk tersedia${
-          category && category !== 'Semua' ? ` di kategori ${escapeHtml(category)}` : ''
-        }</p>
+        <p style="color:var(--text-muted);font-size:14.5px;margin-top:8px;">
+          ${
+            search
+              ? `${products.length} hasil untuk &ldquo;<strong>${escapeHtml(search)}</strong>&rdquo;`
+              : `${products.length} produk tersedia${category && category !== 'Semua' ? ` di kategori ${escapeHtml(category)}` : ''}`
+          }
+        </p>
       </div>
+      <form method="get" action="/" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        ${category && category !== 'Semua' ? `<input type="hidden" name="kategori" value="${escapeAttr(category)}">` : ''}
+        <div style="position:relative;display:flex;align-items:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:13px;pointer-events:none;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="cari" value="${escapeAttr(search)}" placeholder="Cari buah…"
+                 style="width:200px;padding:11px 14px 11px 38px;font-size:14px;border-radius:99px;">
+        </div>
+        <select name="urut" onchange="this.form.submit()" style="width:auto;padding:11px 14px;font-size:14px;border-radius:99px;">
+          ${sortOptions(sort)}
+        </select>
+        <button type="submit" class="btn-outline" style="padding:11px 20px;border-radius:99px;font-size:14px;font-weight:700;">Cari</button>
+        ${
+          search || sort
+            ? `<a href="${category && category !== 'Semua' ? `/?kategori=${encodeURIComponent(category)}` : '/'}#menu" style="font-size:13px;font-weight:600;">Reset</a>`
+            : ''
+        }
+      </form>
     </div>
-    <div class="grid-4">${cards}</div>
+    ${
+      products.length === 0 && search
+        ? `<div style="text-align:center;padding:56px 20px;background:var(--surface);border:1px solid var(--border);border-radius:20px;">
+            <div style="font-size:38px;margin-bottom:10px;">🍉</div>
+            <h3 style="font-size:18px;font-weight:800;margin-bottom:8px;">Tidak ketemu</h3>
+            <p style="font-size:14px;color:var(--text-muted);line-height:1.7;max-width:340px;margin:0 auto;">Tidak ada produk yang cocok dengan &ldquo;${escapeHtml(search)}&rdquo;. Coba kata lain, atau lihat semua ${totalProducts} produk kami.</p>
+            <a href="/#menu" class="btn-primary" style="display:inline-block;margin-top:18px;padding:13px 26px;border-radius:12px;font-size:14px;font-weight:700;">Lihat Semua Produk</a>
+          </div>`
+        : `<div class="grid-4">${cards}</div>`
+    }
+    ${
+      shop && shop.minOrder > 0
+        ? `<p style="margin-top:26px;font-size:13px;color:var(--text-muted);text-align:center;">Minimal belanja ${formatRupiah(shop.minOrder)} per pesanan.${
+            shop.freeDeliveryOver > 0 ? ` Gratis ongkir untuk belanja di atas ${formatRupiah(shop.freeDeliveryOver)}.` : ''
+          }</p>`
+        : shop && shop.freeDeliveryOver > 0
+        ? `<p style="margin-top:26px;font-size:13px;color:var(--text-muted);text-align:center;">Gratis ongkir untuk belanja di atas ${formatRupiah(shop.freeDeliveryOver)}.</p>`
+        : ''
+    }
   </section>
 
   <section id="cara-pesan" class="px-page" style="background:var(--surface-2);padding-top:72px;padding-bottom:72px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
@@ -259,7 +346,7 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
     </div>
   </div>
 
-  <section class="detail-layout px-page" style="padding-top:32px;padding-bottom:72px;">
+  <section class="detail-layout px-page" id="konten" style="padding-top:32px;padding-bottom:72px;">
     <div class="detail-img" style="position:relative;">${badgeHtml(product, { top: 12, left: 12 })}${productThumb(product, { size: 200, radius: 28, autoplay: true })}</div>
 
     <div class="detail-info">
@@ -278,7 +365,7 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
         ${wholesaleBadge(product)}
         <span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:${inStock ? '#58a05c' : '#a13f3f'};background:${inStock ? 'var(--green-soft)' : '#f6dcdc'};padding:5px 12px;border-radius:99px;">
           <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="${inStock ? '#58a05c' : '#a13f3f'}"/></svg>
-          ${inStock ? `Stok Tersedia (${product.stock})` : 'Stok Habis'}
+          ${inStock ? (product.stock <= 5 ? 'Tinggal Sedikit' : 'Stok Tersedia') : 'Stok Habis'}
         </span>
       </div>
       <p style="font-size:15px;line-height:1.8;color:var(--text-muted);max-width:480px;">${escapeHtml(product.description)}</p>
@@ -303,7 +390,34 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
   ${customerFooter()}
 </div></div>`;
 
-  return page({ title: `${product.name} — Pecup`, bodyHtml: body });
+  // Structured data so a search result can show the price and whether it's in
+  // stock. JSON.stringify handles the escaping; the closing-tag guard stops a
+  // product name containing "</script>" from breaking out of the block.
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: `${product.name} Cup`,
+    description: product.description || DEFAULT_PRODUCT_DESCRIPTION,
+    category: product.category,
+    image: productPhotos(product),
+    brand: { '@type': 'Brand', name: 'Pecup' },
+    offers: {
+      '@type': 'Offer',
+      price: Number(product.price) || 0,
+      priceCurrency: 'IDR',
+      availability: inStock ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    },
+  }).replace(/</g, '\\u003c');
+
+  return page({
+    title: `${product.name} Cup — Pecup`,
+    bodyHtml: body,
+    description: product.description
+      ? `${product.name} — ${product.description}`
+      : `${product.name} cup ${product.weight}, buah potong segar dari Pecup.`,
+    image: productPhotos(product)[0] || '/assets/pecup-logo.png',
+    extraHead: `<script type="application/ld+json">${jsonLd}</script>`,
+  });
 }
 
 function stepHeader(activeIndex) {
@@ -383,7 +497,7 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null }) {
   ${customerFooter()}
 </div></div>`;
 
-  return page({ title: 'Keranjang — Pecup', bodyHtml: body });
+  return page({ title: 'Keranjang — Pecup', bodyHtml: body, noindex: true });
 }
 
 function renderCheckout({
@@ -395,9 +509,22 @@ function renderCheckout({
   customer = null,
   reward = { available: 0, discount: 0, itemName: null },
   useReward = false,
+  shop = { open: true, notice: '', minOrder: 0, deliveryFee: 0, freeDeliveryOver: 0, sameDayCutoff: '' },
+  voucher = { applied: false, code: '', discount: 0, error: '', label: '' },
+  totals = null,
+  deliveryFee = 0,
 }) {
   const rewardOn = Boolean(useReward) && reward.available > 0;
-  const payable = Math.max(0, subtotal - (rewardOn ? reward.discount : 0));
+  const rewardCut = rewardOn ? reward.discount : 0;
+  const activeVoucher =
+    totals && rewardOn && totals.voucherWithReward ? totals.voucherWithReward : totals ? totals.voucherWithoutReward : voucher;
+  const voucherCut = activeVoucher.applied ? activeVoucher.discount : 0;
+  const payable = totals ? (rewardOn ? totals.withReward : totals.withoutReward) : Math.max(0, subtotal - rewardCut - voucherCut) + deliveryFee;
+  const belowMinimum = shop.minOrder > 0 && subtotal < shop.minOrder;
+  // Both totals precomputed server-side so ticking the free-cup box updates
+  // the number instantly and still matches what will actually be charged.
+  const totalFull = totals ? totals.withoutReward : Math.max(0, subtotal - voucherCut) + deliveryFee;
+  const totalDiscounted = totals ? totals.withReward : Math.max(0, subtotal - reward.discount - voucherCut) + deliveryFee;
   const summaryRows = items
     .map(
       (it) => `
@@ -476,6 +603,30 @@ function renderCheckout({
               : ''
           }
 
+          <div class="card">
+            <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Punya Kode Promo?</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Masukkan kodenya lalu klik Pakai untuk melihat potongannya.</p>
+            <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+              <input type="text" name="voucherCode" id="voucherInput" value="${escapeAttr(formValues.voucherCode || '')}"
+                     placeholder="Contoh: HEMAT10" maxlength="24" autocapitalize="characters" autocomplete="off"
+                     style="flex:1 1 180px;text-transform:uppercase;">
+              <button type="button" id="applyVoucherBtn" class="btn-outline"
+                      style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;white-space:nowrap;">Pakai</button>
+            </div>
+            ${
+              activeVoucher.applied
+                ? `<div style="display:flex;align-items:center;gap:9px;margin-top:14px;background:var(--green-soft);border-radius:10px;padding:12px 14px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span style="font-size:13px;color:var(--green-dark);font-weight:600;">Kode <strong>${escapeHtml(activeVoucher.code)}</strong> dipakai${
+                      activeVoucher.label ? ` — ${escapeHtml(activeVoucher.label)}` : ''
+                    }. Hemat ${formatRupiah(activeVoucher.discount)}.</span>
+                  </div>`
+                : activeVoucher.error
+                ? `<div style="margin-top:14px;background:#f6dcdc;border-radius:10px;padding:12px 14px;font-size:13px;color:#a13f3f;font-weight:600;">${escapeHtml(activeVoucher.error)}</div>`
+                : ''
+            }
+          </div>
+
           <div id="paymentSection" ${payable <= 0 ? 'hidden' : ''} style="display:flex;flex-direction:column;gap:24px;">
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:6px;">Info Pembayaran — QRIS</h3>
@@ -487,8 +638,8 @@ function renderCheckout({
             <div style="display:flex;flex-direction:column;gap:8px;background:var(--orange-soft);border-radius:12px;padding:14px 16px;margin-top:14px;">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                 <span style="font-size:13px;color:#7a4a1f;font-weight:600;">Transfer tepat sejumlah</span>
-                <span style="font-size:17px;font-weight:800;color:#7a4a1f;" data-total data-full="${escapeAttr(formatRupiah(subtotal))}" data-discounted="${escapeAttr(
-                  formatRupiah(Math.max(0, subtotal - reward.discount))
+                <span style="font-size:17px;font-weight:800;color:#7a4a1f;" data-total data-full="${escapeAttr(formatRupiah(totalFull))}" data-discounted="${escapeAttr(
+                  formatRupiah(totalDiscounted)
                 )}">${formatRupiah(payable)}</span>
               </div>
               <span style="font-size:12.5px;color:#7a4a1f;line-height:1.6;">Jangan dibulatkan — jumlah harus sama persis supaya pesananmu bisa langsung diverifikasi. Gunakan nama <strong>kamu sendiri</strong> sebagai nama pengirim/pembayar (bukan nama orang lain), sesuai Nama Lengkap di atas.</span>
@@ -524,10 +675,32 @@ function renderCheckout({
                 </div>`
               : ''
           }
-          <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:18px;margin-bottom:20px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:10px 0;color:var(--text-muted);">
+            <span>Subtotal</span><span class="tnum">${formatRupiah(subtotal)}</span>
+          </div>
+          ${
+            activeVoucher.applied
+              ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:#a15a1f;font-weight:700;">
+                  <span>Voucher ${escapeHtml(activeVoucher.code)}</span>
+                  <span class="tnum" style="white-space:nowrap;">&minus; ${formatRupiah(activeVoucher.discount)}</span>
+                </div>`
+              : ''
+          }
+          ${
+            deliveryFee > 0
+              ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:var(--text-muted);">
+                  <span>Ongkos antar</span><span class="tnum">${formatRupiah(deliveryFee)}</span>
+                </div>`
+              : shop.deliveryFee > 0
+              ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:var(--green-dark);font-weight:700;">
+                  <span>Ongkos antar</span><span>GRATIS</span>
+                </div>`
+              : ''
+          }
+          <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:800;padding-top:18px;margin-bottom:20px;border-top:1px solid var(--border);">
             <span>Total</span>
-            <span style="color:var(--green-dark);" data-total data-full="${escapeAttr(formatRupiah(subtotal))}" data-discounted="${escapeAttr(
-              formatRupiah(Math.max(0, subtotal - reward.discount))
+            <span class="tnum" style="color:var(--green-dark);" data-total data-full="${escapeAttr(formatRupiah(totalFull))}" data-discounted="${escapeAttr(
+              formatRupiah(totalDiscounted)
             )}">${formatRupiah(payable)}</span>
           </div>
           <div style="display:flex;align-items:flex-start;gap:10px;background:var(--surface-2);padding:14px;border-radius:12px;">
@@ -540,6 +713,28 @@ function renderCheckout({
   </section>
   ${customerFooter()}
 </div></div>
+<script>
+// "Pakai" re-loads checkout with ?voucher=CODE so the server can validate the
+// code and price it. Deliberately a round-trip, not a client-side guess: the
+// discount rules live in one place.
+(function(){
+  var btn = document.getElementById('applyVoucherBtn');
+  var input = document.getElementById('voucherInput');
+  if(!btn || !input) return;
+  function apply(){
+    var code = (input.value || '').trim().toUpperCase();
+    var url = new URL(window.location.href);
+    if(code) url.searchParams.set('voucher', code);
+    else url.searchParams.delete('voucher');
+    window.location.href = url.toString();
+  }
+  btn.addEventListener('click', apply);
+  // Enter inside the code field applies it rather than submitting the order.
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); apply(); }
+  });
+})();
+</script>
 ${
   reward.available > 0
     ? `<script>
@@ -570,7 +765,7 @@ ${
     : ''
 }`;
 
-  return page({ title: 'Checkout — Pecup', bodyHtml: body });
+  return page({ title: 'Checkout — Pecup', bodyHtml: body, noindex: true });
 }
 
 function renderSukses({ order, items, emailOk, customer = null }) {
@@ -632,7 +827,44 @@ function renderSukses({ order, items, emailOk, customer = null }) {
   </div>
 </div></div>`;
 
-  return page({ title: 'Pesanan Berhasil — Pecup', bodyHtml: body });
+  return page({ title: 'Pesanan Berhasil — Pecup', bodyHtml: body, noindex: true });
 }
 
-module.exports = { renderBeranda, renderProdukDetail, renderKeranjang, renderCheckout, renderSukses };
+// Friendly error page, used for 404s and 500s instead of a bare <h1>404</h1>.
+function renderError({ code = 404, title, message, cartCount = 0, customer = null }) {
+  const heading = title || (code === 404 ? 'Halaman tidak ditemukan' : 'Ada yang tidak beres');
+  const text =
+    message ||
+    (code === 404
+      ? 'Link-nya mungkin salah ketik, atau produknya sudah tidak tersedia lagi.'
+      : 'Terjadi kesalahan di sisi kami. Coba muat ulang sebentar lagi — kalau masih bermasalah, hubungi kami lewat WhatsApp.');
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount, null, customer)}
+  <main id="konten" class="px-page" style="display:flex;justify-content:center;padding-top:80px;padding-bottom:120px;">
+    <div style="max-width:480px;width:100%;text-align:center;display:flex;flex-direction:column;align-items:center;gap:18px;">
+      <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:78px;font-weight:800;line-height:1;
+                  background:linear-gradient(140deg, var(--orange), var(--green));-webkit-background-clip:text;
+                  background-clip:text;color:transparent;letter-spacing:-3px;">${code}</div>
+      <h1 style="font-size:24px;font-weight:800;">${escapeHtml(heading)}</h1>
+      <p style="font-size:15px;color:var(--text-muted);line-height:1.75;">${escapeHtml(text)}</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:6px;">
+        <a href="/" class="btn-primary" style="padding:14px 26px;border-radius:12px;font-size:14.5px;font-weight:700;">Kembali ke Beranda</a>
+        <a href="/#menu" class="btn-outline" style="padding:14px 26px;border-radius:12px;font-size:14.5px;font-weight:700;">Lihat Menu</a>
+      </div>
+      <a href="https://wa.me/6281245684104" target="_blank" rel="noopener" style="font-size:13.5px;margin-top:8px;">Butuh bantuan? Chat WhatsApp kami →</a>
+    </div>
+  </main>
+  ${customerFooter()}
+</div></div>`;
+
+  return page({
+    title: `${code} — ${heading} | Pecup`,
+    bodyHtml: body,
+    noindex: true,
+    description: text,
+  });
+}
+
+module.exports = { renderBeranda, renderProdukDetail, renderKeranjang, renderCheckout, renderSukses, renderError };

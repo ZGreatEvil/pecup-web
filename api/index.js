@@ -18,11 +18,20 @@ const customerSession = require('../src/customerSession');
 const customerAuth = require('../src/customerAuth');
 const settings = require('../src/settings');
 const loyalty = require('../src/loyalty');
+const vouchers = require('../src/vouchers');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const { logAdminAction, queryAdminLogs, listLogFilters } = require('../src/adminLog');
 const queries = require('../src/queries');
-const { toDateKey, formatRupiah, normalizeWhatsapp, formatWhatsapp, ORDER_STATUSES } = require('../src/utils');
+const {
+  toDateKey,
+  toDateOnly,
+  csvEscape,
+  formatRupiah,
+  normalizeWhatsapp,
+  formatWhatsapp,
+  ORDER_STATUSES,
+} = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
 const { saveProductImage, saveProofFile, signedProofUrl } = require('../src/uploads');
@@ -50,18 +59,96 @@ router.get('/assets/pecup-logo.png', (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// crawlers
+// ---------------------------------------------------------------------
+
+// Works out the public origin from the request, so this is correct on the
+// Vercel domain, a custom domain, and localhost without configuration.
+function originFor(req) {
+  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  return `${proto}://${host}`;
+}
+
+router.get('/robots.txt', (req, res) => {
+  // The admin panel and anything tied to a personal session must stay out of
+  // search results entirely.
+  const body = `User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /akun
+Disallow: /keranjang
+Disallow: /checkout
+Disallow: /masuk
+Disallow: /daftar
+Disallow: /pesanan-berhasil
+
+Sitemap: ${originFor(req)}/sitemap.xml
+`;
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+  res.end(body);
+});
+
+router.get('/sitemap.xml', async (req, res) => {
+  const origin = originFor(req);
+  const products = await queries.listProducts({ onlyActive: true });
+  const urls = [
+    { loc: `${origin}/`, priority: '1.0', freq: 'daily' },
+    ...products.map((p) => ({
+      loc: `${origin}/produk/${p.id}`,
+      priority: '0.8',
+      freq: 'weekly',
+      lastmod: p.created_at ? new Date(p.created_at).toISOString().slice(0, 10) : null,
+    })),
+  ];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls
+  .map(
+    (u) => `  <url>
+    <loc>${escapeXml(u.loc)}</loc>${u.lastmod ? `\n    <lastmod>${u.lastmod}</lastmod>` : ''}
+    <changefreq>${u.freq}</changefreq>
+    <priority>${u.priority}</priority>
+  </url>`
+  )
+  .join('\n')}
+</urlset>`;
+  res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+  res.end(xml);
+});
+
+// ---------------------------------------------------------------------
 // storefront
 // ---------------------------------------------------------------------
 
 router.get('/', async (req, res, { query }) => {
   const category = query.get('kategori');
-  let [products, categories] = await Promise.all([
+  const search = (query.get('cari') || '').trim();
+  const sort = query.get('urut') || '';
+
+  const [all, categories, shop] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     queries.listCategories(),
+    settings.shopConfig(),
   ]);
-  if (category && category !== 'Semua') {
-    products = products.filter((p) => p.category === category);
+
+  let products = all;
+  if (category && category !== 'Semua') products = products.filter((p) => p.category === category);
+  if (search) {
+    // Matches name, description or category, so "manis" and "salad" both work.
+    const needle = search.toLowerCase();
+    products = products.filter((p) =>
+      [p.name, p.description, p.category].some((field) => String(field || '').toLowerCase().includes(needle))
+    );
   }
+
+  const sorters = {
+    murah: (a, b) => Number(a.price) - Number(b.price),
+    mahal: (a, b) => Number(b.price) - Number(a.price),
+    nama: (a, b) => String(a.name).localeCompare(String(b.name), 'id'),
+  };
+  if (sorters[sort]) products = [...products].sort(sorters[sort]);
+
   sendHtml(
     res,
     shopViews.renderBeranda({
@@ -71,6 +158,10 @@ router.get('/', async (req, res, { query }) => {
       categories,
       cart: req.cart,
       customer: req.customer,
+      shop,
+      search,
+      sort,
+      totalProducts: all.length,
     })
   );
 });
@@ -176,6 +267,8 @@ router.post('/keranjang/set-qty', async (req, res) => {
     ok: true,
     key,
     qty,
+    // Only whether the cap was hit — never the stock level itself.
+    atMax: qty > 0 && qty >= Math.max(Number(product.stock) || 0, 0),
     cartCount: cartLib.cartCount(req.cart),
     lineSubtotal: formatRupiah(line ? line.subtotal : 0),
     subtotal: formatRupiah(subtotal),
@@ -396,16 +489,21 @@ router.post('/akun/password', requireCustomer(async (req, res, { customer }) => 
   redirect(res, '/akun?ok=1');
 }));
 
-router.get('/checkout', async (req, res) => {
+router.get('/checkout', async (req, res, { query }) => {
   const { items, subtotal } = await cartLib.buildCartItems(req.cart);
   if (items.length === 0) return redirect(res, '/keranjang');
 
   // Signed-in shoppers get the form pre-filled from their saved profile —
   // that's the whole point of having an account.
-  const [saved, reward] = await Promise.all([
+  const [saved, reward, shop] = await Promise.all([
     req.customer ? customerAuth.findById(req.customer.customerId) : null,
     rewardPreview(req.customer, items),
+    settings.shopConfig(),
   ]);
+  const code = query.get('voucher') || '';
+  const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
+  const totals = await checkoutTotals({ code, subtotal, reward, deliveryFee });
+
   sendHtml(
     res,
     shopViews.renderCheckout({
@@ -414,9 +512,18 @@ router.get('/checkout', async (req, res) => {
       cartCount: cartLib.cartCount(req.cart),
       customer: saved,
       reward,
+      shop,
+      voucher: totals.voucherWithoutReward,
+      totals,
+      deliveryFee,
       formValues: saved
-        ? { customerName: saved.name, whatsapp: formatWhatsapp(saved.whatsapp), address: saved.address }
-        : {},
+        ? {
+            customerName: saved.name,
+            whatsapp: formatWhatsapp(saved.whatsapp),
+            address: saved.address,
+            voucherCode: code,
+          }
+        : { voucherCode: code },
     })
   );
 });
@@ -446,7 +553,15 @@ router.post('/checkout', async (req, res) => {
   // use a reward, and the database re-checks eligibility again at insert time.
   const reward = await rewardPreview(req.customer, items);
   const useReward = Boolean(fields.useReward) && reward.available > 0;
-  const payable = Math.max(0, subtotal - (useReward ? reward.discount : 0));
+  const rewardDiscount = useReward ? reward.discount : 0;
+
+  const shop = await settings.shopConfig();
+  const voucherCode = vouchers.normalizeCode(fields.voucherCode || '');
+  const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
+  const totals = await checkoutTotals({ code: voucherCode, subtotal, reward, deliveryFee });
+  // Match the voucher preview to whether the free cup is actually being used.
+  const voucher = useReward && totals.voucherWithReward ? totals.voucherWithReward : totals.voucherWithoutReward;
+  const payable = useReward ? totals.withReward : totals.withoutReward;
 
   const errors = [];
   const customerName = (fields.customerName || '').trim();
@@ -454,6 +569,16 @@ router.post('/checkout', async (req, res) => {
   const notes = (fields.notes || '').trim();
   const address = (fields.address || '').trim();
   const deliveryDate = (fields.deliveryDate || '').trim();
+
+  // Shop-level gates first — no point validating a form for an order that
+  // can't be accepted at all.
+  if (!shop.open) {
+    errors.push(shop.notice || 'Maaf, Pecup sedang tutup dan belum menerima pesanan.');
+  }
+  if (shop.minOrder > 0 && subtotal < shop.minOrder) {
+    errors.push(`Minimal belanja ${formatRupiah(shop.minOrder)}. Tambah beberapa cup lagi ya.`);
+  }
+  if (voucherCode && voucher.error) errors.push(voucher.error);
 
   if (!customerName) errors.push('Nama lengkap wajib diisi.');
   const normalizedWhatsapp = normalizeWhatsapp(whatsapp);
@@ -467,6 +592,10 @@ router.post('/checkout', async (req, res) => {
     errors.push('Tanggal pengantaran tidak valid.');
   } else if (deliveryDate < toDateKey(new Date())) {
     errors.push('Tanggal pengantaran tidak boleh di masa lalu.');
+  } else if (deliveryDate === toDateKey(new Date()) && pastSameDayCutoff(shop.sameDayCutoff)) {
+    errors.push(
+      `Pesanan untuk hari ini sudah ditutup pukul ${shop.sameDayCutoff} WIB. Pilih tanggal besok atau setelahnya.`
+    );
   }
   // A fully-waived order has nothing to transfer, so don't demand a proof.
   if (payable > 0 && !files.proof) errors.push('Bukti transfer wajib diunggah.');
@@ -476,7 +605,8 @@ router.post('/checkout', async (req, res) => {
 
   for (const it of items) {
     if (it.qty > it.product.stock) {
-      errors.push(`Stok ${it.product.name} tidak mencukupi (tersisa ${it.product.stock}).`);
+      // Deliberately no number: shoppers don't get to see stock levels.
+      errors.push(`Stok ${it.product.name} tidak mencukupi. Kurangi jumlahnya lalu coba lagi.`);
     }
   }
 
@@ -490,8 +620,12 @@ router.post('/checkout', async (req, res) => {
         customer: req.customer,
         reward,
         useReward,
+        shop,
+        voucher,
+        totals,
+        deliveryFee,
         errors,
-        formValues: { customerName, whatsapp, notes, address, deliveryDate },
+        formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
   }
@@ -520,6 +654,10 @@ router.post('/checkout', async (req, res) => {
       deliveryDate,
       customerId: req.customer ? req.customer.customerId : null,
       useReward,
+      // Only the code text is sent; create_order works out what it's worth
+      // and consumes it under a row lock.
+      voucherCode: voucher.applied ? voucher.code : null,
+      deliveryFee,
     });
   } catch (err) {
     console.error(err);
@@ -532,8 +670,12 @@ router.post('/checkout', async (req, res) => {
         customer: req.customer,
         reward,
         useReward,
+        shop,
+        voucher,
+        totals,
+        deliveryFee,
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
-        formValues: { customerName, whatsapp, notes, address, deliveryDate },
+        formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
   }
@@ -575,7 +717,14 @@ router.get('/pesanan-berhasil/:id', async (req, res) => {
 // admin: auth
 // ---------------------------------------------------------------------
 
-router.get('/admin', (req, res) => redirect(res, '/admin/produk'));
+router.get('/admin', requireAdmin(async (req, res) => {
+  const todayKey = toDateKey(new Date());
+  const [data, shop] = await Promise.all([
+    queries.dashboardData({ todayKey, monthStart: `${todayKey.slice(0, 7)}-01` }),
+    settings.shopConfig(),
+  ]);
+  sendHtml(res, adminViews.renderDashboard({ admin: req.admin, shop, ...data }));
+}));
 
 router.get('/admin/login', (req, res) => {
   if (req.isAdmin) return redirect(res, '/admin/produk');
@@ -585,6 +734,15 @@ router.get('/admin/login', (req, res) => {
 router.post('/admin/login', async (req, res) => {
   const { fields } = await parseBody(req);
   const admin = await adminAuth.checkCredentials(fields.username, fields.password);
+  if (admin && admin.lockedOut) {
+    return sendHtml(
+      res,
+      adminViews.renderLogin({
+        error: 'Terlalu banyak percobaan gagal. Tunggu 15 menit lalu coba lagi.',
+      }),
+      429
+    );
+  }
   if (admin) {
     setCookie(res, adminSession.COOKIE_NAME, adminSession.issueToken(admin), { maxAge: adminSession.MAX_AGE_SECONDS });
     await logAdminAction(admin, 'login', null);
@@ -886,7 +1044,7 @@ router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
   res.end(csv);
 }));
 
-router.get('/admin/pesanan/:id', requireAdmin(async (req, res) => {
+router.get('/admin/pesanan/:id', requireAdmin(async (req, res, { query }) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
   const items = await queries.getOrderItems(order.id);
@@ -900,7 +1058,18 @@ router.get('/admin/pesanan/:id', requireAdmin(async (req, res) => {
   }
   // Signed-in customers have a stamp card; guest orders don't.
   const loyaltyStatus = order.customer_id ? await loyalty.statusFor(Number(order.customer_id)) : null;
-  sendHtml(res, adminViews.renderPesananDetail({ order, items, proofUrl, admin: req.admin, loyalty: loyaltyStatus }));
+  sendHtml(
+    res,
+    adminViews.renderPesananDetail({
+      order,
+      items,
+      proofUrl,
+      admin: req.admin,
+      loyalty: loyaltyStatus,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
 }));
 
 router.post('/admin/pesanan/:id/tukar-stempel', requireAdmin(async (req, res) => {
@@ -925,18 +1094,128 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   const status = ORDER_STATUSES.some((s) => s.value === fields.status) ? fields.status : 'menunggu';
 
   const order = await queries.getOrder(id);
-  if (!order) return notFound(res);
-  await queries.updateOrderStatus(id, status);
+  if (!order) return notFound(res, req);
 
-  // Completing an order earns a stamp; moving it back out takes an unspent
-  // one away again. Both are no-ops for guest orders.
-  if (order.customer_id) {
-    if (status === 'selesai') await loyalty.grantForOrder(Number(order.customer_id), id);
-    else if (order.status === 'selesai') await loyalty.revokeForOrder(id);
+  // Cancelling gives the reserved cups back to stock; un-cancelling takes
+  // them again. setOrderCancelled() owns both the status change and the stock
+  // movement so they can't get out of step.
+  const wasCancelled = order.status === 'dibatalkan';
+  const nowCancelled = status === 'dibatalkan';
+
+  if (nowCancelled !== wasCancelled) {
+    const result = await queries.setOrderCancelled(id, nowCancelled);
+    if (!result.ok) {
+      return redirect(res, `/admin/pesanan/${id}?error=` + encodeURIComponent('Status sudah diubah orang lain. Muat ulang halaman ini.'));
+    }
+    // Un-cancelling lands on 'menunggu'; if the admin picked something else,
+    // apply that on top now the stock is settled.
+    if (!nowCancelled && status !== 'menunggu') await queries.updateOrderStatus(id, status);
+  } else {
+    await queries.updateOrderStatus(id, status);
   }
 
-  await logAdminAction(req.admin, 'order.status_update', `#${id} -> ${status}`);
+  // Completing an order earns a stamp; moving it back out takes an unspent
+  // one away again. A cancelled order must not hold a stamp either.
+  if (order.customer_id) {
+    if (status === 'selesai') await loyalty.grantForOrder(Number(order.customer_id), id);
+    else if (order.status === 'selesai' || nowCancelled) await loyalty.revokeForOrder(id);
+  }
+
+  await logAdminAction(
+    req.admin,
+    'order.status_update',
+    `${order.order_number} -> ${status}${nowCancelled !== wasCancelled ? (nowCancelled ? ' (stok dikembalikan)' : ' (stok dipotong lagi)') : ''}`
+  );
   redirect(res, `/admin/pesanan/${id}`);
+}));
+
+// ---------------------------------------------------------------------
+// admin: shop settings & promo codes (superadmin only)
+// ---------------------------------------------------------------------
+
+router.get('/admin/pengaturan', requireSuperadmin(async (req, res, { query }) => {
+  sendHtml(
+    res,
+    adminViews.renderPengaturan({
+      admin: req.admin,
+      shop: await settings.shopConfig(),
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const num = (value) => Math.max(0, Math.round(Number(value) || 0));
+  const cutoff = (fields.sameDayCutoff || '').trim();
+  if (cutoff && !/^\d{2}:\d{2}$/.test(cutoff)) {
+    return redirect(res, '/admin/pengaturan?error=' + encodeURIComponent('Format jam tutup tidak valid.'));
+  }
+
+  await Promise.all([
+    settings.setValue('shop_open', fields.shopOpen ? '1' : '0'),
+    settings.setValue('shop_notice', (fields.shopNotice || '').trim().slice(0, 200)),
+    settings.setValue('min_order', num(fields.minOrder)),
+    settings.setValue('delivery_fee', num(fields.deliveryFee)),
+    settings.setValue('free_delivery_over', num(fields.freeDeliveryOver)),
+    settings.setValue('same_day_cutoff', cutoff),
+  ]);
+  await logAdminAction(req.admin, 'settings.update', `toko ${fields.shopOpen ? 'buka' : 'tutup'}`);
+  redirect(res, '/admin/pengaturan?flash=' + encodeURIComponent('Pengaturan toko disimpan.'));
+}));
+
+router.get('/admin/voucher', requireSuperadmin(async (req, res, { query }) => {
+  sendHtml(
+    res,
+    adminViews.renderVoucher({
+      admin: req.admin,
+      vouchers: await vouchers.list(),
+      kinds: vouchers.KINDS,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/voucher/tambah', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const result = await vouchers.create({
+    code: fields.code,
+    kind: fields.kind,
+    amount: fields.amount,
+    minSpend: fields.minSpend,
+    maxDiscount: fields.maxDiscount,
+    usageLimit: fields.usageLimit,
+    expiresAt: (fields.expiresAt || '').trim() || null,
+  });
+  if (!result.ok) return redirect(res, '/admin/voucher?error=' + encodeURIComponent(result.error));
+
+  await logAdminAction(req.admin, 'voucher.create', result.code);
+  redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${result.code} dibuat.`));
+}));
+
+router.post('/admin/voucher/:id/toggle', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const all = await vouchers.list();
+  const target = all.find((v) => Number(v.id) === id);
+  if (!target) return notFound(res, req);
+
+  await vouchers.setActive(id, !target.active);
+  await logAdminAction(req.admin, 'voucher.update', `${target.code} -> ${target.active ? 'nonaktif' : 'aktif'}`);
+  redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${target.code} diperbarui.`));
+}));
+
+router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
+  const id = Number(req.params.id);
+  const all = await vouchers.list();
+  const target = all.find((v) => Number(v.id) === id);
+  if (!target) return notFound(res, req);
+
+  await vouchers.remove(id);
+  await logAdminAction(req.admin, 'voucher.delete', target.code);
+  redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${target.code} dihapus.`));
 }));
 
 // ---------------------------------------------------------------------
@@ -1076,6 +1355,42 @@ router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
       error: query.get('error') || '',
     })
   );
+}));
+
+// Registered with /:id below it, so this literal path has to be declared
+// first or "unduh" would be read as a customer id.
+router.get('/admin/pelanggan/unduh', requireSuperadmin(async (req, res) => {
+  const customers = await loyalty.listCustomersWithLoyalty({ limit: 500 });
+  const header = [
+    'Nama',
+    'WhatsApp',
+    'Bergabung',
+    'Ulang Tahun',
+    'Stempel Aktif',
+    'Klaim Cup Gratis',
+    'Tier',
+    'Stempel Hangus',
+  ];
+  const lines = [header.map(csvEscape).join(',')];
+  for (const c of customers) {
+    lines.push(
+      [
+        c.name,
+        formatWhatsapp(c.whatsapp),
+        toDateOnly(c.created_at),
+        c.birthday ? toDateOnly(c.birthday) : '',
+        String(c.stamps),
+        String(c.claims),
+        c.tiersEnabled ? c.tier.name : '',
+        c.expiresLabel || '',
+      ].map(csvEscape).join(',')
+    );
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="pelanggan-pecup-${toDateKey(new Date())}.csv"`,
+  });
+  res.end('﻿' + lines.join('\r\n'));
 }));
 
 router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
@@ -1358,6 +1673,39 @@ function requireSuperadmin(handler) {
 // What the loyalty reward would be worth on this exact cart. The cheapest cup
 // is the one waived — that's the rule create_order enforces too, so what the
 // shopper is shown and what they're charged can't drift apart.
+// A percentage voucher applies to what's left after the free cup, so ticking
+// "use my free cup" changes what the voucher is worth. Both totals are worked
+// out here so the checkbox can update the total instantly without the browser
+// having to re-derive discount rules it shouldn't know about.
+async function checkoutTotals({ code, subtotal, reward, deliveryFee }) {
+  const rewardDiscount = reward.available > 0 ? reward.discount : 0;
+  const [voucherWithoutReward, voucherWithReward] = await Promise.all([
+    voucherPreview(code, subtotal, 0),
+    rewardDiscount > 0 ? voucherPreview(code, subtotal, rewardDiscount) : Promise.resolve(null),
+  ]);
+  const withoutReward = Math.max(0, subtotal - voucherWithoutReward.discount) + deliveryFee;
+  const withReward =
+    rewardDiscount > 0
+      ? Math.max(0, subtotal - rewardDiscount - voucherWithReward.discount) + deliveryFee
+      : withoutReward;
+  return { voucherWithoutReward, voucherWithReward, withoutReward, withReward };
+}
+
+// Advisory only — create_order re-validates and consumes the code under a row
+// lock. This exists so the shopper sees the saving before they commit.
+async function voucherPreview(code, subtotal, rewardDiscount) {
+  if (!code) return { applied: false, code: '', discount: 0, error: '' };
+  try {
+    return await vouchers.preview(code, {
+      subtotal,
+      discountable: Math.max(0, subtotal - rewardDiscount),
+    });
+  } catch (err) {
+    console.error('voucher preview failed:', err.message);
+    return { applied: false, code, discount: 0, error: 'Gagal memeriksa kode voucher.' };
+  }
+}
+
 async function rewardPreview(sessionCustomer, items) {
   if (!sessionCustomer || !items.length) return { available: 0, discount: 0, itemName: null, perReward: 0 };
   const status = await loyalty.statusFor(sessionCustomer.customerId);
@@ -1441,6 +1789,31 @@ function resolveRange(key, todayKey) {
   }
 }
 
+// Whether "today" is already past the shop's same-day cut-off. Compared in
+// WIB, not the server's timezone — the function runs in Singapore and the
+// shop runs on Jakarta time.
+function pastSameDayCutoff(cutoff) {
+  if (!cutoff) return false;
+  const nowWib = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
+  return nowWib > cutoff;
+}
+
+// XML has a different escaping set from HTML — & < > " ' all need entities,
+// and a stray one makes the whole sitemap unparseable.
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 function shiftDateKey(dateKey, deltaDays) {
   const d = new Date(dateKey + 'T00:00:00');
   d.setDate(d.getDate() + deltaDays);
@@ -1469,9 +1842,15 @@ function redirect(res, location) {
   res.end();
 }
 
-function notFound(res) {
+function notFound(res, req) {
   res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end('<h1>404</h1><p>Halaman tidak ditemukan. <a href="/">Kembali ke beranda</a></p>');
+  res.end(
+    shopViews.renderError({
+      code: 404,
+      cartCount: req ? cartLib.cartCount(req.cart) : 0,
+      customer: req ? req.customer : null,
+    })
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -1504,7 +1883,7 @@ module.exports = async (req, res) => {
     req.customer = customerSession.verify(cookies[customerSession.COOKIE_NAME]);
 
     const match = router.match(req.method, pathname);
-    if (!match) return notFound(res);
+    if (!match) return notFound(res, req);
 
     req.params = match.params;
     await match.handler(req, res, { query: url.searchParams });
@@ -1512,7 +1891,8 @@ module.exports = async (req, res) => {
     console.error(err);
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<h1>500</h1><p>Terjadi kesalahan pada server. Coba lagi.</p>');
+      // Never leak the underlying error to the visitor — it's already logged.
+      res.end(shopViews.renderError({ code: 500, cartCount: 0, customer: null }));
     }
   }
 };

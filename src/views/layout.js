@@ -37,11 +37,44 @@ const SHARED_STYLE = `
   label{font-size:13.5px;font-weight:600;color:var(--text);display:block;margin-bottom:8px;}
   .req{color:#c94f4f;}
   :focus-visible{outline:2.5px solid var(--orange);outline-offset:2px;border-radius:4px;}
+  /* Keyboard users can jump straight past the header nav. Off-screen until
+     focused, which is the standard pattern. */
+  .skip-link{position:absolute;left:-9999px;top:0;z-index:200;background:var(--green);color:#fff;
+    padding:12px 20px;border-radius:0 0 10px 0;font-size:14px;font-weight:700;}
+  .skip-link:focus{left:0;text-decoration:none;}
+  /* Anything marked as decorative is hidden from assistive tech, and visually
+     hidden text is available to it. */
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+    clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+  /* Printing an order or a report shouldn't carry the chrome with it. */
+  @media print{
+    .site-header, .site-header-grid, .admin-sidebar, .admin-topbar, footer,
+    .back-btn, .skip-link, .chip, form[method="get"]{display:none !important;}
+    body{background:#fff;}
+    .card, .adm-table{box-shadow:none;border-color:#ddd;break-inside:avoid;}
+    a{color:inherit;text-decoration:none;}
+    .admin-main{padding:0;}
+  }
   input, textarea, select{
     width:100%;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:13px 15px;
     font-family:'Work Sans',sans-serif;font-size:14.5px;color:var(--text);background:var(--surface);outline:none;
     transition:border-color 0.18s ease;
   }
+  /* The native select arrow is drawn by the OS at the very edge of the box and
+     nothing reserves room for it, so long option text ran underneath it and it
+     read as sitting outside the field. Draw our own and always keep 38px of
+     padding clear on the right for it. */
+  select{
+    appearance:none;-webkit-appearance:none;-moz-appearance:none;
+    padding-right:38px !important;cursor:pointer;
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23555f6d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 14px center;background-size:11px 8px;
+    text-overflow:ellipsis;
+  }
+  select::-ms-expand{display:none;}
+  /* A select inside a fixed-basis flex column must be allowed to shrink, or a
+     long option name forces the field wider than its container. */
+  select, input, textarea{min-width:0;max-width:100%;}
   input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-sm);}
@@ -292,6 +325,42 @@ const SHARED_STYLE = `
   table.admin-table{width:100%;border-collapse:collapse;}
   .table-scroll{overflow-x:auto;}
 
+  /* ---- responsive admin table ----
+     Desktop: a grid whose columns come from --cols on the wrapper.
+     Phone: the header is dropped and every row becomes a stacked card, each
+     value labelled from its column name. That's what makes the admin usable
+     on a phone instead of a wide table you have to drag sideways. */
+  .adm-table{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .adm-head{display:grid;grid-template-columns:var(--cols);gap:12px;padding:14px 20px;background:var(--surface-2);
+    font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;}
+  .adm-row{display:grid;grid-template-columns:var(--cols);gap:12px;align-items:center;padding:14px 20px;
+    border-top:1px solid var(--border);color:inherit;}
+  .adm-empty{padding:36px 22px;color:var(--text-muted);font-size:14px;text-align:center;}
+  @media (min-width: 861px){
+    /* Only the inner scroller needs a min-width, and only on desktop — on a
+       phone the stacked layout means there is nothing to scroll sideways. */
+    .adm-scroll{overflow-x:auto;}
+    .adm-head, .adm-rows{min-width:var(--min, auto);}
+  }
+  /* Icon-only buttons get a text label once they're in a stacked card, where
+     there's room and no column header to explain them. */
+  .hide-desktop{display:none;}
+  @media (max-width: 860px){
+    .hide-desktop{display:inline;}
+    .adm-head{display:none;}
+    .adm-row{grid-template-columns:1fr;gap:9px;padding:16px;}
+    .adm-cell{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0;}
+    .adm-cell::before{content:attr(data-label);flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:0.5px;
+      text-transform:uppercase;color:var(--text-muted);}
+    /* A cell with no label (the lead cell, or an actions cell) spans the
+       full width instead of sitting in a label/value pair. */
+    .adm-cell[data-label=""]{display:block;}
+    .adm-cell[data-label=""]::before{display:none;}
+    .adm-cell > *{min-width:0;}
+    /* Let forms inside a row breathe rather than squashing into a corner. */
+    .adm-cell form{flex-wrap:wrap;justify-content:flex-end;}
+  }
+
   @media (max-width: 1180px){
     .px-page{padding-left:56px;padding-right:56px;}
     .site-header, .site-header-grid{padding-left:56px;padding-right:56px;}
@@ -314,6 +383,17 @@ const SHARED_STYLE = `
     .admin-nav-toggle:checked ~ .admin-sidebar{display:flex;animation:pecup-fade-up 0.22s ease both;}
     .admin-sidebar .admin-sidebar-brand{display:none;}
     .admin-main{padding:24px 20px;}
+    /* Filter bars are built as flex rows with fixed pixel bases for desktop.
+       On a phone those bases fight each other and fields end up clipped, so
+       let every field take the full width and stack. */
+    .admin-main form > div[style*="flex:0 1"],
+    .admin-main form > div[style*="flex:1 1"]{flex:1 1 100% !important;}
+    .admin-main form > button, .admin-main form > a{flex:1 1 100%;text-align:center;justify-content:center;}
+    /* Stat grids read better as two columns than four squeezed ones. */
+    .admin-main .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));}
+  }
+  @media (max-width: 520px){
+    .admin-main .grid-4{grid-template-columns:1fr;}
   }
   @media (max-width: 640px){
     /* Below this width, drop back to a wrapping flex row — with limited
@@ -335,31 +415,64 @@ const SHARED_STYLE = `
   }
 `;
 
-function page({ title, bodyHtml, extraHead = '' }) {
+const SITE_NAME = 'Pecup';
+const DEFAULT_DESCRIPTION =
+  'Buah potong segar Pecup — dipotong higienis tiap pagi, dikemas rapi dalam cup, dan diantar langsung ke kantor atau rumahmu.';
+
+function page({
+  title,
+  bodyHtml,
+  extraHead = '',
+  description = DEFAULT_DESCRIPTION,
+  // Admin screens must never be indexed, and shouldn't advertise themselves
+  // in a link preview either.
+  noindex = false,
+  image = '/assets/pecup-logo.png',
+  canonical = '',
+} = {}) {
+  const desc = escapeAttr(String(description).slice(0, 300));
   return `<!doctype html>
 <html lang="id">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+<meta name="description" content="${desc}">
+<meta name="theme-color" content="#e88a3a">
+${noindex ? '<meta name="robots" content="noindex, nofollow">' : '<meta name="robots" content="index, follow">'}
+${canonical ? `<link rel="canonical" href="${escapeAttr(canonical)}">` : ''}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="${SITE_NAME}">
+<meta property="og:title" content="${escapeAttr(title)}">
+<meta property="og:description" content="${desc}">
+<meta property="og:image" content="${escapeAttr(image)}">
+<meta property="og:locale" content="id_ID">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${escapeAttr(title)}">
+<meta name="twitter:description" content="${desc}">
+<meta name="twitter:image" content="${escapeAttr(image)}">
 <link rel="icon" type="image/png" href="/assets/pecup-logo.png">
 <link rel="apple-touch-icon" href="/assets/pecup-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Work+Sans:wght@400;500;600&display=swap">
 <style>${SHARED_STYLE}</style>
 ${extraHead}
 </head>
 <body>
+<a class="skip-link" href="#konten">Lewati ke konten utama</a>
 ${bodyHtml}
 ${CART_SCRIPT}
 </body>
 </html>`;
 }
 
-// Always renders a real link (never history.back()) so the destination is
-// predictable no matter how the shopper arrived — deep link, refresh, or
-// a normal click-through.
+// Goes back to wherever the visitor actually came from, falling back to the
+// given href when there's no in-site history to return to (deep link, fresh
+// tab, arrived from an external site). The href is always a real link, so
+// this still works with JS off and middle-click/open-in-new-tab behave.
 function backButton(href, label = 'Kembali') {
-  return `<a class="back-btn" href="${href}">
+  return `<a class="back-btn" href="${href}" data-back>
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
     ${escapeHtml(label)}
   </a>`;
@@ -487,6 +600,28 @@ const CART_SCRIPT = `
     if(form) form.requestSubmit();
   });
 
+  // ---- Back button -------------------------------------------------------
+  // "Kembali" should return to the page you were actually on, not a fixed
+  // destination. Only steps back when the previous page was on this site and
+  // there's history to step into; otherwise the link's href is followed as a
+  // sensible default.
+  document.addEventListener('click', function(e){
+    if(!e.target.closest || e.defaultPrevented) return;
+    if(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    var link = e.target.closest('a[data-back]');
+    if(!link) return;
+    var ref = document.referrer;
+    if(!ref || history.length <= 1) return;
+    try{
+      if(new URL(ref).origin !== window.location.origin) return;
+      // Coming "back" to the page we're already on would look like nothing
+      // happened — let the fallback href handle it.
+      if(new URL(ref).href === window.location.href) return;
+    }catch(err){ return; }
+    e.preventDefault();
+    history.back();
+  });
+
   // ---- Same-page links ---------------------------------------------------
   // Clicking "Beranda" while already on the home page used to re-navigate to
   // "/", which re-renders the whole page and drops the shopper wherever the
@@ -609,25 +744,26 @@ const CART_SCRIPT = `
     return card ? card.querySelector('img') : null;
   }
 
-  function stepperMarkup(qty, stock){
+  // atMax comes from the server's reply, not from a stock number embedded in
+  // the page — the exact stock level is never sent to the browser.
+  function stepperMarkup(qty, atMax){
     var minus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>';
     var plus = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
     if(qty <= 0){
       return '<button class="add-btn qty-step" data-delta="1" type="button" title="Tambah ke keranjang" ' +
         'style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + plus + '</button>';
     }
-    var atMax = stock > 0 && qty >= stock;
     return '<span class="qty-stepper">' +
       '<button class="qty-step" data-delta="-1" type="button" aria-label="Kurangi">' + minus + '</button>' +
       '<span class="qty-value">' + qty + '</span>' +
-      '<button class="qty-step" data-delta="1" type="button" aria-label="Tambah"' + (atMax ? ' disabled title="Stok maksimum"' : '') + '>' + plus + '</button>' +
+      '<button class="qty-step" data-delta="1" type="button" aria-label="Tambah"' + (atMax ? ' disabled title="Stok tidak mencukupi"' : '') + '>' + plus + '</button>' +
       '</span>';
   }
 
-  function renderControl(control, qty){
-    var stock = Number(control.dataset.stock || 0);
+  function renderControl(control, qty, atMax){
     control.dataset.qty = String(qty);
-    control.innerHTML = stepperMarkup(qty, stock);
+    if(atMax !== undefined) control.dataset.atmax = atMax ? '1' : '';
+    control.innerHTML = stepperMarkup(qty, control.dataset.atmax === '1');
     var value = control.querySelector('.qty-value');
     if(value){
       value.classList.add('qty-bump');
@@ -653,15 +789,13 @@ const CART_SCRIPT = `
 
     var current = Number(control.dataset.qty || 0);
     var delta = Number(btn.dataset.delta || 0);
-    var stock = Number(control.dataset.stock || 0);
     var target = current + delta;
     if(target < 0) target = 0;
-    if(stock > 0 && target > stock) target = stock;
     control.dataset.busy = '1';
 
     if(delta > 0 && target > current) flyToCart(productImageFor(btn));
-    // Repaint at the target straight away — the request still decides the
-    // real number (it clamps to stock), but the shopper never waits on it.
+    // Repaint at the target straight away — the server still decides the real
+    // number (it clamps to stock), but the shopper never waits on it.
     var isCartRow = Boolean(control.closest('[data-cart-row]'));
     if(!isCartRow) renderControl(control, target);
 
@@ -677,9 +811,12 @@ const CART_SCRIPT = `
     }).then(function(res){ return res.json(); })
       .then(function(data){
         if(!data || !data.ok){ renderControl(control, current); return; }
-        // Reconcile: only repaint if the server landed somewhere different
-        // from the optimistic guess, so the number doesn't flicker.
-        if(Number(control.dataset.qty) !== data.qty) renderControl(control, data.qty);
+        // Reconcile: repaint if the server landed somewhere different from the
+        // optimistic guess, or if the at-capacity flag changed.
+        var nextAtMax = Boolean(data.atMax);
+        if(Number(control.dataset.qty) !== data.qty || (control.dataset.atmax === '1') !== nextAtMax){
+          renderControl(control, data.qty, nextAtMax);
+        }
         updateBadge(data.cartCount);
         // Cart page only: keep the row total and the order summary in step.
         var row = control.closest('[data-cart-row]');
@@ -754,13 +891,16 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
     </div>
     <nav style="display:flex;flex-direction:column;gap:4px;">
+      ${item('/admin', 'dashboard', 'Ringkasan', '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>')}
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
       ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>')}
       ${item('/admin/laporan', 'laporan', 'Laporan Penjualan', '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>')}
       ${
         isSuperadmin
-          ? item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>') +
+          ? item('/admin/voucher', 'voucher', 'Kode Promo', '<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-6z"/><path d="M13 5v14" stroke-dasharray="2 3"/>') +
+            item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>') +
+            item('/admin/pengaturan', 'pengaturan', 'Pengaturan Toko', '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>') +
             item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
             item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>')
           : ''

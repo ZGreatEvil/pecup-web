@@ -4,7 +4,43 @@ const db = require('./db');
 
 const DEFAULTS = {
   stamps_per_reward: '10',
+  // Operational settings a shop actually needs day to day: closing for a
+  // holiday, a minimum order, a delivery fee, and a cut-off after which
+  // same-day delivery isn't offered any more.
+  shop_open: '1',
+  shop_notice: '',
+  min_order: '0',
+  delivery_fee: '0',
+  free_delivery_over: '0', // 0 = never free
+  same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
 };
+
+// Everything the storefront needs to know about how the shop is operating
+// right now, normalised and clamped so a bad value in the table can't take
+// checkout down.
+async function shopConfig() {
+  const all = await getAll();
+  const num = (key) => {
+    const n = Number(all[key]);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+  };
+  const cutoff = /^\d{2}:\d{2}$/.test(all.same_day_cutoff || '') ? all.same_day_cutoff : '';
+  return {
+    open: all.shop_open !== '0',
+    notice: all.shop_notice || '',
+    minOrder: num('min_order'),
+    deliveryFee: num('delivery_fee'),
+    freeDeliveryOver: num('free_delivery_over'),
+    sameDayCutoff: cutoff,
+  };
+}
+
+// What this particular order pays to have it delivered.
+function deliveryFeeFor(config, subtotal) {
+  if (!config.deliveryFee) return 0;
+  if (config.freeDeliveryOver > 0 && subtotal >= config.freeDeliveryOver) return 0;
+  return config.deliveryFee;
+}
 
 // Cached per warm serverless instance so the loyalty card doesn't cost an
 // extra round-trip on every page. Short TTL so a change propagates quickly
@@ -40,4 +76,4 @@ async function setValue(key, value) {
   cache = null;
 }
 
-module.exports = { getAll, stampsPerReward, setValue };
+module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor };

@@ -120,7 +120,13 @@ const ORDER_STATUSES = [
   { value: 'menunggu', label: 'Menunggu Verifikasi', color: '#a15a1f', bg: 'oklch(94% 0.06 55)' },
   { value: 'diproses', label: 'Diproses', color: '#1f5aa1', bg: 'oklch(93% 0.05 245)' },
   { value: 'selesai', label: 'Selesai', color: '#3f7a42', bg: 'oklch(94% 0.05 152)' },
+  // Cancelling returns the reserved cups to stock — without this state, a
+  // fake transfer or a mistaken order would hold stock hostage forever.
+  { value: 'dibatalkan', label: 'Dibatalkan', color: '#a13f3f', bg: '#f6dcdc' },
 ];
+
+// Statuses that still hold stock. A cancelled order has already given it back.
+const ACTIVE_ORDER_STATUSES = ['menunggu', 'diproses', 'selesai'];
 
 function orderStatus(value) {
   return ORDER_STATUSES.find((s) => s.value === value) || ORDER_STATUSES[0];
@@ -150,5 +156,6 @@ module.exports = {
   formatWhatsapp,
   toDateOnly,
   ORDER_STATUSES,
+  ACTIVE_ORDER_STATUSES,
   orderStatus,
 };

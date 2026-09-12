@@ -128,9 +128,21 @@ async function productStats() {
 // the involved product rows with SELECT ... FOR UPDATE. That's what keeps
 // this safe even if two customers check out the last unit at the same time
 // across two different serverless invocations.
-async function createOrder({ customerName, whatsapp, notes, items, proofFilename, address, deliveryDate, customerId, useReward }) {
+async function createOrder({
+  customerName,
+  whatsapp,
+  notes,
+  items,
+  proofFilename,
+  address,
+  deliveryDate,
+  customerId,
+  useReward,
+  voucherCode,
+  deliveryFee,
+}) {
   const rows = await db.query(
-    'select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean) as result',
+    'select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean, $11, $12::integer) as result',
     [
       customerName,
       whatsapp,
@@ -142,6 +154,8 @@ async function createOrder({ customerName, whatsapp, notes, items, proofFilename
       deliveryDate || null,
       customerId || null,
       Boolean(useReward),
+      voucherCode || null,
+      Math.max(0, Math.round(Number(deliveryFee) || 0)),
     ]
   );
   const raw = rows[0].result;
@@ -153,6 +167,9 @@ async function createOrder({ customerName, whatsapp, notes, items, proofFilename
     total: result.total,
     rewardDiscount: Number(result.rewardDiscount) || 0,
     rewardItem: result.rewardItem || null,
+    voucherCode: result.voucherCode || null,
+    voucherDiscount: Number(result.voucherDiscount) || 0,
+    deliveryFee: Number(result.deliveryFee) || 0,
   };
 }
 
@@ -281,6 +298,56 @@ async function queryAllOrders(filters = {}) {
   return db.query(`select o.* from orders o ${where} order by ${orderBy} ${direction} nulls last, o.id desc`, params);
 }
 
+// Everything the admin landing page shows, in one place. Kept to a handful of
+// aggregate queries rather than pulling rows and counting in JS, so it stays
+// cheap as the order table grows.
+async function dashboardData({ todayKey, monthStart }) {
+  const [todayRows, monthRows, lowStock, pending, upcoming] = await Promise.all([
+    db.query(
+      `select count(*)::int as total,
+              count(*) filter (where status = 'menunggu')::int as pending,
+              coalesce(sum(total) filter (where status = 'selesai'), 0)::bigint as revenue
+       from orders where date_key = $1`,
+      [todayKey]
+    ),
+    db.query(
+      `select count(*) filter (where status = 'selesai')::int as orders,
+              coalesce(sum(total) filter (where status = 'selesai'), 0)::bigint as revenue
+       from orders where date_key >= $1 and date_key <= $2`,
+      [monthStart, todayKey]
+    ),
+    db.query('select id, name, stock from products where stock <= 5 order by stock asc, name asc limit 8'),
+    db.query(
+      `select * from orders where status in ('menunggu', 'diproses')
+       order by created_at desc limit 8`
+    ),
+    // What has to be prepared over the next week.
+    db.query(
+      `select o.delivery_date as day, count(distinct o.id)::int as orders,
+              coalesce(sum(oi.qty), 0)::int as cups
+       from orders o left join order_items oi on oi.order_id = o.id
+       where o.delivery_date >= $1::date and o.delivery_date <= ($1::date + 7)
+         and o.status in ('menunggu', 'diproses')
+       group by o.delivery_date order by o.delivery_date asc limit 7`,
+      [todayKey]
+    ),
+  ]);
+
+  const t = todayRows[0] || {};
+  const m = monthRows[0] || {};
+  return {
+    today: {
+      total: Number(t.total) || 0,
+      pending: Number(t.pending) || 0,
+      revenue: Number(t.revenue) || 0,
+    },
+    revenue: { month: Number(m.revenue) || 0, monthOrders: Number(m.orders) || 0 },
+    lowStock,
+    pendingOrders: pending,
+    upcoming: upcoming.map((r) => ({ day: r.day, orders: Number(r.orders) || 0, cups: Number(r.cups) || 0 })),
+  };
+}
+
 // ---------------- revenue reporting ----------------
 
 // Revenue is counted from completed orders only by default — a pending order
@@ -402,6 +469,31 @@ async function updateOrderStatus(id, status) {
   await db.query('update orders set status = $1 where id = $2', [status, id]);
 }
 
+// Moving an order in or out of 'dibatalkan' has to move stock with it, and
+// exactly once. `stock_restored` is the guard: the UPDATE only fires when the
+// flag is currently in the opposite state, so a double-submit or two admins
+// clicking at the same moment can't return the same cups twice.
+async function setOrderCancelled(id, cancelled) {
+  const rows = await db.query(
+    `update orders set status = $2, stock_restored = $3
+     where id = $1 and coalesce(stock_restored, false) = $4
+     returning id`,
+    [id, cancelled ? 'dibatalkan' : 'menunggu', cancelled, !cancelled]
+  );
+  // Someone already did it — nothing further to do, and crucially no second
+  // stock movement.
+  if (!rows.length) return { ok: false, alreadyDone: true };
+
+  const direction = cancelled ? '+' : '-';
+  await db.query(
+    `update products p set stock = greatest(0, p.stock ${direction} oi.qty)
+     from order_items oi
+     where oi.order_id = $1 and oi.product_id = p.id`,
+    [id]
+  );
+  return { ok: true };
+}
+
 async function markEmailSent(id, ok, errorMessage) {
   await db.query('update orders set email_sent = $1, email_error = $2 where id = $3', [
     Boolean(ok),
@@ -430,8 +522,10 @@ module.exports = {
   queryOrders,
   queryAllOrders,
   revenueReport,
+  dashboardData,
   summarizeOrders,
   orderDayStats,
   updateOrderStatus,
+  setOrderCancelled,
   markEmailSent,
 };

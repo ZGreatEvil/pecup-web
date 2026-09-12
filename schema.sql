@@ -69,6 +69,37 @@ alter table orders add column if not exists delivery_date date;
 alter table orders add column if not exists reward_discount integer not null default 0;
 alter table orders add column if not exists reward_item text;
 
+-- Cancellation. Stock is decremented when an order is placed, so cancelling
+-- has to give it back — and exactly once, which is what stock_restored
+-- guards. Without this an invalid transfer would hold cups hostage forever.
+alter table orders add column if not exists stock_restored boolean not null default false;
+
+-- Delivery fee charged on this order, and the voucher (if any) that was
+-- applied. Both are snapshots: changing the shop's fee or deleting a voucher
+-- later must not rewrite what a past customer actually paid.
+alter table orders add column if not exists delivery_fee integer not null default 0;
+alter table orders add column if not exists voucher_code text;
+alter table orders add column if not exists voucher_discount integer not null default 0;
+
+-- Promo codes. `kind` is 'persen' (percentage off the cups) or 'nominal'
+-- (a flat rupiah amount). Redemptions are counted so a limited code can't be
+-- over-used, and the count is incremented inside create_order under a row
+-- lock so two simultaneous checkouts can't both take the last one.
+create table if not exists vouchers (
+  id bigint generated always as identity primary key,
+  code text not null unique,
+  kind text not null default 'persen',
+  amount integer not null default 0,
+  min_spend integer not null default 0,
+  max_discount integer,               -- caps a percentage voucher; null = uncapped
+  usage_limit integer,                -- null = unlimited
+  used_count integer not null default 0,
+  expires_at date,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists vouchers_code_idx on vouchers (upper(code));
+
 -- Returning-customer accounts. The WhatsApp number IS the username (stored
 -- in canonical 62xxxxxxxxx form so "0812...", "+62 812..." and "62812..."
 -- all resolve to the same account).
@@ -221,11 +252,19 @@ create or replace function create_order(
   p_address text,
   p_delivery_date date,
   p_customer_id bigint,
-  p_use_reward boolean
+  p_use_reward boolean,
+  p_voucher_code text,
+  p_delivery_fee integer
 ) returns jsonb
 language plpgsql
 as $$
 declare
+  v_voucher record;
+  v_voucher_discount integer := 0;
+  v_voucher_code text;
+  v_delivery_fee integer := greatest(0, coalesce(p_delivery_fee, 0));
+  v_discountable integer;
+  v_total integer;
   v_order_id bigint;
   v_order_number text;
   v_subtotal integer := 0;
@@ -272,7 +311,9 @@ begin
       raise exception 'Produk % tidak ditemukan.', v_product_id;
     end if;
     if v_stock < v_qty then
-      raise exception 'Stok % tidak mencukupi (tersisa %).', v_name, v_stock;
+      -- No remaining-count in the message: this text is shown verbatim to the
+      -- shopper, and stock levels are not theirs to see.
+      raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.', v_name;
     end if;
 
     -- Wholesale tier is applied here, server-side, so the discount can never
@@ -328,8 +369,52 @@ begin
     end if;
   end if;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_subtotal - v_reward_discount, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item)
+  -- Voucher. Validated and consumed here, under a row lock, so a code with
+  -- one use left can't be spent twice by two simultaneous checkouts. The
+  -- client only ever sends the code text — the value is computed here.
+  if p_voucher_code is not null and btrim(p_voucher_code) <> '' then
+    select * into v_voucher from vouchers
+    where upper(code) = upper(btrim(p_voucher_code)) for update;
+
+    if v_voucher.id is null then
+      raise exception 'Kode voucher tidak ditemukan.';
+    end if;
+    if not v_voucher.active then
+      raise exception 'Kode voucher sudah tidak aktif.';
+    end if;
+    if v_voucher.expires_at is not null and v_voucher.expires_at < current_date then
+      raise exception 'Kode voucher sudah kedaluwarsa.';
+    end if;
+    if v_voucher.usage_limit is not null and v_voucher.used_count >= v_voucher.usage_limit then
+      raise exception 'Kuota kode voucher sudah habis.';
+    end if;
+    if v_subtotal < v_voucher.min_spend then
+      raise exception 'Minimal belanja untuk kode ini adalah Rp%.', v_voucher.min_spend;
+    end if;
+
+    -- The voucher applies to what's left after the free cup, so the two
+    -- discounts can never together exceed the value of the cups.
+    v_discountable := greatest(0, v_subtotal - v_reward_discount);
+    if v_voucher.kind = 'nominal' then
+      v_voucher_discount := least(v_voucher.amount, v_discountable);
+    else
+      v_voucher_discount := (v_discountable * v_voucher.amount) / 100;
+      if v_voucher.max_discount is not null then
+        v_voucher_discount := least(v_voucher_discount, v_voucher.max_discount);
+      end if;
+      v_voucher_discount := least(v_voucher_discount, v_discountable);
+    end if;
+
+    v_voucher_code := v_voucher.code;
+    update vouchers set used_count = used_count + 1 where id = v_voucher.id;
+  end if;
+
+  -- Delivery fee is added after discounts: a promo reduces the cups, not the
+  -- cost of getting them there.
+  v_total := greatest(0, v_subtotal - v_reward_discount - v_voucher_discount) + v_delivery_fee;
+
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee)
   returning id into v_order_id;
 
   v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');
@@ -360,10 +445,18 @@ begin
     'subtotal', v_subtotal,
     'rewardDiscount', v_reward_discount,
     'rewardItem', v_reward_item,
-    'total', v_subtotal - v_reward_discount
+    'voucherCode', v_voucher_code,
+    'voucherDiscount', v_voucher_discount,
+    'deliveryFee', v_delivery_fee,
+    'total', v_total
   );
 end;
 $$;
+
+-- Adding parameters creates an OVERLOAD rather than replacing the function,
+-- so the previous 10-argument signature has to be dropped explicitly or both
+-- versions stay callable and the old one silently ignores vouchers.
+drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean);
 
 -- Note: there's no "storage buckets" step here anymore. File storage (product
 -- photos, payment proofs) lives in Vercel Blob, not in this Postgres

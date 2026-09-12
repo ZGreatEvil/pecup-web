@@ -33,7 +33,9 @@ function authShell({ title, heading, subheading, formHtml, footerHtml, cartCount
   </section>
   ${customerFooter()}
 </div></div>`;
-  return page({ title, bodyHtml: body });
+  // Sign-in / sign-up aren't useful search results, and robots.txt already
+  // disallows them — keep the two consistent.
+  return page({ title, bodyHtml: body, noindex: true });
 }
 
 function errorBox(errors) {
@@ -327,7 +329,7 @@ function renderRiwayatPesanan({ customer, orders, pagination, cartCount = 0, vie
   ${customerFooter()}
 </div></div>`;
 
-  return page({ title: 'Riwayat Pesanan — Pecup', bodyHtml: body });
+  return page({ title: 'Riwayat Pesanan — Pecup', bodyHtml: body, noindex: true });
 }
 
 function renderAkun({
@@ -343,7 +345,7 @@ function renderAkun({
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount, null, customer)}
-  <section class="px-page" style="padding-top:40px;padding-bottom:100px;">
+  <section class="px-page" id="konten" style="padding-top:40px;padding-bottom:100px;">
     ${backButton('/', 'Kembali ke Beranda')}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:20px 0 30px;">
       <div>
@@ -397,7 +399,7 @@ function renderAkun({
   ${customerFooter()}
 </div></div>`;
 
-  return page({ title: 'Akun Saya — Pecup', bodyHtml: body });
+  return page({ title: 'Akun Saya — Pecup', bodyHtml: body, noindex: true });
 }
 
 module.exports = { renderMasuk, renderDaftar, renderAkun, renderRiwayatPesanan };
