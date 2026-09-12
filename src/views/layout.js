@@ -8,6 +8,9 @@ const SHARED_STYLE = `
     --orange:oklch(72% 0.17 55); --orange-dark:oklch(58% 0.17 45); --orange-soft:oklch(94% 0.06 55);
     --orange-mid:oklch(87% 0.09 55);
     --sidebar:oklch(24% 0.03 255);
+    /* Deliberately darker than --surface-2 so meter tracks and other inset
+       shapes stay visible on hovered rows. */
+    --track:oklch(89% 0.022 95);
     /* One shadow + radius scale used everywhere, so depth reads consistently
        instead of every component inventing its own values. */
     --shadow-sm:0 1px 2px oklch(22% 0.02 260 / 0.05), 0 1px 3px oklch(22% 0.02 260 / 0.06);
@@ -42,6 +45,10 @@ const SHARED_STYLE = `
   input:focus, textarea:focus, select:focus{border-color:var(--orange);box-shadow:0 0 0 3px oklch(72% 0.17 55 / 0.16);}
   .field{margin-bottom:20px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;box-shadow:var(--shadow-sm);}
+  /* Section heading with the brand mark as a coloured accent bar. */
+  .section-title{display:flex;align-items:center;gap:12px;}
+  .section-title::before{content:'';width:5px;height:26px;border-radius:99px;flex-shrink:0;
+    background:linear-gradient(180deg, var(--orange), var(--green));}
   .dropzone{border:1.8px dashed var(--border);border-radius:14px;background:var(--surface-2);transition:border-color 0.18s ease, background 0.18s ease;}
   .dropzone:hover{border-color:var(--orange);background:var(--orange-soft);}
   .nav-link{color:var(--text);font-weight:500;font-size:15px;}
@@ -116,6 +123,15 @@ const SHARED_STYLE = `
   .qty-bump{animation:pecup-pop 0.3s ease;}
   /* Product photo carousel: arrows + dots wherever it appears, auto-advancing
      only where data-autoplay is set (the product detail page). */
+  /* Product photo box. Source photos vary wildly in size and aspect ratio,
+     so the container defines the square itself (aspect-ratio, never a
+     percentage height that depends on the parent resolving one) and the
+     photo is cropped into it with object-fit. Nothing inside can change
+     the box's dimensions, so a tall portrait shot and a wide landscape one
+     produce identical cards. */
+  .thumb-box{position:relative;width:100%;aspect-ratio:1;overflow:hidden;}
+  .thumb-inner{position:absolute;inset:0;}
+  .thumb-fill{width:100%;height:100%;object-fit:cover;display:block;}
   .carousel{position:relative;width:100%;height:100%;overflow:hidden;}
   .carousel-track{display:flex;width:100%;height:100%;transition:transform 0.45s cubic-bezier(0.2,0.7,0.3,1);}
   /* Each photo gets its own clipping box. Without this the card's hover zoom
@@ -163,6 +179,12 @@ const SHARED_STYLE = `
   .search-input{border:1.5px solid var(--border);background:var(--surface);}
   .row-hover{transition:background 0.15s ease;}
   .row-hover:hover{background:var(--surface-2);}
+  /* Progress meter. The track gets its own darker token rather than
+     --surface-2: that's also the row-hover colour, so a surface-2 track
+     vanished the moment you hovered the row it sat in. */
+  .meter{height:6px;border-radius:99px;background:var(--track);overflow:hidden;margin-top:5px;}
+  .meter-fill{height:100%;border-radius:99px;background:var(--orange);transition:width 0.3s ease;}
+  .meter-fill.is-full{background:var(--green);}
   .stat-card:hover{border-color:var(--orange);transform:translateY(-2px);box-shadow:var(--shadow-md);}
   .icon-action{background:transparent;border:none;}
   .lihat-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);}
@@ -193,10 +215,36 @@ const SHARED_STYLE = `
      jump to. */
   section[id]{scroll-margin-top:96px;}
   .grid-3{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:36px;}
-  .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;position:relative;}
-  .hero::before{content:'';position:absolute;inset:-10% -5% auto;height:150%;pointer-events:none;z-index:0;
-    background:radial-gradient(60% 60% at 75% 30%, oklch(94% 0.06 55 / 0.55), transparent 70%);}
+  /* overflow:clip contains the decorative glows below. Without it their
+     negative insets stick out past the viewport, the page gains horizontal
+     scroll, and a phone zooms out to fit — which reads as "everything is
+     small and centered". clip rather than hidden on purpose: hidden on one
+     axis forces the other to auto, turning this into a scroll container and
+     breaking the sticky header. */
+  .hero{display:flex;align-items:center;justify-content:space-between;gap:64px;flex-wrap:wrap;position:relative;overflow:clip;}
+  /* Two offset washes instead of one flat tint — gives the top of the page
+     some depth without putting an image behind it. */
+  .hero::before{content:'';position:absolute;inset:-20% -8% auto;height:170%;pointer-events:none;z-index:0;
+    background:radial-gradient(55% 55% at 78% 25%, oklch(92% 0.09 55 / 0.6), transparent 70%),
+               radial-gradient(45% 45% at 12% 75%, oklch(93% 0.07 152 / 0.45), transparent 70%);}
   .hero > *{position:relative;z-index:1;}
+  /* Fine dotted texture over the hero so large empty areas aren't dead flat. */
+  .hero::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:0.5;
+    background-image:radial-gradient(oklch(70% 0.03 95 / 0.25) 1px, transparent 1px);background-size:22px 22px;
+    mask-image:radial-gradient(70% 70% at 50% 40%, #000, transparent 75%);
+    -webkit-mask-image:radial-gradient(70% 70% at 50% 40%, #000, transparent 75%);}
+  .hero-art{position:relative;}
+  /* Soft halo behind the cup illustration. */
+  .hero-art::before{content:'';position:absolute;inset:-12%;border-radius:50%;z-index:-1;
+    background:radial-gradient(circle, oklch(88% 0.09 152 / 0.55), transparent 68%);}
+  /* Section eyebrow — a small labelled rule above a heading. */
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:800;letter-spacing:1.2px;
+    text-transform:uppercase;color:var(--orange-dark);margin-bottom:10px;}
+  .eyebrow::before{content:'';width:26px;height:2px;border-radius:2px;background:var(--orange);}
+  /* Numbered step markers with a connecting line on wide screens. */
+  .step-num{position:relative;width:56px;height:56px;border-radius:50%;color:#fff;display:flex;align-items:center;
+    justify-content:center;font-size:20px;font-weight:800;flex-shrink:0;
+    background:linear-gradient(145deg, oklch(66% 0.15 152), var(--green-dark));box-shadow:var(--shadow-md);}
   .hero-copy{flex:1 1 420px;display:flex;flex-direction:column;gap:26px;}
   .hero-title{font-size:clamp(30px, 4.6vw, 48px);line-height:1.15;font-weight:800;letter-spacing:-1px;max-width:560px;}
   .hero-art{flex:0 1 340px;width:min(340px, 60vw);height:min(340px, 60vw);border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;}
@@ -228,6 +276,19 @@ const SHARED_STYLE = `
   .admin-shell{display:flex;align-items:stretch;flex-wrap:wrap;min-height:100vh;}
   .admin-sidebar{flex:0 0 240px;background:var(--sidebar);padding:28px 20px;display:flex;flex-direction:column;}
   .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
+  /* Mobile-only bar carrying the brand and the hamburger. Hidden on desktop,
+     where the full rail is always visible. */
+  .admin-topbar{display:none;flex:0 0 100%;align-items:center;justify-content:space-between;gap:12px;
+    background:var(--sidebar);padding:12px 16px;position:sticky;top:0;z-index:60;}
+  .admin-nav-toggle{position:absolute;opacity:0;pointer-events:none;width:0;height:0;}
+  .admin-burger{display:inline-flex;align-items:center;gap:9px;margin:0;cursor:pointer;color:#fff;
+    font-size:13px;font-weight:700;border:1px solid oklch(40% 0.03 255);border-radius:10px;padding:8px 13px;
+    background:oklch(30% 0.03 255);transition:background 0.16s ease;}
+  .admin-burger:hover{background:oklch(36% 0.03 255);}
+  .admin-burger:active{transform:scale(0.97);}
+  .admin-burger .burger-close{display:none;}
+  .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-open{display:none;}
+  .admin-nav-toggle:checked ~ .admin-topbar .admin-burger .burger-close{display:inline;}
   table.admin-table{width:100%;border-collapse:collapse;}
   .table-scroll{overflow-x:auto;}
 
@@ -242,7 +303,16 @@ const SHARED_STYLE = `
     .grid-4{grid-template-columns:repeat(2, minmax(0,1fr));gap:20px;}
     .grid-3{grid-template-columns:1fr;gap:28px;}
     .site-nav{gap:24px;}
-    .admin-sidebar{flex:1 1 100%;min-height:auto;}
+    /* Once the shell wraps onto two lines, align-content would stretch each
+       line to half the 100vh floor — leaving a huge empty dark panel. Pack
+       the lines instead and let each size to its content. */
+    .admin-shell{align-content:flex-start;}
+    .admin-topbar{display:flex;}
+    /* The nav collapses behind the hamburger rather than sitting as a tall
+       block above every page. */
+    .admin-sidebar{display:none;flex:0 0 auto;width:100%;min-height:auto;padding:12px 14px 18px;}
+    .admin-nav-toggle:checked ~ .admin-sidebar{display:flex;animation:pecup-fade-up 0.22s ease both;}
+    .admin-sidebar .admin-sidebar-brand{display:none;}
     .admin-main{padding:24px 20px;}
   }
   @media (max-width: 640px){
@@ -662,9 +732,24 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${iconPath}</svg>
       ${label}
     </a>`;
+  // The checkbox is a plain sibling of the bar and the rail, so the whole
+  // menu opens and closes in CSS alone — no JS, and it still works if the
+  // script fails to load.
   return `
+  <input type="checkbox" id="adminNavToggle" class="admin-nav-toggle">
+  <div class="admin-topbar">
+    <div style="display:flex;align-items:center;gap:9px;min-width:0;">
+      ${logoMark(28)}
+      <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:16px;color:#fff;white-space:nowrap;">Pecup <span style="font-weight:500;font-size:11px;color:oklch(70% 0.02 255);">Admin</span></span>
+    </div>
+    <label class="admin-burger" for="adminNavToggle">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      <span class="burger-open">Menu</span>
+      <span class="burger-close">Tutup</span>
+    </label>
+  </div>
   <aside class="admin-sidebar">
-    <div style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
+    <div class="admin-sidebar-brand" style="display:flex;align-items:center;gap:10px;padding:0 8px;margin-bottom:40px;">
       ${logoMark(32)}
       <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:18px;color:#fff;">Pecup <span style="font-weight:500;font-size:12px;color:oklch(70% 0.02 255);">Admin</span></span>
     </div>
@@ -672,6 +757,7 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
       ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
       ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>')}
+      ${item('/admin/laporan', 'laporan', 'Laporan Penjualan', '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>')}
       ${
         isSuperadmin
           ? item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>') +

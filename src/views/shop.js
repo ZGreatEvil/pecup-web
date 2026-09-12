@@ -140,31 +140,36 @@ function renderBeranda({ products, cartCount, category, categories: dbCategories
   <section class="px-page" style="padding-top:40px;padding-bottom:100px;">
     <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:8px;">
       <div>
-        <h2 style="font-size:28px;font-weight:800;letter-spacing:-0.5px;">Menu Hari Ini</h2>
-        <p style="color:var(--text-muted);font-size:14.5px;margin-top:6px;">${products.length} produk tersedia</p>
+        <span class="eyebrow">Segar hari ini</span>
+        <h2 class="section-title" style="font-size:28px;font-weight:800;letter-spacing:-0.5px;">Menu Hari Ini</h2>
+        <p style="color:var(--text-muted);font-size:14.5px;margin-top:8px;">${products.length} produk tersedia${
+          category && category !== 'Semua' ? ` di kategori ${escapeHtml(category)}` : ''
+        }</p>
       </div>
     </div>
     <div class="grid-4">${cards}</div>
   </section>
 
-  <section id="cara-pesan" class="px-page" style="background:var(--surface-2);padding-top:72px;padding-bottom:72px;">
-    <h2 style="text-align:center;font-size:26px;font-weight:800;margin-bottom:48px;">Cara Pesan di Pecup</h2>
+  <section id="cara-pesan" class="px-page" style="background:var(--surface-2);padding-top:72px;padding-bottom:72px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <div style="text-align:center;margin-bottom:48px;">
+      <span class="eyebrow" style="justify-content:center;">Gampang banget</span>
+      <h2 style="font-size:26px;font-weight:800;letter-spacing:-0.4px;">Cara Pesan di Pecup</h2>
+    </div>
     <div class="grid-3" style="max-width:1100px;margin:0 auto;">
+      ${[
+        ['Pilih &amp; Tambah ke Keranjang', 'Pilih buah potong favoritmu dan atur jumlahnya.'],
+        ['Checkout &amp; Transfer', 'Isi data pemesan, tambahkan catatan bila perlu, lalu transfer.'],
+        ['Upload Bukti &amp; Tunggu Konfirmasi', 'Kami verifikasi dan konfirmasi via WhatsApp.'],
+      ]
+        .map(
+          ([title, text], i) => `
       <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
-        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">1</div>
-        <h4 style="font-size:16px;font-weight:700;">Pilih &amp; Tambah ke Keranjang</h4>
-        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Pilih buah potong favoritmu dan atur jumlahnya.</p>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
-        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">2</div>
-        <h4 style="font-size:16px;font-weight:700;">Checkout &amp; Transfer</h4>
-        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Isi data pemesan, tambahkan catatan bila perlu, lalu transfer.</p>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
-        <div style="width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;">3</div>
-        <h4 style="font-size:16px;font-weight:700;">Upload Bukti &amp; Tunggu Konfirmasi</h4>
-        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">Kami verifikasi dan konfirmasi via WhatsApp.</p>
-      </div>
+        <div class="step-num">${i + 1}</div>
+        <h4 style="font-size:16px;font-weight:700;">${title}</h4>
+        <p style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:260px;">${text}</p>
+      </div>`
+        )
+        .join('')}
     </div>
   </section>
 
@@ -569,6 +574,7 @@ ${
 }
 
 function renderSukses({ order, items, emailOk, customer = null }) {
+  const rewardDiscount = Number(order.reward_discount) || 0;
   const emailNote = emailOk
     ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
     : `Pesananmu sudah tersimpan, tapi email notifikasi ke toko belum berhasil terkirim otomatis — tim kami tetap bisa melihatnya lewat panel admin.`;
@@ -598,8 +604,29 @@ function renderSukses({ order, items, emailOk, customer = null }) {
             ? `<div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;"><span style="color:var(--text-muted);">Lokasi</span><span style="font-weight:700;text-align:right;">${escapeHtml(order.address)}</span></div>`
             : ''
         }
-        <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Total Pembayaran</span><span style="font-weight:700;color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
+        ${
+          rewardDiscount > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
+          <span style="color:#a15a1f;font-weight:700;">Cup gratis${order.reward_item ? ` — ${escapeHtml(order.reward_item)}` : ''}</span>
+          <span class="tnum" style="font-weight:700;color:#a15a1f;">&minus;${formatRupiah(rewardDiscount)}</span>
+        </div>`
+            : ''
+        }
+        <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Total Pembayaran</span><span class="tnum" style="font-weight:700;color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
       </div>
+      ${
+        rewardDiscount > 0
+          ? `<div style="width:100%;background:var(--orange-soft);border-radius:14px;padding:16px 20px;text-align:left;display:flex;gap:12px;align-items:flex-start;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a15a1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/></svg>
+        <div style="font-size:13px;color:#7a4a1f;line-height:1.7;">
+          <strong>Kartu stempelmu terpakai di pesanan ini.</strong>
+          ${order.reward_item ? `${escapeHtml(order.reward_item)} digratiskan` : '1 cup digratiskan'} senilai ${formatRupiah(rewardDiscount)}.
+          Stempelmu sekarang kembali ke nol — kumpulkan lagi untuk cup gratis berikutnya.
+        </div>
+      </div>`
+          : ''
+      }
       <a href="/" class="btn-primary" style="display:block;width:100%;text-align:center;padding:15px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:8px;">Kembali ke Beranda</a>
     </div>
   </div>

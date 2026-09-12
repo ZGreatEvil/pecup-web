@@ -17,7 +17,9 @@ function tintFor(id) {
 }
 
 function placeholderSvg(tint, size = 88) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 120 120">
+  // Sized as a share of the box rather than in pixels, so the same icon
+  // works in a 44px admin row thumb and a 420px product page.
+  return `<svg width="62%" height="62%" style="max-width:${size}px;max-height:${size}px;" viewBox="0 0 120 120">
     <ellipse cx="60" cy="40" rx="30" ry="8" fill="#fff" stroke="#00000018" stroke-width="2"/>
     <path d="M30 41 L90 41 L81 100 L39 100 Z" fill="#fff" fill-opacity="0.95" stroke="#00000018" stroke-width="2"/>
     <circle cx="49" cy="56" r="7.5" fill="${tint}"/>
@@ -62,9 +64,12 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
 
   let inner;
   if (photos.length === 0) {
-    inner = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(tint, size)}</div>`;
+    inner = `<div class="thumb-fill" style="display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(
+      tint,
+      size
+    )}</div>`;
   } else if (photos.length === 1) {
-    inner = `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(product.name)}" style="width:100%;height:100%;object-fit:cover;display:block;${dim}">`;
+    inner = `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(product.name)}" class="thumb-fill" style="${dim}">`;
   } else {
     // Each photo sits in its own clipping box (.carousel-slide) rather than
     // being a flex item itself — the card's hover zoom scales the image, and
@@ -91,8 +96,12 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
     </div>`;
   }
 
-  return `<div style="width:100%;height:100%;border-radius:${radius}px;overflow:hidden;background:${tintSoft};position:relative;">
-    ${inner}
+  // The box makes its own square via aspect-ratio and everything inside is
+  // absolutely positioned to fill it. That's what keeps photos of wildly
+  // different dimensions from changing the card's shape: the container's
+  // size never depends on the image's, only the crop does.
+  return `<div class="thumb-box" style="border-radius:${radius}px;background:${tintSoft};">
+    <div class="thumb-inner">${inner}</div>
     ${soldOut ? soldOutBanner() : ''}
   </div>`;
 }

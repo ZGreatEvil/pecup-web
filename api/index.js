@@ -303,9 +303,11 @@ function requireCustomer(handler) {
 }
 
 router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
-  const [loyaltyStatus, orders, stampHistory] = await Promise.all([
+  // Only the latest few here — the full list lives at /akun/pesanan so the
+  // profile stays short for a long-standing customer.
+  const [loyaltyStatus, recent, stampHistory] = await Promise.all([
     loyalty.statusFor(customer.id),
-    customerAuth.listCustomerOrders(customer.id),
+    queries.queryOrders({ customerId: customer.id, page: 1, perPage: 5 }),
     loyalty.listStamps(customer.id),
   ]);
   sendHtml(
@@ -313,10 +315,36 @@ router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
     accountViews.renderAkun({
       customer,
       loyalty: loyaltyStatus,
-      orders,
+      orders: recent.orders,
+      totalOrders: recent.total,
       stampHistory,
       cartCount: cartLib.cartCount(req.cart),
       flash: query && query.get('ok') ? 'Perubahan tersimpan.' : '',
+    })
+  );
+}));
+
+router.get('/akun/pesanan', requireCustomer(async (req, res, { customer, query }) => {
+  const view = {
+    dari: query.get('dari') || '',
+    sampai: query.get('sampai') || '',
+    halaman: Number(query.get('halaman')) || 1,
+  };
+  const result = await queries.queryOrders({
+    customerId: customer.id,
+    from: view.dari,
+    to: view.sampai,
+    page: view.halaman,
+    perPage: 15,
+  });
+  sendHtml(
+    res,
+    accountViews.renderRiwayatPesanan({
+      customer,
+      orders: result.orders,
+      pagination: result,
+      cartCount: cartLib.cartCount(req.cart),
+      view,
     })
   );
 }));
@@ -345,9 +373,9 @@ router.post('/akun/password', requireCustomer(async (req, res, { customer }) => 
   if (newPassword.length < 6) errors.push('Password baru minimal 6 karakter.');
 
   if (errors.length) {
-    const [loyaltyStatus, orders, stampHistory] = await Promise.all([
+    const [loyaltyStatus, recent, stampHistory] = await Promise.all([
       loyalty.statusFor(customer.id),
-      customerAuth.listCustomerOrders(customer.id),
+      queries.queryOrders({ customerId: customer.id, page: 1, perPage: 5 }),
       loyalty.listStamps(customer.id),
     ]);
     return sendHtml(
@@ -355,7 +383,8 @@ router.post('/akun/password', requireCustomer(async (req, res, { customer }) => 
       accountViews.renderAkun({
         customer,
         loyalty: loyaltyStatus,
-        orders,
+        orders: recent.orders,
+        totalOrders: recent.total,
         stampHistory,
         cartCount: cartLib.cartCount(req.cart),
         errors,
@@ -531,6 +560,13 @@ router.post('/checkout', async (req, res) => {
 router.get('/pesanan-berhasil/:id', async (req, res) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
+  // An order placed by a signed-in customer is only theirs to see (admins
+  // included). Guest orders stay open — there's no session to check them
+  // against, and the buyer is redirected straight here after checkout.
+  if (order.customer_id) {
+    const isOwner = req.customer && Number(req.customer.customerId) === Number(order.customer_id);
+    if (!isOwner && !req.isAdmin) return notFound(res);
+  }
   const items = await queries.getOrderItems(order.id);
   sendHtml(res, shopViews.renderSukses({ order, items, emailOk: Boolean(order.email_sent), customer: req.customer }));
 });
@@ -753,30 +789,96 @@ router.post('/admin/produk/:id/stok', requireAdmin(async (req, res) => {
 // ---------------------------------------------------------------------
 
 router.get('/admin/pesanan', requireAdmin(async (req, res, { query }) => {
-  const dateKey = query.get('tanggal') || toDateKey(new Date());
-  const stats = await queries.orderDayStats(dateKey);
+  const todayKey = toDateKey(new Date());
+
+  // Presets are shorthand for a filter combination. Picking one replaces the
+  // whole view, which is why they're read before the individual fields.
+  const presets = {
+    'hari-ini': { jenisTanggal: 'dipesan', dari: todayKey, sampai: todayKey, urut: 'dipesan', arah: 'desc' },
+    '7-hari': { jenisTanggal: 'dipesan', dari: shiftDateKey(todayKey, -6), sampai: todayKey, urut: 'dipesan', arah: 'desc' },
+    '30-hari': { jenisTanggal: 'dipesan', dari: shiftDateKey(todayKey, -29), sampai: todayKey, urut: 'dipesan', arah: 'desc' },
+    'kirim-hari-ini': { jenisTanggal: 'dikirim', dari: todayKey, sampai: todayKey, urut: 'dikirim', arah: 'asc' },
+    'kirim-mendatang': { jenisTanggal: 'dikirim', dari: todayKey, sampai: '', urut: 'dikirim', arah: 'asc' },
+    semua: { jenisTanggal: 'dipesan', dari: '', sampai: '', urut: 'dipesan', arah: 'desc' },
+  };
+
+  const requested = query.get('tampilan') || '';
+  // ?tanggal= is the old single-day link; keep it working.
+  const legacyDate = query.get('tanggal') || '';
+  // With no parameters at all, open on today rather than dumping everything.
+  const hasExplicitView = ['jenisTanggal', 'dari', 'sampai', 'status', 'q', 'urut'].some((k) => query.get(k) !== null);
+  const preset = presets[requested] || (!hasExplicitView && !legacyDate ? presets['hari-ini'] : null);
+  const activePreset = presets[requested] ? requested : !hasExplicitView && !legacyDate ? 'hari-ini' : '';
+
+  // A preset supplies the date window and sort; status and search always come
+  // from the query, so combining a preset chip with a status filter narrows
+  // rather than silently dropping the status.
+  const view = {
+    ...(preset || {
+      jenisTanggal: query.get('jenisTanggal') === 'dikirim' ? 'dikirim' : 'dipesan',
+      dari: legacyDate || query.get('dari') || '',
+      sampai: legacyDate || query.get('sampai') || '',
+      urut: query.get('urut') || 'dipesan',
+      arah: query.get('arah') === 'asc' ? 'asc' : 'desc',
+    }),
+    status: query.get('status') || '',
+    q: (query.get('q') || '').trim(),
+  };
+
+  view.halaman = Number(query.get('halaman')) || 1;
+
+  const filters = {
+    from: view.dari,
+    to: view.sampai,
+    status: view.status,
+    search: view.q,
+    dateField: view.jenisTanggal,
+    sort: view.urut,
+    dir: view.arah,
+  };
+
+  // The page of rows to show, plus a summary over the *whole* filtered set —
+  // the stat cards would be misleading if they only counted one page.
+  const [result, allMatching] = await Promise.all([
+    queries.queryOrders({ ...filters, page: view.halaman, perPage: 25 }),
+    queries.queryAllOrders(filters),
+  ]);
+
   sendHtml(
     res,
     adminViews.renderPesananList({
-      dateKey,
-      prevDate: shiftDateKey(dateKey, -1),
-      nextDate: shiftDateKey(dateKey, 1),
-      orders: stats.orders,
-      stats,
+      orders: result.orders,
+      stats: queries.summarizeOrders(allMatching),
       admin: req.admin,
+      view: { ...view, halaman: result.page },
+      todayKey,
+      activePreset,
+      pagination: result,
     })
   );
 }));
 
+// Export honours the same filters as the on-screen table, so what finance
+// downloads matches what the admin was looking at. Empty dates mean "all
+// time" rather than defaulting to today — that's what makes a yearly export
+// possible.
 router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
-  const today = toDateKey(new Date());
-  let dari = query.get('dari') || query.get('tanggal') || today;
-  let sampai = query.get('sampai') || query.get('tanggal') || dari;
-  if (dari > sampai) [dari, sampai] = [sampai, dari]; // tolerate a reversed range picked in the UI
+  let dari = query.get('dari') || query.get('tanggal') || '';
+  let sampai = query.get('sampai') || query.get('tanggal') || '';
+  if (dari && sampai && dari > sampai) [dari, sampai] = [sampai, dari]; // tolerate a reversed range
 
-  const orders = await queries.listOrdersByDateRange(dari, sampai);
+  const orders = await queries.queryAllOrders({
+    from: dari,
+    to: sampai,
+    status: query.get('status') || '',
+    search: (query.get('q') || '').trim(),
+    dateField: query.get('jenisTanggal') === 'dikirim' ? 'dikirim' : 'dipesan',
+    sort: 'dipesan',
+    dir: 'asc',
+  });
   const csv = await buildDailyOrdersCsv(orders);
-  const filename = dari === sampai ? `pesanan-pecup-${dari}.csv` : `pesanan-pecup-${dari}_sampai_${sampai}.csv`;
+  const label = dari || sampai ? `${dari || 'awal'}_sampai_${sampai || 'sekarang'}` : 'semua';
+  const filename = `pesanan-pecup-${label}.csv`;
   res.writeHead(200, {
     'Content-Type': 'text/csv; charset=utf-8',
     'Content-Disposition': `attachment; filename="${filename}"`,
@@ -838,12 +940,52 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------------
+// admin: sales report
+// ---------------------------------------------------------------------
+
+// Open to every admin: they already see each order's total on the Pesanan
+// page, so this exposes no new information — it just adds them up.
+router.get('/admin/laporan', requireAdmin(async (req, res, { query }) => {
+  const todayKey = toDateKey(new Date());
+  const requested = query.get('rentang') || '';
+  const hasExplicitDates = query.get('dari') !== null || query.get('sampai') !== null;
+  const preset = resolveRange(requested, todayKey) || (!hasExplicitDates ? resolveRange('30-hari', todayKey) : null);
+  const activePreset = resolveRange(requested, todayKey) ? requested : !hasExplicitDates ? '30-hari' : '';
+
+  const view = {
+    dari: preset ? preset.dari : query.get('dari') || '',
+    sampai: preset ? preset.sampai : query.get('sampai') || '',
+    kelompok: query.get('kelompok') === 'bulan' ? 'bulan' : 'hari',
+    includeAll: query.get('semuaStatus') === '1',
+  };
+
+  const report = await queries.revenueReport({
+    from: view.dari,
+    to: view.sampai,
+    // Revenue means money actually collected, so only completed orders count
+    // unless the admin explicitly asks to see everything.
+    statuses: view.includeAll ? ORDER_STATUSES.map((s) => s.value) : ['selesai'],
+    groupBy: view.kelompok,
+  });
+
+  sendHtml(res, adminViews.renderLaporan({ admin: req.admin, report, view, activePreset, todayKey }));
+}));
+
+// ---------------------------------------------------------------------
 // admin: accounts (superadmin only)
 // ---------------------------------------------------------------------
 
 router.get('/admin/akun', requireSuperadmin(async (req, res, { query }) => {
   const admins = await adminAuth.listAdmins();
-  sendHtml(res, adminViews.renderAdminList({ admins, admin: req.admin, error: query.get('error') }));
+  sendHtml(
+    res,
+    adminViews.renderAdminList({
+      admins,
+      admin: req.admin,
+      error: query.get('error'),
+      flash: query.get('flash') || '',
+    })
+  );
 }));
 
 router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
@@ -868,6 +1010,25 @@ router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
     const message = /unique/i.test(err.message) ? 'Username sudah dipakai.' : 'Gagal menambahkan admin.';
     redirect(res, '/admin/akun?error=' + encodeURIComponent(message));
   }
+}));
+
+// Superadmin resetting another admin's password. The plaintext is hashed by
+// adminAuth and never stored or logged — the log records only who changed
+// whose password.
+router.post('/admin/akun/:id/password', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const password = fields.password || '';
+
+  const target = await adminAuth.findAdminById(id);
+  if (!target) return notFound(res);
+  if (password.length < 6) {
+    return redirect(res, '/admin/akun?error=' + encodeURIComponent('Password minimal 6 karakter.'));
+  }
+
+  await adminAuth.updateAdminPassword(id, password);
+  await logAdminAction(req.admin, 'admin.password', target.username);
+  redirect(res, '/admin/akun?flash=' + encodeURIComponent(`Password ${target.username} berhasil diganti.`));
 }));
 
 router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
@@ -922,11 +1083,26 @@ router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
   const customer = await customerAuth.findById(id);
   if (!customer) return notFound(res);
 
-  const [loyaltyStatus, orders, stamps, tierConfig] = await Promise.all([
+  const todayKey = toDateKey(new Date());
+  const requested = query.get('rentang') || '';
+  const range = resolveRange(requested, todayKey);
+  const orderView = {
+    dari: range ? range.dari : query.get('dari') || '',
+    sampai: range ? range.sampai : query.get('sampai') || '',
+    rentang: range ? requested : '',
+    halaman: Number(query.get('halaman')) || 1,
+  };
+
+  const orderFilters = { customerId: id, from: orderView.dari, to: orderView.sampai, sort: 'dipesan', dir: 'desc' };
+
+  const [loyaltyStatus, result, stamps, tierConfig, lifetimeOrders] = await Promise.all([
     loyalty.statusFor(id),
-    customerAuth.listCustomerOrders(id),
+    queries.queryOrders({ ...orderFilters, page: orderView.halaman, perPage: 10 }),
     loyalty.listStamps(id),
     loyalty.getTierConfig(),
+    // Lifetime figures ignore the date filter — they describe the customer,
+    // not the window being browsed.
+    queries.queryAllOrders({ customerId: id, status: 'selesai' }),
   ]);
 
   sendHtml(
@@ -934,13 +1110,20 @@ router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
     adminViews.renderPelangganDetail({
       customer,
       loyalty: loyaltyStatus,
-      orders,
+      orders: result.orders,
       stamps,
       admin: req.admin,
       canEdit: req.isSuperadmin,
       tiersEnabled: tierConfig.enabled,
       flash: query.get('flash') || '',
       error: query.get('error') || '',
+      pagination: result,
+      orderView: { ...orderView, halaman: result.page },
+      activePreset: range ? requested : '',
+      lifetime: {
+        orders: lifetimeOrders.length,
+        spent: lifetimeOrders.reduce((sum, o) => sum + Number(o.total || 0), 0),
+      },
     })
   );
 }));
@@ -981,6 +1164,63 @@ router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) =
   const updated = await loyalty.setStampCount(id, target, { by: req.admin.username });
   await logAdminAction(req.admin, 'loyalty.stamps', `${customer.name} -> ${updated.stamps} stempel`);
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
+}));
+
+router.post('/admin/pelanggan/:id/ubah', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  const name = (fields.name || '').trim();
+  if (!name) {
+    return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent('Nama wajib diisi.'));
+  }
+
+  const birthday = (fields.birthday || '').trim();
+  if (birthday && (!/^\d{4}-\d{2}-\d{2}$/.test(birthday) || Number.isNaN(Date.parse(birthday)))) {
+    return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent('Tanggal ulang tahun tidak valid.'));
+  }
+
+  const result = await customerAuth.adminUpdateCustomer(id, {
+    name,
+    whatsapp: fields.whatsapp || '',
+    address: (fields.address || '').trim(),
+    birthday: birthday || null,
+  });
+  if (!result.ok) {
+    return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent(result.error));
+  }
+
+  const renamed = customer.name !== name ? ` (dulu ${customer.name})` : '';
+  await logAdminAction(req.admin, 'customer.update', `${name}${renamed}`);
+  redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent('Data pelanggan diperbarui.'));
+}));
+
+// Same rule as the admin reset above: hashed on write, plaintext never kept.
+router.post('/admin/pelanggan/:id/password', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  if ((fields.password || '').length < 6) {
+    return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent('Password minimal 6 karakter.'));
+  }
+
+  await customerAuth.updatePassword(id, fields.password);
+  await logAdminAction(req.admin, 'customer.password', customer.name);
+  redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Password ${customer.name} berhasil diganti.`));
+}));
+
+router.post('/admin/pelanggan/:id/hapus', requireSuperadmin(async (req, res) => {
+  const id = Number(req.params.id);
+  const customer = await customerAuth.findById(id);
+  if (!customer) return notFound(res);
+
+  await customerAuth.deleteCustomer(id);
+  await logAdminAction(req.admin, 'customer.delete', `${customer.name} (${customer.whatsapp})`);
+  redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Akun ${customer.name} dihapus.`));
 }));
 
 router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => {
@@ -1170,6 +1410,35 @@ function validateProductFields(fields) {
   if (fields.stock === undefined || Number.isNaN(Number(fields.stock)) || Number(fields.stock) < 0)
     return 'Stok tidak valid.';
   return null;
+}
+
+// Shared date-range vocabulary. Every admin page that filters by date speaks
+// the same preset names, so "bulan ini" can't mean two different windows in
+// two different places.
+function resolveRange(key, todayKey) {
+  const [y, m] = todayKey.split('-').map(Number);
+  const lastMonth = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 };
+  const pad = (n) => String(n).padStart(2, '0');
+  const endOfMonth = (yy, mm) => `${yy}-${pad(mm)}-${new Date(yy, mm, 0).getDate()}`;
+
+  switch (key) {
+    case 'hari-ini':
+      return { dari: todayKey, sampai: todayKey };
+    case '7-hari':
+      return { dari: shiftDateKey(todayKey, -6), sampai: todayKey };
+    case '30-hari':
+      return { dari: shiftDateKey(todayKey, -29), sampai: todayKey };
+    case 'bulan-ini':
+      return { dari: `${y}-${pad(m)}-01`, sampai: todayKey };
+    case 'bulan-lalu':
+      return { dari: `${lastMonth.y}-${pad(lastMonth.m)}-01`, sampai: endOfMonth(lastMonth.y, lastMonth.m) };
+    case 'tahun-ini':
+      return { dari: `${y}-01-01`, sampai: todayKey };
+    case 'semua':
+      return { dari: '', sampai: '' };
+    default:
+      return null;
+  }
 }
 
 function shiftDateKey(dateKey, deltaDays) {

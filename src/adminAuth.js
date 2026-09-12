@@ -78,6 +78,13 @@ async function deleteAdmin(id) {
   await db.query('delete from admins where id = $1', [id]);
 }
 
+// Superadmin resetting someone else's password. Goes through the same
+// hashPassword() as account creation — the plaintext is never stored, never
+// logged, and isn't kept anywhere after this call returns.
+async function updateAdminPassword(id, password) {
+  await db.query('update admins set password_hash = $1 where id = $2', [hashPassword(password), id]);
+}
+
 module.exports = {
   checkCredentials,
   listAdmins,
@@ -85,4 +92,5 @@ module.exports = {
   findAdminById,
   createAdmin,
   deleteAdmin,
+  updateAdminPassword,
 };

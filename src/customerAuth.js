@@ -31,6 +31,7 @@ function publicShape(row) {
     whatsapp: row.whatsapp,
     name: row.name,
     address: row.address || '',
+    birthday: row.birthday || null,
     created_at: row.created_at,
   };
 }
@@ -77,6 +78,36 @@ async function updatePassword(id, password) {
   await db.query('update customers set password_hash = $1 where id = $2', [hashPassword(password), id]);
 }
 
+// Superadmin editing a customer's details. Separate from updateCustomer()
+// because the customer's own form must never be able to change their
+// WhatsApp number — that's their username, and moving it is an account
+// takeover if it isn't a deliberate admin action.
+// Returns { ok: false, error } rather than throwing on a duplicate number,
+// since "that number belongs to someone else" is a normal thing to hit.
+async function adminUpdateCustomer(id, { name, whatsapp, address, birthday }) {
+  const normalized = normalizeWhatsapp(whatsapp);
+  if (!normalized) return { ok: false, error: 'Nomor WhatsApp tidak valid.' };
+
+  const clash = await db.query('select id from customers where whatsapp = $1 and id <> $2', [normalized, id]);
+  if (clash.length) return { ok: false, error: 'Nomor WhatsApp itu sudah dipakai pelanggan lain.' };
+
+  const rows = await db.query(
+    `update customers set name = $1, whatsapp = $2, address = $3, birthday = $4
+     where id = $5 returning *`,
+    [name, normalized, address || '', birthday || null, id]
+  );
+  if (!rows[0]) return { ok: false, error: 'Pelanggan tidak ditemukan.' };
+  return { ok: true, customer: publicShape(rows[0]) };
+}
+
+async function deleteCustomer(id) {
+  // Orders are kept — they're the shop's own sales record. Detaching them
+  // just means the order no longer points at a deleted account.
+  await db.query('update orders set customer_id = null where customer_id = $1', [id]);
+  await db.query('delete from stamps where customer_id = $1', [id]);
+  await db.query('delete from customers where id = $1', [id]);
+}
+
 async function listCustomerOrders(customerId, limit = 50) {
   return db.query('select * from orders where customer_id = $1 order by created_at desc limit $2', [
     customerId,
@@ -90,6 +121,8 @@ module.exports = {
   createCustomer,
   checkCredentials,
   updateCustomer,
+  adminUpdateCustomer,
+  deleteCustomer,
   updatePassword,
   listCustomerOrders,
 };

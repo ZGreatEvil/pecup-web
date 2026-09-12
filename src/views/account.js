@@ -201,29 +201,145 @@ function tierCard(loyalty) {
   </div>`;
 }
 
-function orderHistory(orders) {
-  if (!orders.length) {
-    return `<p style="font-size:14px;color:var(--text-muted);padding:8px 0;">Belum ada pesanan. <a href="/">Mulai belanja →</a></p>`;
-  }
-  return orders
-    .map((o) => {
-      const status = orderStatus(o.status);
-      return `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+function orderRow(o) {
+  const status = orderStatus(o.status);
+  const discount = Number(o.reward_discount) || 0;
+  return `
+      <a href="/pesanan-berhasil/${o.id}" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;color:inherit;">
         <div style="min-width:0;">
           <div style="font-size:14px;font-weight:700;">${escapeHtml(o.order_number)}</div>
           <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px;">${escapeHtml(formatDateID(o.created_at))}</div>
+          ${
+            discount > 0
+              ? `<div style="font-size:11.5px;font-weight:700;color:#a15a1f;margin-top:4px;">★ Pakai cup gratis${
+                  o.reward_item ? ` — ${escapeHtml(o.reward_item)}` : ''
+                }</div>`
+              : ''
+          }
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
           <span style="font-size:11.5px;font-weight:700;padding:5px 12px;border-radius:99px;color:${status.color};background:${status.bg};white-space:nowrap;">${status.label}</span>
-          <span style="font-size:14.5px;font-weight:800;color:var(--green-dark);white-space:nowrap;">${formatRupiah(o.total)}</span>
+          <span class="tnum" style="font-size:14.5px;font-weight:800;color:var(--green-dark);white-space:nowrap;">${formatRupiah(o.total)}</span>
         </div>
-      </div>`;
-    })
-    .join('');
+      </a>`;
 }
 
-function renderAkun({ customer, loyalty, orders, stampHistory = [], cartCount = 0, flash = '', errors = [] }) {
+// The account page shows only the latest few; the rest live on their own
+// paginated page so a long-standing customer's profile doesn't become a
+// mile-long scroll.
+function orderHistory(orders, { total = 0, previewCount = 0 } = {}) {
+  if (!orders.length) {
+    return `<p style="font-size:14px;color:var(--text-muted);padding:8px 0;">Belum ada pesanan. <a href="/">Mulai belanja →</a></p>`;
+  }
+  const rows = orders.map(orderRow).join('');
+  const more = total > previewCount
+    ? `<a class="btn-outline" href="/akun/pesanan" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border-radius:11px;font-size:13.5px;font-weight:700;margin-top:16px;">
+        Lihat semua ${total} pesanan
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </a>`
+    : '';
+  return rows + more;
+}
+
+// Full, paginated order history — its own page, reachable from "Lihat semua".
+function renderRiwayatPesanan({ customer, orders, pagination, cartCount = 0, view = {} }) {
+  const buildUrl = (page) => {
+    const params = new URLSearchParams();
+    if (view.dari) params.set('dari', view.dari);
+    if (view.sampai) params.set('sampai', view.sampai);
+    if (page > 1) params.set('halaman', String(page));
+    const qs = params.toString();
+    return `/akun/pesanan${qs ? `?${qs}` : ''}`;
+  };
+
+  const pager = () => {
+    if (pagination.totalPages <= 1) return '';
+    const link = (target, label, disabled) =>
+      disabled
+        ? `<span style="padding:9px 14px;border-radius:9px;font-size:13px;font-weight:700;color:var(--text-muted);opacity:0.45;">${label}</span>`
+        : `<a class="btn-outline" href="${buildUrl(target)}" style="padding:9px 14px;border-radius:9px;font-size:13px;font-weight:700;">${label}</a>`;
+
+    const windowSize = 5;
+    let start = Math.max(1, pagination.page - Math.floor(windowSize / 2));
+    const end = Math.min(pagination.totalPages, start + windowSize - 1);
+    start = Math.max(1, end - windowSize + 1);
+
+    const numbers = [];
+    for (let p = start; p <= end; p += 1) {
+      numbers.push(
+        p === pagination.page
+          ? `<span style="padding:9px 14px;border-radius:9px;font-size:13px;font-weight:800;background:var(--green);color:#fff;">${p}</span>`
+          : `<a class="btn-outline" href="${buildUrl(p)}" style="padding:9px 14px;border-radius:9px;font-size:13px;font-weight:700;">${p}</a>`
+      );
+    }
+
+    return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:24px;justify-content:center;">
+      ${link(pagination.page - 1, '‹ Sebelumnya', pagination.page === 1)}
+      ${numbers.join('')}
+      ${link(pagination.page + 1, 'Berikutnya ›', pagination.page === pagination.totalPages)}
+    </div>`;
+  };
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount, null, customer)}
+  <section class="px-page" style="padding-top:40px;padding-bottom:100px;max-width:760px;margin:0 auto;">
+    ${backButton('/akun', 'Kembali ke Akun')}
+    <h1 style="font-size:26px;font-weight:800;margin:20px 0 6px;">Riwayat Pesanan</h1>
+    <p style="color:var(--text-muted);font-size:14px;margin-bottom:24px;">
+      ${
+        pagination.total > 0
+          ? `Menampilkan ${(pagination.page - 1) * pagination.perPage + 1}–${Math.min(
+              pagination.page * pagination.perPage,
+              pagination.total
+            )} dari ${pagination.total} pesanan`
+          : 'Belum ada pesanan pada rentang ini.'
+      }
+    </p>
+
+    <form method="get" action="/akun/pesanan" class="card" style="padding:16px 18px;margin-bottom:22px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="margin:0;flex:1 1 150px;">
+        <label style="margin-bottom:5px;">Dari tanggal</label>
+        <input type="date" name="dari" value="${escapeAttr(view.dari || '')}" style="padding:10px 12px;">
+      </div>
+      <div style="margin:0;flex:1 1 150px;">
+        <label style="margin-bottom:5px;">Sampai tanggal</label>
+        <input type="date" name="sampai" value="${escapeAttr(view.sampai || '')}" style="padding:10px 12px;">
+      </div>
+      <button class="btn-primary" type="submit" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Filter</button>
+      ${
+        view.dari || view.sampai
+          ? `<a class="btn-outline" href="/akun/pesanan" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;">Reset</a>`
+          : ''
+      }
+    </form>
+
+    <div class="card">
+      ${
+        orders.length
+          ? orders.map(orderRow).join('')
+          : `<p style="font-size:14px;color:var(--text-muted);padding:8px 0;margin:0;">Tidak ada pesanan pada rentang ini.</p>`
+      }
+    </div>
+    ${pager()}
+    <div style="margin-top:28px;">${backButton('/akun', 'Kembali ke Akun')}</div>
+  </section>
+  ${customerFooter()}
+</div></div>`;
+
+  return page({ title: 'Riwayat Pesanan — Pecup', bodyHtml: body });
+}
+
+function renderAkun({
+  customer,
+  loyalty,
+  orders,
+  stampHistory = [],
+  cartCount = 0,
+  flash = '',
+  errors = [],
+  totalOrders = 0,
+}) {
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount, null, customer)}
@@ -270,8 +386,11 @@ function renderAkun({ customer, loyalty, orders, stampHistory = [], cartCount = 
       </div>
 
       <div class="split-side">
-        <h2 style="font-size:18px;font-weight:800;margin-bottom:14px;">Riwayat Pesanan</h2>
-        ${orderHistory(orders)}
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:14px;">
+          <h2 style="font-size:18px;font-weight:800;">Riwayat Pesanan</h2>
+          ${totalOrders ? `<span style="font-size:12px;color:var(--text-muted);">${totalOrders} total</span>` : ''}
+        </div>
+        ${orderHistory(orders, { total: totalOrders, previewCount: orders.length })}
       </div>
     </div>
   </section>
@@ -281,4 +400,4 @@ function renderAkun({ customer, loyalty, orders, stampHistory = [], cartCount = 
   return page({ title: 'Akun Saya — Pecup', bodyHtml: body });
 }
 
-module.exports = { renderMasuk, renderDaftar, renderAkun };
+module.exports = { renderMasuk, renderDaftar, renderAkun, renderRiwayatPesanan };

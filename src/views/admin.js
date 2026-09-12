@@ -11,6 +11,7 @@ const {
   normalizeWhatsapp,
   formatWhatsapp,
   orderStatus,
+  toDateKey,
   ORDER_STATUSES,
 } = require('../utils');
 const { tierStyle: tierStyleFor } = require('../loyalty');
@@ -477,69 +478,192 @@ function renderProdukForm({ product, error, categories = [], admin }) {
   return page({ title: `${isEdit ? 'Edit' : 'Tambah'} Produk — Admin Pecup`, bodyHtml: body });
 }
 
-function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, admin }) {
+// Builds a /admin/pesanan URL carrying the current view, changing only what's
+// passed in — so switching sort keeps the filters and vice versa.
+function pesananUrl(view, overrides = {}) {
+  const merged = { ...view, ...overrides };
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== '' && value !== null && value !== undefined) params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return `/admin/pesanan${qs ? `?${qs}` : ''}`;
+}
+
+function pesananSortHeader(label, key, view) {
+  const isActive = view.urut === key;
+  const nextDir = isActive && view.arah === 'asc' ? 'desc' : 'asc';
+  const arrow = isActive
+    ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${
+        view.arah === 'asc' ? 180 : 0
+      }deg);"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>`
+    : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;"><path d="M8 9l4-4 4 4M16 15l-4 4-4-4"/></svg>`;
+  return `<a href="${pesananUrl(view, { urut: key, arah: nextDir })}" style="display:inline-flex;align-items:center;gap:5px;color:${
+    isActive ? 'var(--text)' : 'var(--text-muted)'
+  };font-weight:${isActive ? 800 : 700};">${label}${arrow}</a>`;
+}
+
+// Relative wording for the delivery date — "hari ini" / "besok" is what an
+// admin packing orders actually needs to see at a glance.
+function deliveryLabel(deliveryDate, todayKey) {
+  if (!deliveryDate) return { text: '—', tone: 'var(--text-muted)', weight: 500, note: '' };
+  const key = toDateKey(deliveryDate);
+  const diff = Math.round((Date.parse(key + 'T00:00:00') - Date.parse(todayKey + 'T00:00:00')) / 86400000);
+  let note = '';
+  let tone = 'var(--text)';
+  if (diff < 0) {
+    note = `${Math.abs(diff)} hari lalu`;
+    tone = 'var(--text-muted)';
+  } else if (diff === 0) {
+    note = 'Hari ini';
+    tone = '#a15a1f';
+  } else if (diff === 1) {
+    note = 'Besok';
+    tone = '#a15a1f';
+  } else {
+    note = `${diff} hari lagi`;
+  }
+  return { text: formatShortDateID(key), tone, weight: diff <= 1 && diff >= 0 ? 800 : 600, note };
+}
+
+const PESANAN_PRESETS = [
+  { key: 'hari-ini', label: 'Hari ini' },
+  { key: '7-hari', label: '7 hari terakhir' },
+  { key: '30-hari', label: '30 hari terakhir' },
+  { key: 'kirim-hari-ini', label: 'Dikirim hari ini' },
+  { key: 'kirim-mendatang', label: 'Pengiriman mendatang' },
+  { key: 'semua', label: 'Semua pesanan' },
+];
+
+function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePreset = '', pagination = null }) {
   const rows = orders.length
     ? orders
         .map((o) => {
           const status = orderStatus(o.status);
-          const badge = `<span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span>`;
+          const kirim = deliveryLabel(o.delivery_date, todayKey);
           return `
-      <div class="row-hover" style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);">
-        <span style="font-size:13px;color:var(--text-muted);">${formatTimeID(o.created_at)}</span>
-        <div><div style="font-size:13.5px;font-weight:700;">${escapeHtml(o.customer_name)}</div><div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(o.whatsapp)}</div></div>
-        <span style="font-size:12.5px;color:var(--text-muted);">${escapeHtml(o.order_number)}</span>
-        <span style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
-        <div>${badge}</div>
-        <a href="/admin/pesanan/${o.id}" class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;width:fit-content;">Lihat Detail</a>
-      </div>`;
+      <a class="row-hover" href="/admin/pesanan/${o.id}" style="display:grid;grid-template-columns:1.1fr 1.5fr 1.1fr 1fr 1fr 0.9fr;align-items:center;padding:14px 20px;border-top:1px solid var(--border);gap:10px;color:inherit;">
+        <div>
+          <div style="font-size:13px;font-weight:600;">${escapeHtml(formatShortDateID(o.created_at))}</div>
+          <div class="tnum" style="font-size:11.5px;color:var(--text-muted);">${formatTimeID(o.created_at)} WIB</div>
+        </div>
+        <div style="min-width:0;">
+          <div style="font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(o.customer_name)}</div>
+          <div class="tnum" style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(o.order_number)}</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:${kirim.weight};color:${kirim.tone};">${escapeHtml(kirim.text)}</div>
+          ${kirim.note ? `<div style="font-size:11.5px;color:${kirim.tone};opacity:0.85;">${escapeHtml(kirim.note)}</div>` : ''}
+        </div>
+        <span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
+        <div><span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span></div>
+        <span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;justify-self:end;">Detail &rsaquo;</span>
+      </a>`;
         })
         .join('')
-    : `<div style="padding:32px 22px;color:var(--text-muted);font-size:14px;">Belum ada pesanan pada tanggal ini.</div>`;
+    : `<div style="padding:36px 22px;color:var(--text-muted);font-size:14px;text-align:center;">Tidak ada pesanan yang cocok dengan filter ini.</div>`;
+
+  const presetChips = PESANAN_PRESETS.map(
+    (p) =>
+      `<a class="chip ${activePreset === p.key ? 'chip-active' : ''}" href="/admin/pesanan?tampilan=${p.key}" style="padding:8px 16px;border-radius:99px;font-size:13px;font-weight:600;${
+        activePreset === p.key ? '' : 'color:var(--text);'
+      }">${p.label}</a>`
+  ).join('');
+
+  const statusOptions = [{ value: '', label: 'Semua status' }, ...ORDER_STATUSES]
+    .map((s) => `<option value="${s.value}" ${view.status === s.value ? 'selected' : ''}>${s.label}</option>`)
+    .join('');
 
   const body = `
 <div class="admin-shell">
   ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
   <main class="admin-main">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
-      <div><div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div><h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1></div>
-      <form method="get" action="/admin/pesanan/unduh" style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
-        <div style="margin:0;">
-          <label style="margin-bottom:4px;">Dari</label>
-          <input type="date" name="dari" value="${dateKey}" required style="padding:10px 12px;">
-        </div>
-        <div style="margin:0;">
-          <label style="margin-bottom:4px;">Sampai</label>
-          <input type="date" name="sampai" value="${dateKey}" required style="padding:10px 12px;">
-        </div>
-        <button class="btn-primary" type="submit" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;white-space:nowrap;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
-          Unduh CSV
-        </button>
-      </form>
-    </div>
-
-    <div style="display:flex;align-items:center;gap:14px;margin:20px 0 28px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;width:fit-content;">
-      <a href="/admin/pesanan?tanggal=${prevDate}" style="display:flex;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-        <span style="font-size:14.5px;font-weight:700;">${formatDateID(dateKey)}</span>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div>
+        <h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1>
       </div>
-      <a href="/admin/pesanan?tanggal=${nextDate}" style="display:flex;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></a>
+      <a class="btn-primary" href="/admin/pesanan/unduh?${new URLSearchParams({
+        dari: view.dari || '',
+        sampai: view.sampai || '',
+        status: view.status || '',
+        q: view.q || '',
+        jenisTanggal: view.jenisTanggal || 'dipesan',
+      }).toString()}" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        Unduh CSV
+      </a>
     </div>
 
-    <div class="grid-4" style="margin-bottom:28px;gap:16px;">
-      ${statCard('Pesanan Hari Ini', stats.total, 'var(--surface-2)', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>', '#5a5a60')}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">${presetChips}</div>
+
+    <form method="get" action="/admin/pesanan" class="card" style="padding:18px 20px;margin-bottom:22px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="margin:0;flex:0 1 170px;">
+        <label style="margin-bottom:5px;">Filter tanggal pakai</label>
+        <select name="jenisTanggal" style="padding:10px 12px;">
+          <option value="dipesan" ${view.jenisTanggal !== 'dikirim' ? 'selected' : ''}>Tanggal pesan</option>
+          <option value="dikirim" ${view.jenisTanggal === 'dikirim' ? 'selected' : ''}>Tanggal kirim</option>
+        </select>
+      </div>
+      <div style="margin:0;flex:0 1 150px;">
+        <label style="margin-bottom:5px;">Dari</label>
+        <input type="date" name="dari" value="${escapeAttr(view.dari || '')}" style="padding:10px 12px;">
+      </div>
+      <div style="margin:0;flex:0 1 150px;">
+        <label style="margin-bottom:5px;">Sampai</label>
+        <input type="date" name="sampai" value="${escapeAttr(view.sampai || '')}" style="padding:10px 12px;">
+      </div>
+      <div style="margin:0;flex:0 1 160px;">
+        <label style="margin-bottom:5px;">Status</label>
+        <select name="status" style="padding:10px 12px;">${statusOptions}</select>
+      </div>
+      <div style="margin:0;flex:1 1 190px;">
+        <label style="margin-bottom:5px;">Cari pemesan</label>
+        <input type="search" name="q" value="${escapeAttr(view.q || '')}" placeholder="Nama, WA, no. pesanan…" style="padding:10px 12px;">
+      </div>
+      <input type="hidden" name="urut" value="${escapeAttr(view.urut || 'dipesan')}">
+      <input type="hidden" name="arah" value="${escapeAttr(view.arah || 'desc')}">
+      <button class="btn-primary" type="submit" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Terapkan</button>
+      <a class="btn-outline" href="/admin/pesanan?tampilan=semua" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;">Reset</a>
+    </form>
+
+    <div class="grid-4" style="margin-bottom:24px;gap:16px;">
+      ${statCard('Pesanan Tampil', stats.total, 'var(--surface-2)', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>', '#5a5a60')}
       ${statCard('Menunggu Verifikasi', stats.pending, 'oklch(94% 0.06 55)', '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>', '#a15a1f')}
       ${statCard('Diproses', stats.processing, 'oklch(93% 0.05 245)', '<path d="M12 2v4M12 18v4M4.9 4.9l2.9 2.9M16.2 16.2l2.9 2.9M2 12h4M18 12h4M4.9 19.1l2.9-2.9M16.2 7.8l2.9-2.9"/>', '#1f5aa1')}
       ${statCard('Selesai', stats.done, 'var(--green-soft)', '<path d="M20 6L9 17l-5-5"/>')}
     </div>
 
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">
+      ${
+        pagination && pagination.total > 0
+          ? `Menampilkan <strong>${(pagination.page - 1) * pagination.perPage + 1}–${Math.min(
+              pagination.page * pagination.perPage,
+              pagination.total
+            )}</strong> dari <strong>${pagination.total}</strong> pesanan`
+          : `<strong>${orders.length}</strong> pesanan`
+      }${
+        view.dari || view.sampai
+          ? ` · ${view.jenisTanggal === 'dikirim' ? 'dikirim' : 'dipesan'} ${
+              view.dari ? escapeHtml(formatShortDateID(view.dari)) : 'awal'
+            } – ${view.sampai ? escapeHtml(formatShortDateID(view.sampai)) : 'sekarang'}`
+          : ' · semua tanggal'
+      }${stats.revenue ? ` · omzet selesai <strong>${formatRupiah(stats.revenue)}</strong>` : ''}
+    </p>
+
     <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:0.7fr 1.5fr 1fr 0.9fr 1fr 1fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:600px;">
-        <span>WAKTU</span><span>PEMESAN</span><span>NO. PESANAN</span><span>TOTAL</span><span>STATUS</span><span>AKSI</span>
+      <div style="display:grid;grid-template-columns:1.1fr 1.5fr 1.1fr 1fr 1fr 0.9fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:820px;gap:10px;">
+        <span>${pesananSortHeader('DIPESAN', 'dipesan', view)}</span>
+        <span>${pesananSortHeader('PEMESAN', 'nama', view)}</span>
+        <span>${pesananSortHeader('DIKIRIM', 'dikirim', view)}</span>
+        <span>${pesananSortHeader('TOTAL', 'total', view)}</span>
+        <span>${pesananSortHeader('STATUS', 'status', view)}</span>
+        <span></span>
       </div>
-      <div style="min-width:600px;">${rows}</div>
+      <div style="min-width:820px;">${rows}</div>
     </div>
+    ${pagination ? pageLinks((p) => pesananUrl(view, { halaman: p }), pagination.page, pagination.totalPages) : ''}
+    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;">Klik judul kolom untuk mengurutkan. Unduh CSV mengikuti filter yang sedang aktif — termasuk seluruh halaman, bukan cuma yang tampil.</p>
   </main>
 </div>`;
 
@@ -547,6 +671,7 @@ function renderPesananList({ dateKey, prevDate, nextDate, orders, stats, admin }
 }
 
 function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) {
+  const rewardDiscount = Number(order.reward_discount) || 0;
   const itemRows = items
     .map(
       (it) => `
@@ -630,7 +755,28 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
 
         <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;">Item Dipesan</h3>
         ${itemRows}
-        <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;padding-top:16px;"><span>Total</span><span style="color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
+        ${
+          rewardDiscount > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:10px 0 0;color:var(--text-muted);">
+                <span>Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
+                <span>Cup gratis — ${escapeHtml(order.reward_item || '1 cup termurah')}</span>
+                <span class="tnum">&minus;${formatRupiah(rewardDiscount)}</span>
+              </div>`
+            : ''
+        }
+        <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;padding-top:16px;"><span>${
+          rewardDiscount > 0 ? 'Total Dibayar' : 'Total'
+        }</span><span class="tnum" style="color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
+        ${
+          rewardDiscount > 0
+            ? `<div style="background:var(--orange-soft);border-radius:10px;padding:12px 14px;margin-top:14px;font-size:12.5px;color:#7a4a1f;line-height:1.7;">
+                <strong>Catatan keuangan:</strong> pesanan ini menebus 1 cup gratis dari kartu stempel.
+                Uang masuk ${formatRupiah(order.total)}, nilai promo ${formatRupiah(rewardDiscount)} — bukan kurang bayar.
+              </div>`
+            : ''
+        }
 
         <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:20px;display:flex;gap:10px;">
           <select name="status" style="flex:1;">
@@ -651,7 +797,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null }) 
   return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body });
 }
 
-function renderAdminList({ admins, admin, error }) {
+function renderAdminList({ admins, admin, error, flash = '' }) {
   const currentAdminId = admin.adminId;
   const rows = admins
     .map((a) => {
@@ -661,11 +807,17 @@ function renderAdminList({ admins, admin, error }) {
           ? `<span style="font-size:11.5px;font-weight:700;color:#a15a1f;background:var(--orange-soft);padding:5px 11px;border-radius:99px;">Superadmin</span>`
           : `<span style="font-size:11.5px;font-weight:700;color:#3f7a42;background:var(--green-soft);padding:5px 11px;border-radius:99px;">Admin</span>`;
       return `
-      <div class="row-hover" style="display:grid;grid-template-columns:1.6fr 1fr 1.2fr 0.8fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);">
+      <div class="row-hover" style="display:grid;grid-template-columns:1.4fr 0.9fr 1fr 1.9fr 0.5fr;align-items:center;padding:14px 22px;border-top:1px solid var(--border);gap:12px;">
         <span style="font-size:14px;font-weight:700;">${escapeHtml(a.username)}${isSelf ? ' <span style="color:var(--text-muted);font-weight:500;font-size:12px;">(kamu)</span>' : ''}</span>
         <div>${roleBadge}</div>
         <span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(a.created_at)}</span>
-        <div>
+        <form method="post" action="/admin/akun/${a.id}/password" style="display:flex;align-items:center;gap:7px;"
+              onsubmit="return confirm('Ganti password ${escapeAttr(a.username)}? Mereka harus pakai password baru ini untuk masuk.');">
+          <input type="password" name="password" required minlength="6" placeholder="Password baru (min. 6)"
+                 autocomplete="new-password" style="padding:8px 11px;font-size:12.5px;border-radius:8px;">
+          <button class="btn-outline" type="submit" style="padding:8px 13px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap;">Ganti</button>
+        </form>
+        <div style="justify-self:end;">
           ${
             isSelf
               ? ''
@@ -688,6 +840,7 @@ function renderAdminList({ admins, admin, error }) {
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kelola Admin</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:24px;">Kelola Admin</h1>
 
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
 
     <div class="card" style="margin-bottom:28px;">
@@ -707,11 +860,14 @@ function renderAdminList({ admins, admin, error }) {
     </div>
 
     <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-      <div style="display:grid;grid-template-columns:1.6fr 1fr 1.2fr 0.8fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;">
-        <span>USERNAME</span><span>PERAN</span><span>DIBUAT</span><span>AKSI</span>
+      <div style="display:grid;grid-template-columns:1.4fr 0.9fr 1fr 1.9fr 0.5fr;padding:14px 22px;background:var(--surface-2);font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:720px;gap:12px;">
+        <span>USERNAME</span><span>PERAN</span><span>DIBUAT</span><span>GANTI PASSWORD</span><span></span>
       </div>
-      <div style="min-width:520px;">${rows}</div>
+      <div style="min-width:720px;">${rows}</div>
     </div>
+    <p style="font-size:12.5px;color:var(--text-muted);margin-top:14px;line-height:1.7;">
+      Password disimpan dalam bentuk hash (scrypt + salt acak) — tidak pernah disimpan apa adanya, dan tidak bisa dilihat lagi oleh siapa pun termasuk superadmin. Kalau admin lupa password, set yang baru di sini lalu beri tahu orangnya.
+    </p>
   </main>
 </div>`;
 
@@ -743,10 +899,8 @@ function stampMeter(c) {
             : ''
         }
       </div>
-      <div style="height:5px;border-radius:99px;background:var(--surface-2);margin-top:5px;overflow:hidden;">
-        <div style="height:100%;width:${pct}%;border-radius:99px;background:${
-          c.cardComplete ? 'var(--green)' : 'var(--orange)'
-        };"></div>
+      <div class="meter">
+        <div class="meter-fill${c.cardComplete ? ' is-full' : ''}" style="width:${pct}%;"></div>
       </div>
     </div>`;
 }
@@ -841,7 +995,30 @@ const STAMP_STATUS_LABELS = {
 // One customer: profile, loyalty state, stamp history and order history.
 // `canEdit` is the superadmin flag — everyone else sees the same page in
 // read-only form.
-function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEdit, tiersEnabled, flash = '', error = '' }) {
+function renderPelangganDetail({
+  customer,
+  loyalty,
+  orders,
+  stamps,
+  admin,
+  canEdit,
+  tiersEnabled,
+  flash = '',
+  error = '',
+  pagination = null,
+  orderView = {},
+  activePreset = '',
+  lifetime = { orders: 0, spent: 0 },
+}) {
+  const detailUrl = (overrides = {}) => {
+    const merged = { ...orderView, ...overrides };
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(merged)) {
+      if (v !== '' && v !== null && v !== undefined) params.set(k, String(v));
+    }
+    const qs = params.toString();
+    return `/admin/pelanggan/${customer.id}${qs ? `?${qs}` : ''}`;
+  };
   const orderRows = orders.length
     ? orders
         .map((o) => {
@@ -882,10 +1059,6 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
         .join('')
     : `<p style="font-size:13px;color:var(--text-muted);margin:0;">Belum ada stempel.</p>`;
 
-  const totalSpent = orders
-    .filter((o) => o.status === 'selesai')
-    .reduce((sum, o) => sum + Number(o.total || 0), 0);
-
   const miniStat = (label, value, sub = '') => `
     <div style="background:var(--surface-2);border-radius:12px;padding:14px 16px;">
       <div class="tnum" style="font-size:19px;font-weight:800;">${value}</div>
@@ -925,8 +1098,8 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:10px;">
             ${miniStat('Stempel aktif', `${loyalty.stamps}<span style="font-size:13px;color:var(--text-muted);font-weight:600;"> / ${loyalty.perReward}</span>`, loyalty.expiresLabel ? `Hangus ${escapeHtml(loyalty.expiresLabel)}` : '')}
             ${miniStat('Klaim cup gratis', loyalty.claims)}
-            ${miniStat('Pesanan selesai', orders.filter((o) => o.status === 'selesai').length)}
-            ${miniStat('Total belanja', formatRupiah(totalSpent))}
+            ${miniStat('Pesanan selesai', lifetime.orders)}
+            ${miniStat('Total belanja', formatRupiah(lifetime.spent))}
           </div>
           <div style="font-size:12.5px;color:var(--text-muted);margin-top:16px;line-height:1.7;">
             Bergabung ${escapeHtml(formatDateID(customer.created_at))}
@@ -934,6 +1107,59 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
             ${customer.birthday ? `<br>Ulang tahun: ${escapeHtml(formatShortDateID(customer.birthday))}` : ''}
           </div>
         </div>
+
+        ${
+          canEdit
+            ? `<div class="card" style="padding:22px;">
+          <h3 style="font-size:15px;font-weight:800;margin-bottom:4px;">Ubah Data Pelanggan</h3>
+          <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Nomor WhatsApp juga dipakai sebagai username untuk masuk, jadi mengubahnya ikut mengubah cara pelanggan login.</p>
+          <form method="post" action="/admin/pelanggan/${customer.id}/ubah">
+            <div class="field" style="margin-bottom:14px;">
+              <label>Nama lengkap <span class="req">*</span></label>
+              <input type="text" name="name" value="${escapeAttr(customer.name)}" required style="padding:10px 12px;">
+            </div>
+            <div class="field" style="margin-bottom:14px;">
+              <label>Nomor WhatsApp <span class="req">*</span></label>
+              <input type="text" name="whatsapp" value="${escapeAttr(formatWhatsapp(customer.whatsapp))}" required style="padding:10px 12px;">
+            </div>
+            <div class="field" style="margin-bottom:14px;">
+              <label>Alamat / lokasi antar</label>
+              <input type="text" name="address" value="${escapeAttr(customer.address || '')}" style="padding:10px 12px;">
+            </div>
+            <div class="field" style="margin-bottom:16px;">
+              <label>Tanggal ulang tahun</label>
+              <input type="date" name="birthday" value="${escapeAttr(
+                customer.birthday ? toDateKey(customer.birthday) : ''
+              )}" style="padding:10px 12px;">
+              <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Dipakai untuk benefit ulang tahun kalau tier diaktifkan.</div>
+            </div>
+            <button class="btn-primary" type="submit" style="padding:12px 22px;border-radius:11px;font-size:13.5px;font-weight:700;">Simpan Perubahan</button>
+          </form>
+
+          <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:18px;">
+            <h4 style="font-size:13.5px;font-weight:800;margin-bottom:4px;">Reset Password</h4>
+            <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">Password lama tidak bisa dilihat — disimpan sebagai hash. Set yang baru lalu beri tahu pelanggannya.</p>
+            <form method="post" action="/admin/pelanggan/${customer.id}/password" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;"
+                  onsubmit="return confirm('Ganti password ${escapeAttr(customer.name)}?');">
+              <div style="margin:0;flex:1 1 200px;">
+                <input type="password" name="password" required minlength="6" placeholder="Password baru (min. 6 karakter)"
+                       autocomplete="new-password" style="padding:10px 12px;">
+              </div>
+              <button class="btn-outline" type="submit" style="padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Ganti Password</button>
+            </form>
+          </div>
+
+          <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:18px;">
+            <h4 style="font-size:13.5px;font-weight:800;margin-bottom:4px;color:#a13f3f;">Hapus Akun</h4>
+            <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">Stempel ikut terhapus. Riwayat pesanan tetap tersimpan sebagai catatan penjualan, hanya tidak lagi terhubung ke akun ini.</p>
+            <form method="post" action="/admin/pelanggan/${customer.id}/hapus"
+                  onsubmit="return confirm('Hapus akun ${escapeAttr(customer.name)} beserta stempelnya? Tindakan ini tidak bisa dibatalkan.');">
+              <button type="submit" class="btn-outline" style="padding:10px 18px;border-radius:10px;font-size:13px;font-weight:700;color:#a13f3f;border-color:#e0a0a0;">Hapus Akun Pelanggan</button>
+            </form>
+          </div>
+        </div>`
+            : ''
+        }
 
         <div class="card" style="padding:22px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
@@ -970,9 +1196,28 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
 
       <div style="flex:1 1 400px;min-width:0;">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;">
-            <h3 style="font-size:15px;font-weight:800;">Riwayat Pesanan</h3>
-            <span style="font-size:12px;color:var(--text-muted);">${orders.length} pesanan</span>
+          <div style="padding:18px 20px 14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+              <h3 style="font-size:15px;font-weight:800;">Riwayat Pesanan</h3>
+              <span style="font-size:12px;color:var(--text-muted);">${
+                pagination ? `${pagination.total} pesanan` : `${orders.length} pesanan`
+              }</span>
+            </div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;">${rangeChips(
+              `/admin/pelanggan/${customer.id}`,
+              activePreset
+            )}</div>
+            <form method="get" action="/admin/pelanggan/${customer.id}" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+              <div style="margin:0;flex:1 1 130px;">
+                <label style="margin-bottom:4px;font-size:11.5px;">Dari</label>
+                <input type="date" name="dari" value="${escapeAttr(orderView.dari || '')}" style="padding:8px 10px;font-size:13px;">
+              </div>
+              <div style="margin:0;flex:1 1 130px;">
+                <label style="margin-bottom:4px;font-size:11.5px;">Sampai</label>
+                <input type="date" name="sampai" value="${escapeAttr(orderView.sampai || '')}" style="padding:8px 10px;font-size:13px;">
+              </div>
+              <button class="btn-outline" type="submit" style="padding:9px 15px;border-radius:9px;font-size:12.5px;font-weight:700;">Filter</button>
+            </form>
           </div>
           <div class="table-scroll">
             <div style="display:grid;grid-template-columns:1.2fr 1fr 0.9fr 1fr;padding:10px 18px;background:var(--surface-2);font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;gap:10px;">
@@ -981,6 +1226,7 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
             <div style="min-width:520px;">${orderRows}</div>
           </div>
         </div>
+        ${pagination ? pageLinks((p) => detailUrl({ halaman: p }), pagination.page, pagination.totalPages) : ''}
       </div>
     </div>
   </main>
@@ -992,35 +1238,57 @@ function renderPelangganDetail({ customer, loyalty, orders, stamps, admin, canEd
 // The stamp-and-tier rulebook, split off from the customer directory so the
 // two jobs (look someone up / change the programme) don't share a page.
 function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, flash = '', error = '' }) {
+  // One card per tier. Every field is the same shape (label / input / hint),
+  // so they line up on a shared baseline instead of drifting the way a mixed
+  // grid of inputs and bare checkboxes did.
   const tierRows = tierConfig.tiers
-    .map(
-      (t, i) => `
-      <div style="display:grid;grid-template-columns:1.3fr 1.5fr 0.9fr 1fr 1fr;gap:12px;align-items:end;padding:16px 0;border-top:1px solid var(--border);">
-        <div style="margin:0;">
-          <label style="margin-bottom:4px;font-size:12px;">Nama tingkat</label>
-          <input type="text" name="tierName" value="${escapeAttr(t.name)}" maxlength="30" required style="padding:9px 11px;">
+    .map((t, i) => {
+      const style = tierStyleFor(t.name);
+      return `
+      <div class="tier-card">
+        <div class="tier-card-head">
+          <span class="tier-card-num" style="color:${style.color};background:${style.bg};">${i + 1}</span>
+          <span style="font-size:13px;font-weight:800;">Tingkat ${i + 1}</span>
+          <span style="font-size:11.5px;color:var(--text-muted);margin-left:auto;">${
+            t.minClaims === 0 ? 'Tingkat awal untuk semua pelanggan baru' : `Mulai dari ${t.minClaims} klaim`
+          }</span>
         </div>
-        <div style="margin:0;">
-          <label style="margin-bottom:4px;font-size:12px;">Naik setelah … klaim cup gratis</label>
-          <input type="number" name="tierMinClaims" value="${t.minClaims}" min="0" max="999" required style="padding:9px 11px;">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">${
-            t.minClaims === 0
-              ? 'Tingkat awal — semua pelanggan baru mulai di sini.'
-              : `Pelanggan masuk tingkat ini setelah menukar <strong>${t.minClaims}</strong> cup gratis.`
-          }</div>
+        <div class="tier-fields">
+          <div class="tier-field">
+            <label>Nama tingkat</label>
+            <input type="text" name="tierName" value="${escapeAttr(t.name)}" maxlength="30" required>
+            <span class="tier-hint">Tampil sebagai lencana di profil pelanggan.</span>
+          </div>
+          <div class="tier-field">
+            <label>Naik setelah … klaim</label>
+            <input type="number" name="tierMinClaims" value="${t.minClaims}" min="0" max="999" required>
+            <span class="tier-hint">${
+              t.minClaims === 0
+                ? 'Semua pelanggan baru mulai di sini.'
+                : `Masuk tingkat ini setelah menukar ${t.minClaims} cup gratis.`
+            }</span>
+          </div>
+          <div class="tier-field">
+            <label>Diskon (%)</label>
+            <input type="number" name="tierDiscount" value="${t.discountPercent}" min="0" max="100" required>
+            <span class="tier-hint">0 berarti tanpa diskon.</span>
+          </div>
+          <div class="tier-field">
+            <label>Benefit tambahan</label>
+            <div class="tier-perks">
+              <label class="tier-check">
+                <input type="checkbox" name="tierWeekly" value="${i}" ${t.weeklyFreeCup ? 'checked' : ''}>
+                Diskon mingguan
+              </label>
+              <label class="tier-check">
+                <input type="checkbox" name="tierBirthday" value="${i}" ${t.birthdayFreeCup ? 'checked' : ''}>
+                Gratis ulang tahun
+              </label>
+            </div>
+          </div>
         </div>
-        <div style="margin:0;">
-          <label style="margin-bottom:4px;font-size:12px;">Diskon %</label>
-          <input type="number" name="tierDiscount" value="${t.discountPercent}" min="0" max="100" required style="padding:9px 11px;">
-        </div>
-        <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin:0 0 9px;font-weight:500;">
-          <input type="checkbox" name="tierWeekly" value="${i}" ${t.weeklyFreeCup ? 'checked' : ''} style="width:16px;height:16px;"> Diskon mingguan
-        </label>
-        <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;margin:0 0 9px;font-weight:500;">
-          <input type="checkbox" name="tierBirthday" value="${i}" ${t.birthdayFreeCup ? 'checked' : ''} style="width:16px;height:16px;"> Gratis ulang tahun
-        </label>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
 
   // Worked example in the shop's own numbers, so "min. klaim" isn't an
@@ -1034,12 +1302,12 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
           : `${t.minClaims}–${next.minClaims - 1} klaim`
         : `${t.minClaims} klaim atau lebih`;
       const style = tierStyleFor(t.name);
-      return `<div style="display:flex;align-items:center;gap:10px;font-size:13px;padding:7px 0;">
-        <span style="font-size:11px;font-weight:800;letter-spacing:0.4px;padding:4px 11px;border-radius:99px;color:${style.color};background:${style.bg};white-space:nowrap;min-width:92px;text-align:center;">${escapeHtml(
+      return `<div class="ladder-row">
+        <span class="ladder-pill" style="color:${style.color};background:${style.bg};">${escapeHtml(
           t.name.toUpperCase()
         )}</span>
         <span style="color:var(--text-muted);">${escapeHtml(range)}</span>
-        <span style="color:var(--text-muted);margin-left:auto;text-align:right;">${
+        <span style="color:var(--text-muted);text-align:right;">${
           [
             t.discountPercent ? `diskon ${t.discountPercent}%` : '',
             t.weeklyFreeCup ? 'diskon mingguan' : '',
@@ -1053,6 +1321,38 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
     .join('');
 
   const body = `
+<style>
+  /* Every tier field is label / input / hint in the same order, and the row
+     is a grid with equal-height cells — so nothing sits higher than its
+     neighbour regardless of how long a hint wraps. */
+  .tier-card{border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-top:14px;background:var(--surface);}
+  .tier-card-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .tier-card-num{width:24px;height:24px;border-radius:50%;font-size:12px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .tier-fields{display:grid;grid-template-columns:1.2fr 1.1fr 0.8fr 1.4fr;gap:14px;align-items:start;}
+  .tier-field{display:flex;flex-direction:column;min-width:0;}
+  .tier-field label{font-size:12px;font-weight:700;margin-bottom:5px;min-height:2.6em;display:flex;align-items:flex-end;}
+  .tier-field input[type="text"], .tier-field input[type="number"]{padding:9px 11px;}
+  .tier-hint{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;}
+  .tier-perks{display:flex;flex-direction:column;gap:8px;padding-top:2px;}
+  .tier-check{display:flex;align-items:center;gap:8px;margin:0;font-size:12.5px;font-weight:500;cursor:pointer;
+    border:1.5px solid var(--border);border-radius:9px;padding:9px 11px;transition:border-color 0.16s ease, background 0.16s ease;}
+  .tier-check:hover{border-color:var(--orange);background:var(--orange-soft);}
+  .tier-check input{width:16px;height:16px;margin:0;padding:0;flex-shrink:0;}
+  @media (max-width: 1100px){
+    .tier-fields{grid-template-columns:1fr 1fr;}
+    .tier-field label{min-height:0;}
+  }
+  @media (max-width: 620px){ .tier-fields{grid-template-columns:1fr;} }
+  /* The ladder preview: fixed-width pill column keeps the names, ranges and
+     benefits in three straight columns. */
+  .ladder-row{display:grid;grid-template-columns:112px 1fr auto;gap:12px;align-items:center;padding:7px 0;font-size:13px;}
+  .ladder-pill{font-size:11px;font-weight:800;letter-spacing:0.4px;padding:4px 11px;border-radius:99px;text-align:center;white-space:nowrap;}
+  @media (max-width: 620px){
+    .ladder-row{grid-template-columns:1fr;gap:2px;}
+    .ladder-row > span:last-child{text-align:left !important;}
+  }
+</style>
 <div class="admin-shell">
   ${adminSidebar('loyalitas', { isSuperadmin: true, username: admin.username })}
   <main class="admin-main">
@@ -1123,6 +1423,211 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
   return page({ title: 'Program Stempel — Admin Pecup', bodyHtml: body });
 }
 
+// Shared date-range presets. Every date filter in the admin uses the same
+// vocabulary so "bulan ini" means the same thing on every page.
+const RANGE_PRESETS = [
+  { key: 'hari-ini', label: 'Hari ini' },
+  { key: '7-hari', label: '7 hari' },
+  { key: '30-hari', label: '30 hari' },
+  { key: 'bulan-ini', label: 'Bulan ini' },
+  { key: 'bulan-lalu', label: 'Bulan lalu' },
+  { key: 'tahun-ini', label: 'Tahun ini' },
+  { key: 'semua', label: 'Semua' },
+];
+
+function rangeChips(basePath, activeKey, extra = {}) {
+  const qs = (key) => {
+    const params = new URLSearchParams({ ...extra, rentang: key });
+    return `${basePath}?${params.toString()}`;
+  };
+  return RANGE_PRESETS.map(
+    (p) =>
+      `<a class="chip ${activeKey === p.key ? 'chip-active' : ''}" href="${qs(p.key)}" style="padding:7px 15px;border-radius:99px;font-size:12.5px;font-weight:600;${
+        activeKey === p.key ? '' : 'color:var(--text);'
+      }">${p.label}</a>`
+  ).join('');
+}
+
+// Generic pager used by the order tables and the customer's own history.
+function pageLinks(buildUrl, current, totalPages) {
+  if (totalPages <= 1) return '';
+  const link = (target, label, disabled) =>
+    disabled
+      ? `<span style="padding:8px 13px;border-radius:9px;font-size:13px;font-weight:700;color:var(--text-muted);opacity:0.45;">${label}</span>`
+      : `<a class="btn-outline" href="${buildUrl(target)}" style="padding:8px 13px;border-radius:9px;font-size:13px;font-weight:700;">${label}</a>`;
+
+  const windowSize = 5;
+  let start = Math.max(1, current - Math.floor(windowSize / 2));
+  const end = Math.min(totalPages, start + windowSize - 1);
+  start = Math.max(1, end - windowSize + 1);
+
+  const numbers = [];
+  for (let p = start; p <= end; p += 1) {
+    numbers.push(
+      p === current
+        ? `<span style="padding:8px 13px;border-radius:9px;font-size:13px;font-weight:800;background:var(--green);color:#fff;">${p}</span>`
+        : `<a class="btn-outline" href="${buildUrl(p)}" style="padding:8px 13px;border-radius:9px;font-size:13px;font-weight:700;">${p}</a>`
+    );
+  }
+
+  return `
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:18px;">
+      ${link(1, '« Awal', current === 1)}
+      ${link(current - 1, '‹ Sebelumnya', current === 1)}
+      ${numbers.join('')}
+      ${link(current + 1, 'Berikutnya ›', current === totalPages)}
+      ${link(totalPages, 'Akhir »', current === totalPages)}
+    </div>`;
+}
+
+// Finance view: what was sold, what was given away, and what actually came in.
+function renderLaporan({ admin, report, view, activePreset, todayKey }) {
+  const bigStat = (label, value, sub, accent) => `
+    <div class="card" style="padding:20px 22px;border-left:4px solid ${accent};">
+      <div style="font-size:12px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;text-transform:uppercase;">${label}</div>
+      <div class="tnum" style="font-size:25px;font-weight:800;margin-top:8px;letter-spacing:-0.5px;">${value}</div>
+      ${sub ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">${sub}</div>` : ''}
+    </div>`;
+
+  // Simple inline bar so the trend is visible without a charting library.
+  const maxNet = Math.max(1, ...report.series.map((s) => s.net));
+  const seriesRows = report.series.length
+    ? report.series
+        .map((s) => {
+          const pct = Math.round((s.net / maxNet) * 100);
+          const label = view.kelompok === 'bulan' ? s.periode : formatShortDateID(s.periode);
+          return `
+      <div class="row-hover" style="display:grid;grid-template-columns:1.1fr 0.6fr 1fr 1fr 1.4fr;align-items:center;gap:12px;padding:11px 20px;border-top:1px solid var(--border);">
+        <span style="font-size:13px;font-weight:700;">${escapeHtml(label)}</span>
+        <span class="tnum" style="font-size:13px;color:var(--text-muted);">${s.orders}</span>
+        <span class="tnum" style="font-size:13px;">${formatRupiah(s.gross)}</span>
+        <span class="tnum" style="font-size:13px;color:${s.discount ? '#a15a1f' : 'var(--text-muted)'};">${
+            s.discount ? `−${formatRupiah(s.discount)}` : '—'
+          }</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="meter" style="flex:1;margin:0;"><div class="meter-fill is-full" style="width:${pct}%;"></div></div>
+          <span class="tnum" style="font-size:13px;font-weight:800;color:var(--green-dark);white-space:nowrap;">${formatRupiah(s.net)}</span>
+        </div>
+      </div>`;
+        })
+        .join('')
+    : `<div style="padding:32px 20px;color:var(--text-muted);font-size:14px;text-align:center;">Tidak ada penjualan pada rentang ini.</div>`;
+
+  const maxProduct = Math.max(1, ...report.byProduct.map((p) => p.gross));
+  const productRows = report.byProduct.length
+    ? report.byProduct
+        .map(
+          (p) => `
+      <div class="row-hover" style="display:grid;grid-template-columns:1.6fr 0.6fr 1.4fr;align-items:center;gap:12px;padding:11px 20px;border-top:1px solid var(--border);">
+        <span style="font-size:13px;font-weight:700;">${escapeHtml(p.name)}</span>
+        <span class="tnum" style="font-size:13px;color:var(--text-muted);">${p.cups} cup</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="meter" style="flex:1;margin:0;"><div class="meter-fill" style="width:${Math.round(
+            (p.gross / maxProduct) * 100
+          )}%;"></div></div>
+          <span class="tnum" style="font-size:13px;font-weight:700;white-space:nowrap;">${formatRupiah(p.gross)}</span>
+        </div>
+      </div>`
+        )
+        .join('')
+    : `<div style="padding:28px 20px;color:var(--text-muted);font-size:13.5px;text-align:center;">Belum ada produk terjual.</div>`;
+
+  const exportQs = new URLSearchParams({
+    dari: view.dari || '',
+    sampai: view.sampai || '',
+    status: view.includeAll ? '' : 'selesai',
+  }).toString();
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('laporan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  <main class="admin-main">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Laporan</div>
+        <h1 style="font-size:24px;font-weight:800;">Laporan Penjualan</h1>
+        <p style="font-size:13.5px;color:var(--text-muted);margin-top:6px;">Angka di bawah dihitung dari pesanan <strong>${
+          view.includeAll ? 'semua status' : 'berstatus Selesai'
+        }</strong>.</p>
+      </div>
+      <a class="btn-primary" href="/admin/pesanan/unduh?${exportQs}" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        Unduh CSV
+      </a>
+    </div>
+
+    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px;">${rangeChips('/admin/laporan', activePreset, {
+      kelompok: view.kelompok,
+      semuaStatus: view.includeAll ? '1' : '',
+    })}</div>
+
+    <form method="get" action="/admin/laporan" class="card" style="padding:18px 20px;margin-bottom:22px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="margin:0;flex:0 1 155px;">
+        <label style="margin-bottom:5px;">Dari tanggal</label>
+        <input type="date" name="dari" value="${escapeAttr(view.dari || '')}" max="${todayKey}" style="padding:10px 12px;">
+      </div>
+      <div style="margin:0;flex:0 1 155px;">
+        <label style="margin-bottom:5px;">Sampai tanggal</label>
+        <input type="date" name="sampai" value="${escapeAttr(view.sampai || '')}" max="${todayKey}" style="padding:10px 12px;">
+      </div>
+      <div style="margin:0;flex:0 1 150px;">
+        <label style="margin-bottom:5px;">Kelompokkan</label>
+        <select name="kelompok" style="padding:10px 12px;">
+          <option value="hari" ${view.kelompok !== 'bulan' ? 'selected' : ''}>Per hari</option>
+          <option value="bulan" ${view.kelompok === 'bulan' ? 'selected' : ''}>Per bulan</option>
+        </select>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px;font-weight:600;white-space:nowrap;">
+        <input type="checkbox" name="semuaStatus" value="1" ${view.includeAll ? 'checked' : ''} style="width:17px;height:17px;">
+        Termasuk pesanan belum selesai
+      </label>
+      <button class="btn-primary" type="submit" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Terapkan</button>
+    </form>
+
+    <div class="grid-4" style="margin-bottom:16px;gap:16px;">
+      ${bigStat('Uang Masuk', formatRupiah(report.net), `${report.orders} pesanan`, 'var(--green)')}
+      ${bigStat('Nilai Kotor', formatRupiah(report.gross), 'sebelum promo cup gratis', 'var(--text-muted)')}
+      ${bigStat('Promo Cup Gratis', report.discount ? `−${formatRupiah(report.discount)}` : formatRupiah(0), 'nilai cup yang digratiskan', 'var(--orange)')}
+      ${bigStat('Rata-rata / Pesanan', formatRupiah(report.averageOrder), `${report.cups} cup terjual`, 'oklch(60% 0.12 245)')}
+    </div>
+
+    ${
+      report.discount > 0
+        ? `<div class="card" style="padding:16px 20px;margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-mid);">
+      <div style="font-size:13px;color:#7a4a1f;line-height:1.7;">
+        <strong>Kenapa uang masuk lebih kecil dari nilai kotor:</strong> ${formatRupiah(report.discount)} adalah cup gratis
+        yang ditebus pelanggan lewat kartu stempel. Itu biaya promo, bukan kekurangan pembayaran — rinciannya ada di kolom
+        &ldquo;Diskon Cup Gratis&rdquo; pada CSV.
+      </div>
+    </div>`
+        : ''
+    }
+
+    <div class="table-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:24px;">
+      <div style="display:grid;grid-template-columns:1.1fr 0.6fr 1fr 1fr 1.4fr;padding:14px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:700px;gap:12px;">
+        <span>${view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL'}</span><span>PESANAN</span><span>KOTOR</span><span>PROMO</span><span>UANG MASUK</span>
+      </div>
+      <div style="min-width:700px;">${seriesRows}</div>
+    </div>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
+      <div style="padding:18px 20px 4px;">
+        <h3 style="font-size:15px;font-weight:800;">Produk Terlaris</h3>
+        <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">Berdasarkan nilai penjualan pada rentang yang dipilih.</p>
+      </div>
+      <div class="table-scroll" style="margin-top:12px;">
+        <div style="display:grid;grid-template-columns:1.6fr 0.6fr 1.4fr;padding:12px 20px;background:var(--surface-2);font-size:11.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;min-width:520px;gap:12px;">
+          <span>PRODUK</span><span>TERJUAL</span><span>NILAI</span>
+        </div>
+        <div style="min-width:520px;">${productRows}</div>
+      </div>
+    </div>
+  </main>
+</div>`;
+
+  return page({ title: 'Laporan Penjualan — Admin Pecup', bodyHtml: body });
+}
+
 function actionLabel(action) {
   const labels = {
     login: 'Masuk (login)',
@@ -1133,6 +1638,10 @@ function actionLabel(action) {
     'order.status_update': 'Mengubah status pesanan',
     'admin.create': 'Menambah admin',
     'admin.delete': 'Menghapus admin',
+    'admin.password': 'Mengganti password admin',
+    'customer.update': 'Mengubah data pelanggan',
+    'customer.password': 'Mengganti password pelanggan',
+    'customer.delete': 'Menghapus akun pelanggan',
     'product.stock': 'Mengubah stok produk',
     'loyalty.redeem': 'Menukar cup gratis',
     'loyalty.stamps': 'Mengubah stempel pelanggan',
@@ -1280,6 +1789,7 @@ module.exports = {
   renderPelangganList,
   renderPelangganDetail,
   renderLoyalitas,
+  renderLaporan,
   renderLogin,
   renderProdukList,
   renderProdukForm,

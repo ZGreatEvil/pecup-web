@@ -165,6 +165,24 @@ async function getOrderItems(orderId) {
   return db.query('select * from order_items where order_id = $1', [orderId]);
 }
 
+// Items for many orders in one round-trip, keyed by order id. The CSV export
+// used to issue one query per order, which is fine for a day's orders and
+// very much not fine for a year's.
+async function getOrderItemsForOrders(orderIds) {
+  const unique = Array.from(new Set(orderIds.map(Number).filter((n) => Number.isFinite(n))));
+  const byOrder = new Map();
+  if (!unique.length) return byOrder;
+  const rows = await db.query('select * from order_items where order_id = any($1::bigint[]) order by id asc', [
+    unique,
+  ]);
+  for (const row of rows) {
+    const key = Number(row.order_id);
+    if (!byOrder.has(key)) byOrder.set(key, []);
+    byOrder.get(key).push(row);
+  }
+  return byOrder;
+}
+
 async function listOrdersByDate(dateKey) {
   return db.query('select * from orders where date_key = $1 order by created_at asc', [dateKey]);
 }
@@ -174,6 +192,201 @@ async function listOrdersByDateRange(startKey, endKey) {
     startKey,
     endKey,
   ]);
+}
+
+// Flexible order listing for the admin Pesanan page: filter by a date range
+// on either the order date or the delivery date, by status, or by a free-text
+// match on the customer; sort by any of those. Everything is optional, so
+// "show all orders" is simply passing nothing.
+const ORDER_SORTS = {
+  dipesan: 'o.created_at',
+  dikirim: 'o.delivery_date',
+  nama: 'o.customer_name',
+  total: 'o.total',
+  status: 'o.status',
+};
+
+// Shared WHERE builder for every order listing and report, so the admin
+// table, the customer's own history, the CSV and the revenue report all
+// filter by exactly the same rules.
+function orderFilterSql({ from = '', to = '', status = '', search = '', customerId = null, dateField = 'dipesan' }) {
+  // Which column a date range applies to. Delivery date is a real date
+  // column; the order date uses date_key, already stored in WIB.
+  const rangeColumn = dateField === 'dikirim' ? 'o.delivery_date' : 'o.date_key';
+  const cast = dateField === 'dikirim' ? '::date' : '';
+  const clauses = [];
+  const params = [];
+
+  if (from) {
+    params.push(from);
+    clauses.push(`${rangeColumn} >= $${params.length}${cast}`);
+  }
+  if (to) {
+    params.push(to);
+    clauses.push(`${rangeColumn} <= $${params.length}${cast}`);
+  }
+  if (status) {
+    params.push(status);
+    clauses.push(`o.status = $${params.length}`);
+  }
+  if (customerId) {
+    params.push(customerId);
+    clauses.push(`o.customer_id = $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search}%`);
+    clauses.push(
+      `(o.customer_name ilike $${params.length} or o.whatsapp ilike $${params.length} or o.order_number ilike $${params.length})`
+    );
+  }
+
+  return { where: clauses.length ? `where ${clauses.join(' and ')}` : '', params };
+}
+
+// Paginated order listing. Returns the page plus enough metadata to render
+// a pager, so no caller has to count rows itself.
+async function queryOrders(filters = {}) {
+  const { sort = 'dipesan', dir = 'desc', page = 1, perPage = 50 } = filters;
+  const { where, params } = orderFilterSql(filters);
+
+  // Column and direction come from fixed maps, never from the raw query
+  // string — these are interpolated into SQL, not bound.
+  const orderBy = ORDER_SORTS[sort] || ORDER_SORTS.dipesan;
+  const direction = dir === 'asc' ? 'asc' : 'desc';
+
+  const safePerPage = Math.min(Math.max(Number(perPage) || 50, 1), 200);
+  const countRows = await db.query(`select count(*)::int as n from orders o ${where}`, params);
+  const total = Number(countRows[0].n) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / safePerPage));
+  const current = Math.min(Math.max(Number(page) || 1, 1), totalPages);
+  const offset = (current - 1) * safePerPage;
+
+  // NULLS LAST so orders with no delivery date don't crowd the top.
+  const orders = await db.query(
+    `select o.* from orders o ${where} order by ${orderBy} ${direction} nulls last, o.id desc
+     limit ${safePerPage} offset ${offset}`,
+    params
+  );
+
+  return { orders, total, page: current, totalPages, perPage: safePerPage };
+}
+
+// Every order matching the filters, unpaginated — for CSV export and the
+// revenue report, which must cover the whole range, not one page of it.
+async function queryAllOrders(filters = {}) {
+  const { sort = 'dipesan', dir = 'desc' } = filters;
+  const { where, params } = orderFilterSql(filters);
+  const orderBy = ORDER_SORTS[sort] || ORDER_SORTS.dipesan;
+  const direction = dir === 'asc' ? 'asc' : 'desc';
+  return db.query(`select o.* from orders o ${where} order by ${orderBy} ${direction} nulls last, o.id desc`, params);
+}
+
+// ---------------- revenue reporting ----------------
+
+// Revenue is counted from completed orders only by default — a pending order
+// isn't money. `subtotal` is what the cups were worth, `reward_discount` is
+// the promo given away, `total` is what actually came in.
+async function revenueReport({ from = '', to = '', statuses = ['selesai'], groupBy = 'hari' } = {}) {
+  const clauses = [];
+  const params = [];
+
+  if (from) {
+    params.push(from);
+    clauses.push(`o.date_key >= $${params.length}`);
+  }
+  if (to) {
+    params.push(to);
+    clauses.push(`o.date_key <= $${params.length}`);
+  }
+  if (statuses && statuses.length) {
+    params.push(statuses);
+    clauses.push(`o.status = any($${params.length}::text[])`);
+  }
+  const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
+
+  // Grouping expressions are chosen from a fixed map — never interpolated
+  // from user input.
+  const groupings = {
+    hari: { expr: 'o.date_key', label: 'o.date_key' },
+    bulan: { expr: "to_char(o.created_at at time zone 'Asia/Jakarta', 'YYYY-MM')", label: 'periode' },
+  };
+  const grouping = groupings[groupBy] || groupings.hari;
+
+  const [totals, cups, series, byProduct, byStatus] = await Promise.all([
+    db.query(
+      `select count(*)::int as orders,
+              coalesce(sum(o.subtotal), 0)::bigint as gross,
+              coalesce(sum(o.reward_discount), 0)::bigint as discount,
+              coalesce(sum(o.total), 0)::bigint as net
+       from orders o ${where}`,
+      params
+    ),
+    db.query(
+      `select coalesce(sum(oi.qty), 0)::int as cups
+       from order_items oi join orders o on o.id = oi.order_id ${where}`,
+      params
+    ),
+    db.query(
+      `select ${grouping.expr} as periode,
+              count(*)::int as orders,
+              coalesce(sum(o.subtotal), 0)::bigint as gross,
+              coalesce(sum(o.reward_discount), 0)::bigint as discount,
+              coalesce(sum(o.total), 0)::bigint as net
+       from orders o ${where}
+       group by ${grouping.expr} order by ${grouping.expr} desc limit 400`,
+      params
+    ),
+    db.query(
+      `select oi.product_name,
+              coalesce(sum(oi.qty), 0)::int as cups,
+              coalesce(sum(oi.subtotal), 0)::bigint as gross
+       from order_items oi join orders o on o.id = oi.order_id ${where}
+       group by oi.product_name order by gross desc limit 100`,
+      params
+    ),
+    db.query(
+      `select o.status, count(*)::int as orders, coalesce(sum(o.total), 0)::bigint as net
+       from orders o ${where} group by o.status`,
+      params
+    ),
+  ]);
+
+  const t = totals[0] || {};
+  const orders = Number(t.orders) || 0;
+  const net = Number(t.net) || 0;
+
+  return {
+    orders,
+    gross: Number(t.gross) || 0,
+    discount: Number(t.discount) || 0,
+    net,
+    cups: Number((cups[0] || {}).cups) || 0,
+    averageOrder: orders ? Math.round(net / orders) : 0,
+    series: series.map((r) => ({
+      periode: r.periode,
+      orders: Number(r.orders) || 0,
+      gross: Number(r.gross) || 0,
+      discount: Number(r.discount) || 0,
+      net: Number(r.net) || 0,
+    })),
+    byProduct: byProduct.map((r) => ({
+      name: r.product_name,
+      cups: Number(r.cups) || 0,
+      gross: Number(r.gross) || 0,
+    })),
+    byStatus: byStatus.map((r) => ({ status: r.status, orders: Number(r.orders) || 0, net: Number(r.net) || 0 })),
+  };
+}
+
+// Counts for the stat cards, over the same filtered set the table shows.
+function summarizeOrders(orders) {
+  return {
+    total: orders.length,
+    pending: orders.filter((o) => o.status === 'menunggu').length,
+    processing: orders.filter((o) => o.status === 'diproses').length,
+    done: orders.filter((o) => o.status === 'selesai').length,
+    revenue: orders.filter((o) => o.status === 'selesai').reduce((sum, o) => sum + Number(o.total || 0), 0),
+  };
 }
 
 async function orderDayStats(dateKey) {
@@ -211,8 +424,13 @@ module.exports = {
   createOrder,
   getOrder,
   getOrderItems,
+  getOrderItemsForOrders,
   listOrdersByDate,
   listOrdersByDateRange,
+  queryOrders,
+  queryAllOrders,
+  revenueReport,
+  summarizeOrders,
   orderDayStats,
   updateOrderStatus,
   markEmailSent,
