@@ -219,7 +219,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
       ${clickableStat('Stok Habis', stats.soldOut, 'habis', '#f6dcdc', '<circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/>', '#a13f3f')}
     </div>
 
-    <div class="card" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+    <div class="card chip-row" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
       <span style="font-size:12.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.3px;">FILTER</span>
       <a class="chip ${(view.kategori || '') === '' ? 'chip-active' : ''}" href="${produkUrl(view, { kategori: '' })}" style="padding:8px 16px;border-radius:99px;font-size:13px;font-weight:600;${
         (view.kategori || '') === '' ? '' : 'color:var(--text);'
@@ -732,6 +732,14 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       <div>
         <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div>
         <h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1>
+        ${
+          admin.role === 'superadmin'
+            ? `<a href="/admin/pesanan/tambah" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--green-dark);margin-top:8px;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Catat pesanan manual (WhatsApp / datang langsung)
+              </a>`
+            : ''
+        }
       </div>
       <a class="btn-primary" href="/admin/pesanan/unduh?${new URLSearchParams({
         dari: view.dari || '',
@@ -745,7 +753,7 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       </a>
     </div>
 
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">${presetChips}</div>
+    <div class="chip-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">${presetChips}</div>
 
     <form method="get" action="/admin/pesanan" class="card" style="padding:18px 20px;margin-bottom:22px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
       <div style="margin:0;flex:0 1 170px;">
@@ -1230,7 +1238,17 @@ function renderPelangganList({
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Cari Pelanggan</div>
-    <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Cari Pelanggan</h1>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:6px;">
+      <h1 style="font-size:24px;font-weight:800;">Cari Pelanggan</h1>
+      ${
+        admin.role === 'superadmin'
+          ? `<a class="btn-primary" href="/admin/pelanggan/tambah" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              Tambah Pelanggan
+            </a>`
+          : ''
+      }
+    </div>
     <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:20px;">Cari berdasarkan nama atau nomor WhatsApp, lalu buka detailnya untuk melihat stempel dan riwayat pesanan.</p>
 
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
@@ -1540,7 +1558,7 @@ function renderPelangganDetail({
                 pagination ? `${pagination.total} pesanan` : `${orders.length} pesanan`
               }</span>
             </div>
-            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;">${rangeChips(
+            <div class="chip-row" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;">${rangeChips(
               `/admin/pelanggan/${customer.id}`,
               activePreset
             )}</div>
@@ -1907,7 +1925,7 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
       </a>
     </div>
 
-    <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px;">${rangeChips('/admin/laporan', activePreset, {
+    <div class="chip-row" style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px;">${rangeChips('/admin/laporan', activePreset, {
       kelompok: view.kelompok,
       semuaStatus: view.includeAll ? '1' : '',
     })}</div>
@@ -2645,8 +2663,217 @@ function renderResetSandi({ requests, admin, flash = '', issued = null, error = 
   return page({ title: 'Reset Password — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
+
+// Superadmin-created customer account. Most of this shop's orders still arrive
+// by word of mouth, so the people behind them need an account before their
+// purchases can earn stamps. The password is generated and shown once — the
+// admin passes it on, and the customer changes it from their account page.
+function renderPelangganTambah({ admin, errors = [], values = {}, created = null }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const waText = created
+    ? encodeURIComponent(
+        `Halo ${created.name}, akun Pecup kamu sudah dibuat. Masuk pakai nomor ini dengan password sementara: ${created.password}. Ganti passwordnya setelah masuk ya.`
+      )
+    : '';
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  <main class="admin-main" id="konten">
+    ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pelanggan / Tambah</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:8px;">Tambah Pelanggan</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;max-width:620px;margin-bottom:24px;">
+      Untuk pelanggan yang pesan lewat WhatsApp atau datang langsung. Dengan akun, pesanannya bisa dicatat
+      di sini dan ikut mengumpulkan stempel.
+    </p>
+
+    ${
+      created
+        ? `<div class="card" style="margin-bottom:22px;background:var(--green-soft);border-color:var(--green);">
+      <div style="font-size:14px;font-weight:800;color:var(--green-dark);margin-bottom:8px;">Akun ${escapeHtml(created.name)} dibuat</div>
+      <div style="font-size:13px;color:var(--green-dark);line-height:1.8;">
+        Nomor untuk masuk: <strong>${escapeHtml(formatWhatsapp(created.whatsapp))}</strong><br>
+        Password sementara:
+        <span style="font-family:monospace;font-size:19px;font-weight:800;letter-spacing:2px;">${escapeHtml(created.password)}</span>
+      </div>
+      <p style="font-size:12.5px;color:var(--green-dark);line-height:1.7;margin-top:10px;">
+        Password ini hanya muncul sekali — kirimkan lewat WhatsApp, lalu minta pelanggan menggantinya sendiri.
+        Kalau terlanjur hilang, pakai menu Reset Password.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+        <a class="btn-primary" href="https://wa.me/${escapeAttr(created.whatsapp)}?text=${escapeAttr(waText)}"
+           target="_blank" rel="noopener" style="padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;">Kirim lewat WhatsApp</a>
+        <a class="btn-outline" href="/admin/pesanan/tambah?pelanggan=${created.id}" style="padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;">Catat Pesanan untuk Akun Ini</a>
+        <a class="btn-outline" href="/admin/pelanggan/${created.id}" style="padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;">Buka Detail</a>
+      </div>
+    </div>`
+        : ''
+    }
+
+    ${errors.length ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>` : ''}
+
+    <form method="post" action="/admin/pelanggan/tambah" class="card" data-warn-unsaved style="max-width:620px;">
+      <div class="field">
+        <label>Nama Lengkap <span class="req">*</span></label>
+        <input type="text" name="name" required value="${escapeAttr(values.name || '')}" placeholder="Contoh: Alexander Dwiono">
+      </div>
+      <div class="field">
+        <label>Nomor WhatsApp <span class="req">*</span></label>
+        <input type="tel" name="whatsapp" required inputmode="numeric" value="${escapeAttr(values.whatsapp || '')}" placeholder="Contoh: 081234567890">
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Ini sekaligus username-nya saat masuk.</div>
+      </div>
+      <div class="field">
+        <label>Lokasi Pengantaran</label>
+        <input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5">
+      </div>
+      <div class="field">
+        <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
+        <input type="date" name="birthday" max="${today}" value="${escapeAttr(values.birthday || '')}">
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Perlu diisi kalau pelanggan ini mau dapat cup gratis ulang tahun.</div>
+      </div>
+      <div class="field" style="margin-bottom:8px;">
+        <label>Stempel Awal</label>
+        <input type="number" name="stamps" min="0" max="100" value="${escapeAttr(values.stamps || '0')}">
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Kalau dia sudah belanja sebelum ada website, isi stempel yang sudah terkumpul.</div>
+      </div>
+      <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;margin-top:14px;">Buat Akun Pelanggan</button>
+    </form>
+  </main>
+</div>`;
+  return page({ title: 'Tambah Pelanggan — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
+// Manual order entry: a sale that happened over WhatsApp or at the door, typed
+// in afterwards. It runs through the same create_order path as a web checkout,
+// so stock, stamps, tier perks and the books all move together.
+function renderPesananTambah({ admin, products, customers, errors = [], values = {} }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const qty = values.qty || {};
+  const rows = products
+    .map(
+      (p) => `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
+        <div style="flex:1 1 190px;min-width:0;">
+          <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;">
+          <label style="margin:0;font-size:12px;color:var(--text-muted);">Jumlah</label>
+          <input type="number" name="qty_${p.id}" min="0" max="${p.stock}" value="${escapeAttr(qty[p.id] || '')}"
+                 placeholder="0" style="width:90px;text-align:center;">
+        </div>
+      </div>`
+    )
+    .join('');
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  <main class="admin-main" id="konten">
+    ${backButton('/admin/pesanan', 'Kembali ke Pesanan')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pesanan / Catat Manual</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:8px;">Catat Pesanan Manual</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;max-width:640px;margin-bottom:24px;">
+      Untuk pesanan yang masuk lewat WhatsApp atau langsung di tempat. Stok otomatis terpotong, dan kalau
+      dipilihkan akun pelanggan, pesanan ini ikut menghitung stempel dan benefit tier persis seperti pesanan dari website.
+    </p>
+
+    ${errors.length ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>` : ''}
+
+    <form method="post" action="/admin/pesanan/tambah" data-warn-unsaved>
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:16px;">Pemesan</h2>
+        <div class="field">
+          <label>Akun Pelanggan</label>
+          <select name="customerId">
+            <option value="">Tanpa akun (tamu)</option>
+            ${customers
+              .map(
+                (c) =>
+                  `<option value="${c.id}" ${String(values.customerId || '') === String(c.id) ? 'selected' : ''}>${escapeHtml(
+                    c.name
+                  )} — ${escapeHtml(formatWhatsapp(c.whatsapp))}</option>`
+              )
+              .join('')}
+          </select>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">
+            Pilih akun supaya pesanan ini menambah stempel. Belum punya akun?
+            <a href="/admin/pelanggan/tambah">Buat dulu di sini</a>.
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 240px;">
+            <label>Nama Pemesan <span class="req">*</span></label>
+            <input type="text" name="customerName" required value="${escapeAttr(values.customerName || '')}" placeholder="Nama yang tercatat di pesanan">
+          </div>
+          <div class="field" style="flex:1 1 240px;">
+            <label>Nomor WhatsApp <span class="req">*</span></label>
+            <input type="tel" name="whatsapp" required inputmode="numeric" value="${escapeAttr(values.whatsapp || '')}" placeholder="081234567890">
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
+            <label>Tanggal Antar <span class="req">*</span></label>
+            <input type="date" name="deliveryDate" required value="${escapeAttr(values.deliveryDate || today)}">
+          </div>
+          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
+            <label>Lokasi Antar</label>
+            <input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: ambil di tempat">
+          </div>
+        </div>
+      </div>
+
+      <div class="adm-table" style="margin-bottom:20px;">
+        <div style="padding:16px 18px;">
+          <h2 style="font-size:16px;font-weight:800;">Isi Pesanan</h2>
+          <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">Isi jumlah cup untuk produk yang dibeli. Kosongkan yang tidak dibeli.</p>
+        </div>
+        ${rows}
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:16px;">Pembayaran &amp; Status</h2>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 200px;">
+            <label>Ongkos Antar (Rp)</label>
+            <input type="number" name="deliveryFee" min="0" step="500" value="${escapeAttr(values.deliveryFee || '0')}">
+          </div>
+          <div class="field" style="flex:1 1 200px;">
+            <label>Status Pesanan</label>
+            <select name="status">
+              ${ORDER_STATUSES.filter((o) => o.value !== 'dibatalkan')
+                .map(
+                  (o) => `<option value="${o.value}" ${(values.status || 'selesai') === o.value ? 'selected' : ''}>${o.label}</option>`
+                )
+                .join('')}
+            </select>
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Pilih <strong>Selesai</strong> kalau sudah dibayar dan diantar — stempelnya langsung masuk.</div>
+          </div>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:10px;margin:4px 0 0;font-size:13.5px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" name="useReward" value="1" ${values.useReward ? 'checked' : ''} style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
+          <span>Pakai 1 cup gratis dari kartu stempel pelanggan (kalau kartunya memang penuh)</span>
+        </label>
+        <div class="field" style="margin-top:18px;margin-bottom:0;">
+          <label>Catatan</label>
+          <textarea name="notes" rows="2" placeholder="Contoh: pesan lewat WhatsApp, bayar tunai">${escapeHtml(values.notes || '')}</textarea>
+        </div>
+      </div>
+
+      <button class="btn-primary" type="submit" style="padding:14px 26px;border-radius:11px;font-size:14.5px;font-weight:700;">Simpan Pesanan</button>
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.7;margin-top:12px;">
+        Stok langsung dipotong sesuai jumlah di atas, sama seperti pesanan dari website.
+      </p>
+    </form>
+  </main>
+</div>`;
+  return page({ title: 'Catat Pesanan Manual — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
 module.exports = {
   renderResetSandi,
+  renderPelangganTambah,
+  renderPesananTambah,
   renderPelangganList,
   renderPelangganDetail,
   renderLoyalitas,

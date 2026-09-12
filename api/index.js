@@ -4,6 +4,7 @@
 // and the admin session is a signed, stateless token (see src/cart.js and
 // src/adminSession.js).
 const { URL } = require('url');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -454,6 +455,9 @@ router.post('/daftar', async (req, res) => {
   const normalized = normalizeWhatsapp(whatsapp);
   if (!normalized) errors.push('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx atau +628xxxxxxxxxx.');
   if (password.length < 6) errors.push('Password minimal 6 karakter.');
+  // Optional — only a filled-in but impossible date is an error.
+  const birthday = parseBirthday(fields.birthday);
+  if (birthday === null) errors.push('Tanggal lahir tidak valid.');
   if (normalized && (await customerAuth.findByWhatsapp(normalized))) {
     errors.push('Nomor WhatsApp ini sudah terdaftar. Silakan masuk.');
   }
@@ -465,15 +469,31 @@ router.post('/daftar', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
         errors,
-        values: { name, whatsapp, address },
+        values: { name, whatsapp, address, birthday: (fields.birthday || '').trim() },
       })
     );
   }
 
-  const customer = await customerAuth.createCustomer({ whatsapp: normalized, name, password, address });
+  const customer = await customerAuth.createCustomer({
+    whatsapp: normalized,
+    name,
+    password,
+    address,
+    birthday: birthday || null,
+  });
   saveCustomerCookie(res, customer);
   redirect(res, '/akun');
 });
+
+// Optional everywhere it appears. Returns '' for "not given" and null for
+// "given but unusable", so callers can tell the two apart.
+function parseBirthday(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) return null;
+  if (value > new Date().toISOString().slice(0, 10)) return null;
+  return value;
+}
 
 router.post('/keluar', async (req, res) => {
   clearCookie(res, customerSession.COOKIE_NAME);
@@ -544,9 +564,12 @@ router.post('/akun', requireCustomer(async (req, res, { customer }) => {
   const name = (fields.name || '').trim();
   if (!name) return redirect(res, '/akun');
 
+  const birthday = parseBirthday(fields.birthday);
   const updated = await customerAuth.updateCustomer(customer.id, {
     name,
     address: (fields.address || '').trim(),
+    // A bad date leaves the stored one alone rather than wiping it.
+    birthday: birthday === null ? customer.birthday || null : birthday || null,
   });
   // Re-issue the cookie so the header greeting reflects a renamed account.
   saveCustomerCookie(res, updated);
@@ -1188,6 +1211,178 @@ router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
   res.end(csv);
 }));
 
+// ---------------------------------------------------------------------
+// admin: walk-in customers and manually recorded orders (superadmin)
+// ---------------------------------------------------------------------
+// Most sales still arrive by word of mouth. These two pages let a superadmin
+// put those customers and their purchases into the same system the website
+// uses, so stock, stamps, tiers and the revenue report stay whole.
+
+// Readable but not guessable: no 0/O/1/I, and drawn from crypto.
+function tempPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 8; i += 1) out += alphabet[crypto.randomInt(0, alphabet.length)];
+  return out;
+}
+
+router.get('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
+  sendHtml(res, adminViews.renderPelangganTambah({ admin: req.admin }));
+}));
+
+router.post('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const name = (fields.name || '').trim();
+  const whatsapp = (fields.whatsapp || '').trim();
+  const address = (fields.address || '').trim();
+  const stamps = Math.max(0, Math.min(100, Math.round(Number(fields.stamps) || 0)));
+  const birthday = parseBirthday(fields.birthday);
+  const values = { name, whatsapp, address, stamps: String(stamps), birthday: (fields.birthday || '').trim() };
+
+  const errors = [];
+  if (!name) errors.push('Nama lengkap wajib diisi.');
+  const normalized = normalizeWhatsapp(whatsapp);
+  if (!normalized) errors.push('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx atau +628xxxxxxxxxx.');
+  if (birthday === null) errors.push('Tanggal lahir tidak valid.');
+  if (normalized && (await customerAuth.findByWhatsapp(normalized))) {
+    errors.push('Nomor WhatsApp ini sudah terdaftar. Cari akunnya di halaman Cari Pelanggan.');
+  }
+  if (errors.length) {
+    return sendHtml(res, adminViews.renderPelangganTambah({ admin: req.admin, errors, values }));
+  }
+
+  // The admin never chooses the password: it's generated, shown once, and
+  // stored only as a hash — the same rule as every other password here.
+  const password = tempPassword();
+  const customer = await customerAuth.createCustomer({
+    whatsapp: normalized,
+    name,
+    password,
+    address,
+    birthday: birthday || null,
+  });
+  if (stamps > 0) await loyalty.setStampCount(customer.id, stamps, { by: req.admin.username });
+
+  await logAdminAction(req.admin, 'customer.create', `${name} (${formatWhatsapp(normalized)})`);
+  sendHtml(
+    res,
+    adminViews.renderPelangganTambah({
+      admin: req.admin,
+      created: { id: customer.id, name, whatsapp: normalized, password },
+    })
+  );
+}));
+
+router.get('/admin/pesanan/tambah', requireSuperadmin(async (req, res, { query }) => {
+  const [products, customers] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    loyalty.listCustomersWithLoyalty({ limit: 500, sort: 'nama' }),
+  ]);
+  const picked = customers.find((c) => String(c.id) === String(query.get('pelanggan') || ''));
+  sendHtml(
+    res,
+    adminViews.renderPesananTambah({
+      admin: req.admin,
+      products,
+      customers,
+      values: picked
+        ? { customerId: picked.id, customerName: picked.name, whatsapp: formatWhatsapp(picked.whatsapp) }
+        : {},
+    })
+  );
+}));
+
+router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const [products, customers] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    loyalty.listCustomersWithLoyalty({ limit: 500, sort: 'nama' }),
+  ]);
+
+  const qty = {};
+  for (const p of products) {
+    const n = Math.max(0, Math.round(Number(fields[`qty_${p.id}`]) || 0));
+    if (n > 0) qty[p.id] = String(n);
+  }
+  const customerId = (fields.customerId || '').trim();
+  const values = {
+    customerId,
+    customerName: (fields.customerName || '').trim(),
+    whatsapp: (fields.whatsapp || '').trim(),
+    address: (fields.address || '').trim(),
+    deliveryDate: (fields.deliveryDate || '').trim(),
+    deliveryFee: String(Math.max(0, Math.round(Number(fields.deliveryFee) || 0))),
+    status: fields.status || 'selesai',
+    notes: (fields.notes || '').trim(),
+    useReward: Boolean(fields.useReward),
+    qty,
+  };
+  const rerender = (errors) =>
+    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, customers, errors, values }));
+
+  const errors = [];
+  if (!values.customerName) errors.push('Nama pemesan wajib diisi.');
+  const normalized = normalizeWhatsapp(values.whatsapp);
+  if (!normalized) errors.push('Nomor WhatsApp tidak valid.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(values.deliveryDate)) errors.push('Tanggal antar wajib diisi.');
+  const items = products
+    .filter((p) => qty[p.id])
+    .map((p) => ({ productId: Number(p.id), name: p.name, price: Number(p.price), qty: Number(qty[p.id]) }));
+  if (!items.length) errors.push('Isi jumlah untuk minimal satu produk.');
+  for (const it of items) {
+    const product = products.find((p) => Number(p.id) === it.productId);
+    if (product && it.qty > Number(product.stock)) errors.push(`Stok ${product.name} tidak mencukupi.`);
+  }
+  const status = ORDER_STATUSES.some((o) => o.value === values.status && o.value !== 'dibatalkan')
+    ? values.status
+    : 'selesai';
+  if (errors.length) return rerender(errors);
+
+  // The same benefits the website would apply, so a manually entered sale and
+  // a self-service one are priced identically.
+  const session = customerId ? { customerId: Number(customerId) } : null;
+  const cartItems = items.map((it) => ({
+    product: products.find((p) => Number(p.id) === it.productId),
+    qty: it.qty,
+    unitPrice: it.price,
+  }));
+  const { reward, membership } = await customerBenefits(session, cartItems, values.deliveryDate);
+  const useReward = values.useReward && reward.available > 0;
+
+  let order;
+  try {
+    order = await queries.createOrder({
+      customerName: values.customerName,
+      whatsapp: normalized,
+      notes: values.notes,
+      items,
+      proofFilename: null,
+      address: values.address,
+      deliveryDate: values.deliveryDate,
+      customerId: customerId ? Number(customerId) : null,
+      useReward,
+      voucherCode: null,
+      deliveryFee: Number(values.deliveryFee),
+      tier: membership.tier || {},
+    });
+  } catch (err) {
+    console.error(err);
+    return rerender([extractPgErrorMessage(err) || 'Gagal menyimpan pesanan. Coba lagi.']);
+  }
+
+  // create_order always starts an order at 'menunggu'; apply the chosen state
+  // and let the stamp rule follow from it, exactly as the status page does.
+  if (status !== 'menunggu') await queries.updateOrderStatus(order.id, status);
+  if (customerId && status === 'selesai') await loyalty.grantForOrder(Number(customerId), order.id);
+
+  await logAdminAction(
+    req.admin,
+    'order.manual_create',
+    `${order.orderNumber} — ${values.customerName} (${items.reduce((n, it) => n + it.qty, 0)} cup, ${status})`
+  );
+  redirect(res, `/admin/pesanan/${order.id}`);
+}));
+
 router.get('/admin/pesanan/:id', requireAdmin(async (req, res, { query }) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
@@ -1379,6 +1574,7 @@ router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
 // ---------------------------------------------------------------------
 // admin: sales report
 // ---------------------------------------------------------------------
+
 
 // ---------------------------------------------------------------------
 // admin: customer password resets

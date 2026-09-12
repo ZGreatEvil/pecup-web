@@ -48,12 +48,13 @@ async function findById(id) {
   return publicShape(rows[0]);
 }
 
-async function createCustomer({ whatsapp, name, password, address }) {
+async function createCustomer({ whatsapp, name, password, address, birthday }) {
   const normalized = normalizeWhatsapp(whatsapp);
   if (!normalized) throw new Error('Nomor WhatsApp tidak valid.');
   const rows = await db.query(
-    'insert into customers (whatsapp, name, password_hash, address) values ($1, $2, $3, $4) returning *',
-    [normalized, name, hashPassword(password), address || '']
+    `insert into customers (whatsapp, name, password_hash, address, birthday)
+     values ($1, $2, $3, $4, $5) returning *`,
+    [normalized, name, hashPassword(password), address || '', birthday || null]
   );
   return publicShape(rows[0]);
 }
@@ -66,10 +67,13 @@ async function checkCredentials(whatsapp, password) {
   return publicShape(row);
 }
 
-async function updateCustomer(id, { name, address }) {
+// The customer's own profile edit. Birthday is included because the birthday
+// free cup can't fire without it — but it stays optional, and the WhatsApp
+// number (their username) is still not editable here.
+async function updateCustomer(id, { name, address, birthday }) {
   const rows = await db.query(
-    'update customers set name = $1, address = $2 where id = $3 returning *',
-    [name, address || '', id]
+    'update customers set name = $1, address = $2, birthday = $3 where id = $4 returning *',
+    [name, address || '', birthday || null, id]
   );
   return publicShape(rows[0]);
 }

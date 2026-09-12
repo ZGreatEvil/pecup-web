@@ -139,6 +139,13 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
           <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor ini sekaligus jadi username-mu saat masuk.</span>
         </div>
         <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
+        <div class="field">
+          <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
+          <input type="date" name="birthday" value="${escapeAttr(values.birthday || '')}" max="${new Date().toISOString().slice(0, 10)}">
+          <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
+            Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong> — kami hanya pakai tanggalnya untuk itu. Boleh dikosongkan.
+          </span>
+        </div>
         <div class="field" style="margin-bottom:8px;"><label>Password <span class="req">*</span></label><input type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="Minimal 6 karakter"></div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Daftar</button>
       </form>`,
@@ -441,7 +448,18 @@ function renderAkun({
           <form method="post" action="/akun">
             <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="name" required value="${escapeAttr(customer.name)}"></div>
             <div class="field"><label>Nomor WhatsApp</label><input type="text" value="${escapeAttr(formatWhatsapp(customer.whatsapp))}" disabled style="background:var(--surface-2);color:var(--text-muted);"><span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor ini username-mu, jadi tidak bisa diubah sendiri. Hubungi kami kalau nomormu ganti.</span></div>
-            <div class="field" style="margin-bottom:8px;"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
+            <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
+            <div class="field" style="margin-bottom:8px;">
+              <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
+              <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${new Date().toISOString().slice(0, 10)}">
+              <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
+                Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong>${
+                  loyalty && loyalty.tier && loyalty.tier.birthdayFreeCup
+                    ? ` — tingkat ${escapeHtml(loyalty.tier.name)} kamu sudah dapat benefit ini`
+                    : ' di tingkat keanggotaan yang menyediakannya'
+                }. Boleh dikosongkan.
+              </span>
+            </div>
             <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;margin-top:14px;">Simpan Perubahan</button>
           </form>
         </div>

@@ -133,7 +133,14 @@ const SHARED_STYLE = `
   .account-hint{font-size:9.5px;font-weight:700;letter-spacing:0.5px;color:var(--text-muted);text-transform:uppercase;}
   .account-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   /* On a phone the row is already tight — keep the avatar, drop the wording. */
-  @media (max-width: 700px){ .account-text, .account-btn > svg:last-child{display:none;} .account-btn{padding:5px 9px 5px 5px;} }
+  /* The name stays on a phone. Hiding it left a bare circle that read as a
+     decoration rather than "this is your account" — only the chevron goes,
+     and the name truncates so a long one can't push the cart icon off. */
+  @media (max-width: 700px){
+    .account-btn > svg:last-child{display:none;}
+    .account-btn{padding:5px 11px 5px 5px;gap:8px;}
+    .account-name{max-width:92px;}
+  }
   .btn-primary{background:linear-gradient(180deg, oklch(75% 0.17 55), var(--orange));color:#fff;border:none;
     box-shadow:var(--shadow-sm);transition:filter 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;}
   .btn-primary:hover{filter:saturate(1.12) brightness(0.96);transform:translateY(-2px);box-shadow:var(--shadow-md);}
@@ -571,16 +578,15 @@ const SHARED_STYLE = `
     .admin-main .grid-4 > .card,
     .admin-main .grid-4 > a > div{padding:14px 13px !important;gap:11px !important;}
     .admin-main .grid-4 .tnum{font-size:19px !important;}
-    /* Chip rows (category / preset filters) swipe sideways instead of
-       wrapping onto four stacked lines. */
-    .admin-main .card:has(> .chip){flex-wrap:nowrap !important;overflow-x:auto;
-      scrollbar-width:none;-ms-overflow-style:none;}
-    .admin-main .card:has(> .chip)::-webkit-scrollbar{display:none;}
-    .admin-main .card > .chip{flex-shrink:0;}
-    .admin-main > div:has(> .chip){flex-wrap:nowrap;overflow-x:auto;
+    /* Chip rows (category / preset filters) swipe sideways instead of wrapping
+       onto four stacked lines. Driven by an explicit .chip-row class rather
+       than :has(), which not every phone browser supports — where :has() is
+       missing, these silently went back to wrapping.
+       !important because the rows carry flex-wrap:wrap as an inline style. */
+    .chip-row{flex-wrap:nowrap !important;overflow-x:auto;
       scrollbar-width:none;-ms-overflow-style:none;padding-bottom:4px;}
-    .admin-main > div:has(> .chip)::-webkit-scrollbar{display:none;}
-    .admin-main > div > .chip{flex-shrink:0;}
+    .chip-row::-webkit-scrollbar{display:none;}
+    .chip-row > .chip{flex-shrink:0;}
   }
   @media (max-width: 380px){
     .admin-main .grid-4{grid-template-columns:1fr;}
@@ -602,6 +608,13 @@ const SHARED_STYLE = `
   @media (max-width: 560px){
     .px-page{padding-left:18px;padding-right:18px;}
     .site-header, .site-header-grid{padding:16px 18px;}
+    /* The strapline is the least useful thing in the row and the widest —
+       dropping it is what buys the account name its space. */
+    .header-tagline{display:none;}
+    /* The AKUN label stacks above the name, so it costs height, not width —
+       the phone button can carry it and match the desktop one. */
+    .account-name{font-size:12.5px;max-width:82px;}
+    .account-avatar{width:26px;height:26px;font-size:12px;}
     /* Two products per row. One-up meant a ~450px-tall card each and a
        ten-item menu that took most of a minute to scroll past; two-up shows
        four products per screen, which is how a menu is meant to be browsed. */
@@ -737,7 +750,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) 
       ${logoMark(38)}
       <div style="display:flex;flex-direction:column;">
         <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;letter-spacing:-0.3px;color:var(--text);">Pecup</span>
-        <span style="font-size:11px;color:var(--text-muted);letter-spacing:0.4px;">POTONGAN BUAH SEGAR</span>
+        <span class="header-tagline" style="font-size:11px;color:var(--text-muted);letter-spacing:0.4px;">POTONGAN BUAH SEGAR</span>
       </div>
     </a>
     <nav class="site-nav">
@@ -1126,6 +1139,22 @@ const CART_SCRIPT = `
       }
     });
   });
+})();
+
+// The admin nav drawer must never be open on arrival.
+//
+// It's a checkbox, and browsers restore form state when you come back to a
+// page — including from the back/forward cache. So opening the menu, tapping
+// through to another page and pressing Back landed you on a page with the menu
+// already covering it. pageshow fires on both a fresh load and a bfcache
+// restore, which is the only event that catches all of it.
+(function(){
+  function closeDrawer(){
+    var toggle = document.getElementById('adminNavToggle');
+    if(toggle) toggle.checked = false;
+  }
+  window.addEventListener('pageshow', closeDrawer);
+  closeDrawer();
 })();
 
 // Warns before leaving a form with edits that were never saved.
