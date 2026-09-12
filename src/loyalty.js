@@ -8,6 +8,10 @@ const db = require('./db');
 const settings = require('./settings');
 const { formatShortDateID } = require('./utils');
 
+// Jakarta is UTC+7 year-round (no daylight saving), so a fixed offset is
+// exact here — not an approximation.
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
 // Defaults used until a superadmin saves their own tiers. Thresholds are on
 // free cups *claimed*, so the ladder only moves when a reward is actually
 // taken. Every field here is editable from the admin panel.
@@ -114,7 +118,10 @@ async function statusFor(customerId) {
        from stamps where customer_id = $1 group by status`,
       [customerId]
     ),
-    db.query('select rewards_claimed, birthday from customers where id = $1', [customerId]),
+    db.query(
+      'select rewards_claimed, birthday, weekly_cup_at, birthday_cup_year from customers where id = $1',
+      [customerId]
+    ),
     getTierConfig(),
   ]);
 
@@ -144,7 +151,60 @@ async function statusFor(customerId) {
     nextTier: next,
     tierStyle: tierStyle(current.name),
     birthday: (customerRows[0] || {}).birthday || null,
+    weeklyCupAt: (customerRows[0] || {}).weekly_cup_at || null,
+    birthdayCupYear: Number((customerRows[0] || {}).birthday_cup_year) || null,
   };
+}
+
+// Monday 00:00 WIB of the week containing `at`, as a real instant. The shop
+// runs on Jakarta time, so "once a week" has to mean a Jakarta week — not
+// whatever week the server happens to be in.
+function weekStartWIB(at = new Date()) {
+  const wib = new Date(at.getTime() + WIB_OFFSET_MS);
+  const dayFromMonday = (wib.getUTCDay() + 6) % 7;
+  const monday = Date.UTC(wib.getUTCFullYear(), wib.getUTCMonth(), wib.getUTCDate() - dayFromMonday);
+  return new Date(monday - WIB_OFFSET_MS);
+}
+
+function todayKeyWIB(at = new Date()) {
+  return new Date(at.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+// 'YYYY-MM-DD' from whatever the driver hands back for a date column — a
+// Date object on some paths, a plain string on others.
+function dateKeyOf(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+      value.getDate()
+    ).padStart(2, '0')}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+// Which tier perks this customer can still spend. Advisory only: create_order
+// re-checks both under the customer row lock before actually waiving a cup,
+// so a perk shown here can never be granted twice.
+function perkAvailability(status, dateKey = '') {
+  const tier = (status && status.tier) || {};
+  if (!status || !status.tiersEnabled) return { weekly: false, birthday: false };
+
+  const weekly =
+    Boolean(tier.weeklyFreeCup) &&
+    (!status.weeklyCupAt || new Date(status.weeklyCupAt) < weekStartWIB());
+
+  const on = /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : todayKeyWIB();
+  // A `date` column arrives as a Date object, whose default string form is
+  // "Sat Sep 12 2026 …" — slicing that for the month/day silently never
+  // matches, so the preview would hide a cup create_order then grants.
+  const bday = dateKeyOf(status.birthday);
+  const birthday =
+    Boolean(tier.birthdayFreeCup) &&
+    Boolean(bday) &&
+    bday.slice(5, 10) === on.slice(5, 10) &&
+    Number(status.birthdayCupYear) !== Number(on.slice(0, 4));
+
+  return { weekly, birthday };
 }
 
 // Called when an order reaches 'selesai'. The unique index on order_id makes
@@ -405,6 +465,8 @@ module.exports = {
   saveTierConfig,
   tierStyle,
   statusFor,
+  perkAvailability,
+  weekStartWIB,
   countCustomers,
   programStats,
   grantForOrder,

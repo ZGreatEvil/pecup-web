@@ -21,6 +21,7 @@ const loyalty = require('../src/loyalty');
 const vouchers = require('../src/vouchers');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
+const passwordReset = require('../src/passwordReset');
 const { logAdminAction, queryAdminLogs, listLogFilters } = require('../src/adminLog');
 const queries = require('../src/queries');
 const {
@@ -81,6 +82,7 @@ Disallow: /keranjang
 Disallow: /checkout
 Disallow: /masuk
 Disallow: /daftar
+Disallow: /lupa-sandi
 Disallow: /pesanan-berhasil
 
 Sitemap: ${originFor(req)}/sitemap.xml
@@ -340,6 +342,93 @@ router.post('/masuk', async (req, res) => {
   redirect(res, safeNext(fields.next));
 });
 
+// ---------------------------------------------------------------------
+// customer: forgotten password
+// ---------------------------------------------------------------------
+// There is no email on file (the WhatsApp number is the username), so the
+// reset runs through an admin over WhatsApp — see src/passwordReset.js.
+
+function resetWaLink(shop, message) {
+  if (!shop.whatsapp) return '';
+  return `https://wa.me/${shop.whatsapp}?text=${encodeURIComponent(message)}`;
+}
+
+router.get('/lupa-sandi', async (req, res) => {
+  if (req.customer) return redirect(res, '/akun');
+  sendHtml(res, accountViews.renderLupaSandi({ cartCount: cartLib.cartCount(req.cart) }));
+});
+
+router.post('/lupa-sandi', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const whatsapp = (fields.whatsapp || '').trim();
+  const result = await passwordReset.request(whatsapp);
+
+  if (!result.ok) {
+    return sendHtml(
+      res,
+      accountViews.renderLupaSandi({
+        cartCount: cartLib.cartCount(req.cart),
+        errors: [result.error],
+        values: { whatsapp },
+      })
+    );
+  }
+
+  // Same page whether or not that number has an account: this form must not
+  // become a way to find out who has one.
+  const shop = await settings.shopConfig();
+  sendHtml(
+    res,
+    accountViews.renderLupaSandi({
+      cartCount: cartLib.cartCount(req.cart),
+      sent: true,
+      waLink: resetWaLink(
+        shop,
+        `Halo admin Pecup, saya lupa password akun saya (nomor ${whatsapp}). Mohon dibantu reset ya.`
+      ),
+    })
+  );
+});
+
+router.get('/lupa-sandi/kode', async (req, res) => {
+  if (req.customer) return redirect(res, '/akun');
+  sendHtml(res, accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart) }));
+});
+
+router.post('/lupa-sandi/kode', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const whatsapp = (fields.whatsapp || '').trim();
+  const code = (fields.code || '').trim();
+  const password = fields.password || '';
+  const values = { whatsapp, code };
+
+  if (password.length < 6) {
+    return sendHtml(
+      res,
+      accountViews.renderResetSandi({
+        cartCount: cartLib.cartCount(req.cart),
+        errors: ['Password baru minimal 6 karakter.'],
+        values,
+      })
+    );
+  }
+
+  // Hashed here, never stored or logged in plain form — the same rule as
+  // every other password in this app.
+  const result = await passwordReset.redeem({
+    whatsapp,
+    code,
+    passwordHash: customerAuth.hashPassword(password),
+  });
+  if (!result.ok) {
+    return sendHtml(
+      res,
+      accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart), errors: [result.error], values })
+    );
+  }
+  sendHtml(res, accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart), done: true }));
+});
+
 router.get('/daftar', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
   sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart) }));
@@ -495,14 +584,18 @@ router.get('/checkout', async (req, res, { query }) => {
 
   // Signed-in shoppers get the form pre-filled from their saved profile —
   // that's the whole point of having an account.
-  const [saved, reward, shop] = await Promise.all([
+  // The birthday cup is keyed to the delivery date, so the date already in
+  // the form (if any) decides whether it shows up in the preview.
+  const deliveryDateKey = (query.get('deliveryDate') || '').trim();
+  const [saved, benefits, shop] = await Promise.all([
     req.customer ? customerAuth.findById(req.customer.customerId) : null,
-    rewardPreview(req.customer, items),
+    customerBenefits(req.customer, items, deliveryDateKey),
     settings.shopConfig(),
   ]);
+  const { reward, membership } = benefits;
   const code = query.get('voucher') || '';
   const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
-  const totals = await checkoutTotals({ code, subtotal, reward, deliveryFee });
+  const totals = await checkoutTotals({ code, subtotal, reward, membership, deliveryFee });
 
   sendHtml(
     res,
@@ -512,6 +605,7 @@ router.get('/checkout', async (req, res, { query }) => {
       cartCount: cartLib.cartCount(req.cart),
       customer: saved,
       reward,
+      membership,
       shop,
       voucher: totals.voucherWithoutReward,
       totals,
@@ -551,14 +645,14 @@ router.post('/checkout', async (req, res) => {
 
   // Re-derived here, never taken from the request: the form can only ask to
   // use a reward, and the database re-checks eligibility again at insert time.
-  const reward = await rewardPreview(req.customer, items);
+  const requestedDate = (fields.deliveryDate || '').trim();
+  const { reward, membership } = await customerBenefits(req.customer, items, requestedDate);
   const useReward = Boolean(fields.useReward) && reward.available > 0;
-  const rewardDiscount = useReward ? reward.discount : 0;
 
   const shop = await settings.shopConfig();
   const voucherCode = vouchers.normalizeCode(fields.voucherCode || '');
   const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
-  const totals = await checkoutTotals({ code: voucherCode, subtotal, reward, deliveryFee });
+  const totals = await checkoutTotals({ code: voucherCode, subtotal, reward, membership, deliveryFee });
   // Match the voucher preview to whether the free cup is actually being used.
   const voucher = useReward && totals.voucherWithReward ? totals.voucherWithReward : totals.voucherWithoutReward;
   const payable = useReward ? totals.withReward : totals.withoutReward;
@@ -619,6 +713,7 @@ router.post('/checkout', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
         reward,
+        membership,
         useReward,
         shop,
         voucher,
@@ -658,6 +753,9 @@ router.post('/checkout', async (req, res) => {
       // and consumes it under a row lock.
       voucherCode: voucher.applied ? voucher.code : null,
       deliveryFee,
+      // The ladder lives in settings, so the app resolves which tier the
+      // customer holds; create_order decides what the perks are still worth.
+      tier: membership.tier || {},
     });
   } catch (err) {
     console.error(err);
@@ -669,6 +767,7 @@ router.post('/checkout', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
         reward,
+        membership,
         useReward,
         shop,
         voucher,
@@ -1156,6 +1255,7 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
   await Promise.all([
     settings.setValue('shop_open', fields.shopOpen ? '1' : '0'),
     settings.setValue('shop_notice', (fields.shopNotice || '').trim().slice(0, 200)),
+    settings.setValue('shop_whatsapp', normalizeWhatsapp(fields.shopWhatsapp || '') || ''),
     settings.setValue('min_order', num(fields.minOrder)),
     settings.setValue('delivery_fee', num(fields.deliveryFee)),
     settings.setValue('free_delivery_over', num(fields.freeDeliveryOver)),
@@ -1221,6 +1321,62 @@ router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
 // ---------------------------------------------------------------------
 // admin: sales report
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// admin: customer password resets
+// ---------------------------------------------------------------------
+// Open to every admin, not just superadmins: this is front-line customer
+// service, and approving a reset never reveals or sets a password — the
+// customer picks their own with the one-time code.
+
+router.get('/admin/reset-sandi', requireAdmin(async (req, res, { query }) => {
+  sendHtml(
+    res,
+    adminViews.renderResetSandi({
+      requests: await passwordReset.listRequests(),
+      admin: req.admin,
+      flash: query.get('ok') ? 'Permintaan reset diperbarui.' : '',
+    })
+  );
+}));
+
+router.post('/admin/reset-sandi/:id/setujui', requireAdmin(async (req, res) => {
+  const id = Number(req.params.id);
+  const result = await passwordReset.approve(id, req.admin.username);
+  const requests = await passwordReset.listRequests();
+  if (!result.ok) {
+    return sendHtml(res, adminViews.renderResetSandi({ requests, admin: req.admin, error: result.error }));
+  }
+
+  const row = requests.find((r) => Number(r.id) === id) || {};
+  await logAdminAction(req.admin, 'customer.password_reset_approved', `Pelanggan ${row.name || result.customerId}`);
+  // The code is rendered once here and never stored in plaintext — if the
+  // admin loses it, they generate a new one.
+  sendHtml(
+    res,
+    adminViews.renderResetSandi({
+      requests,
+      admin: req.admin,
+      issued: {
+        code: result.code,
+        expiresInMinutes: result.expiresInMinutes,
+        name: row.name || 'pelanggan',
+        whatsapp: row.whatsapp || '',
+        waLink: row.whatsapp
+          ? `https://wa.me/${row.whatsapp}?text=${encodeURIComponent(
+              `Halo ${row.name || ''}, ini kode reset password Pecup kamu: ${result.code}. Berlaku ${result.expiresInMinutes} menit. Masukkan di halaman pecup: /lupa-sandi/kode`
+            )}`
+          : '',
+      },
+    })
+  );
+}));
+
+router.post('/admin/reset-sandi/:id/tolak', requireAdmin(async (req, res) => {
+  await passwordReset.reject(Number(req.params.id), req.admin.username);
+  await logAdminAction(req.admin, 'customer.password_reset_rejected', `Permintaan #${req.params.id}`);
+  redirect(res, '/admin/reset-sandi?ok=1');
+}));
 
 // Open to every admin: they already see each order's total on the Pesanan
 // page, so this exposes no new information — it just adds them up.
@@ -1684,28 +1840,54 @@ function requireSuperadmin(handler) {
 // "use my free cup" changes what the voucher is worth. Both totals are worked
 // out here so the checkbox can update the total instantly without the browser
 // having to re-derive discount rules it shouldn't know about.
-async function checkoutTotals({ code, subtotal, reward, deliveryFee }) {
+// The membership tier's percentage and its free cups come off before the
+// voucher, so both totals below carry the full ladder of discounts in the
+// same order create_order applies them:
+//   free cups → member percentage → promo code → delivery fee
+async function checkoutTotals({ code, subtotal, reward, membership = EMPTY_MEMBERSHIP, deliveryFee }) {
   const rewardDiscount = reward.available > 0 ? reward.discount : 0;
+  const percent = membership.percent || 0;
+
+  const perkWithout = membership.discount.withoutReward;
+  const perkWith = membership.discount.withReward;
+  const baseWithout = Math.max(0, subtotal - perkWithout);
+  const baseWith = Math.max(0, subtotal - perkWith - rewardDiscount);
+  const tierWithout = percent > 0 ? Math.floor((baseWithout * percent) / 100) : 0;
+  const tierWith = percent > 0 ? Math.floor((baseWith * percent) / 100) : 0;
+
   const [voucherWithoutReward, voucherWithReward] = await Promise.all([
-    voucherPreview(code, subtotal, 0),
-    rewardDiscount > 0 ? voucherPreview(code, subtotal, rewardDiscount) : Promise.resolve(null),
+    voucherPreview(code, subtotal, perkWithout + tierWithout),
+    rewardDiscount > 0
+      ? voucherPreview(code, subtotal, rewardDiscount + perkWith + tierWith)
+      : Promise.resolve(null),
   ]);
-  const withoutReward = Math.max(0, subtotal - voucherWithoutReward.discount) + deliveryFee;
+  const withoutReward =
+    Math.max(0, subtotal - perkWithout - tierWithout - voucherWithoutReward.discount) + deliveryFee;
   const withReward =
     rewardDiscount > 0
-      ? Math.max(0, subtotal - rewardDiscount - voucherWithReward.discount) + deliveryFee
+      ? Math.max(0, subtotal - rewardDiscount - perkWith - tierWith - voucherWithReward.discount) + deliveryFee
       : withoutReward;
-  return { voucherWithoutReward, voucherWithReward, withoutReward, withReward };
+  return {
+    voucherWithoutReward,
+    voucherWithReward,
+    tierWithout,
+    tierWith,
+    withoutReward,
+    withReward,
+  };
 }
 
 // Advisory only — create_order re-validates and consumes the code under a row
 // lock. This exists so the shopper sees the saving before they commit.
-async function voucherPreview(code, subtotal, rewardDiscount) {
+// `priorDiscount` is everything already taken off the cups (free cups plus the
+// member percentage); a promo code applies to what's left, never to the cups'
+// full value.
+async function voucherPreview(code, subtotal, priorDiscount) {
   if (!code) return { applied: false, code: '', discount: 0, error: '' };
   try {
     return await vouchers.preview(code, {
       subtotal,
-      discountable: Math.max(0, subtotal - rewardDiscount),
+      discountable: Math.max(0, subtotal - priorDiscount),
     });
   } catch (err) {
     console.error('voucher preview failed:', err.message);
@@ -1713,18 +1895,84 @@ async function voucherPreview(code, subtotal, rewardDiscount) {
   }
 }
 
-async function rewardPreview(sessionCustomer, items) {
-  if (!sessionCustomer || !items.length) return { available: 0, discount: 0, itemName: null, perReward: 0 };
-  const status = await loyalty.statusFor(sessionCustomer.customerId);
-  if (!status.cardComplete) return { available: 0, discount: 0, itemName: null, perReward: status.perReward };
+const EMPTY_REWARD = { available: 0, discount: 0, itemName: null, perReward: 0 };
+const EMPTY_MEMBERSHIP = {
+  tier: null,
+  percent: 0,
+  perks: { withReward: [], withoutReward: [] },
+  discount: { withReward: 0, withoutReward: 0 },
+};
 
-  const cheapest = items.reduce((min, it) => (Number(it.product.price) < Number(min.product.price) ? it : min));
+// Every cup in the order as its own row, cheapest first, priced at what it
+// actually costs (wholesale included). Free cups are drawn from the front of
+// this list — the same rule create_order follows, so the preview and the
+// charge can't disagree.
+function cupUnits(items) {
+  const units = [];
+  for (const it of items) {
+    const price = Number(it.unitPrice) || Number(it.product.price) || 0;
+    for (let i = 0; i < it.qty; i += 1) units.push({ price, name: it.product.name });
+  }
+  return units.sort((a, b) => a.price - b.price);
+}
+
+// One read of the loyalty state, shared by the stamp card and the tier perks.
+// Nothing here is trusted at insert time: create_order re-derives the card,
+// re-checks both perks under the customer row lock, and only takes the tier
+// percentage from the app (it depends on the saved ladder, not on the client).
+async function customerBenefits(sessionCustomer, items, deliveryDateKey = '') {
+  if (!sessionCustomer || !items.length) return { reward: EMPTY_REWARD, membership: EMPTY_MEMBERSHIP };
+
+  const status = await loyalty.statusFor(sessionCustomer.customerId);
+  const units = cupUnits(items);
+
+  const reward = status.cardComplete && units.length
+    ? {
+        // One card, one free cup — stamps reset to zero when it's spent.
+        available: 1,
+        discount: units[0].price,
+        itemName: units[0].name,
+        perReward: status.perReward,
+      }
+    : { ...EMPTY_REWARD, perReward: status.perReward };
+
+  if (!status.tiersEnabled) return { reward, membership: EMPTY_MEMBERSHIP };
+
+  const available = loyalty.perkAvailability(status, deliveryDateKey);
+  const tier = status.tier || {};
+  // Free cups are granted in create_order's order — stamp card, then weekly,
+  // then birthday — so which cup each perk waives depends on whether the
+  // stamp-card cup is being used. Both variants are worked out here so the
+  // "use my free cup" checkbox can flip between them without a round trip.
+  const build = (startIndex) => {
+    const out = [];
+    let i = startIndex;
+    if (available.weekly && units[i]) {
+      out.push({
+        key: 'weekly',
+        label: `Cup gratis mingguan${tier.name ? ` (${tier.name})` : ''} — ${units[i].name}`,
+        amount: units[i].price,
+      });
+      i += 1;
+    }
+    if (available.birthday && units[i]) {
+      out.push({ key: 'birthday', label: `Cup gratis ulang tahun — ${units[i].name}`, amount: units[i].price });
+      i += 1;
+    }
+    return out;
+  };
+  const withoutReward = build(0);
+  const withReward = reward.available > 0 ? build(1) : withoutReward;
+  const sum = (list) => list.reduce((total, line) => total + line.amount, 0);
+
   return {
-    // One card, one free cup — stamps reset to zero when it's spent.
-    available: 1,
-    discount: Number(cheapest.product.price),
-    itemName: cheapest.product.name,
-    perReward: status.perReward,
+    reward,
+    membership: {
+      tier: tier.name ? tier : null,
+      percent: Number(tier.discountPercent) || 0,
+      perks: { withReward, withoutReward },
+      discount: { withReward: sum(withReward), withoutReward: sum(withoutReward) },
+    },
   };
 }
 

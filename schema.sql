@@ -81,6 +81,19 @@ alter table orders add column if not exists delivery_fee integer not null defaul
 alter table orders add column if not exists voucher_code text;
 alter table orders add column if not exists voucher_discount integer not null default 0;
 
+-- Membership-tier perks applied to this order. Snapshots, like the voucher
+-- fields above: editing the tier ladder later must not rewrite history.
+--   tier_name/tier_percent — which tier the customer held when they ordered
+--   tier_discount          — rupiah taken off by that tier's percentage
+--   perk_discount/perk_note — free cups granted by the tier (weekly /
+--                             birthday), separate from the stamp-card cup so
+--                             finance can tell the two apart.
+alter table orders add column if not exists tier_name text;
+alter table orders add column if not exists tier_percent integer not null default 0;
+alter table orders add column if not exists tier_discount integer not null default 0;
+alter table orders add column if not exists perk_discount integer not null default 0;
+alter table orders add column if not exists perk_note text;
+
 -- Promo codes. `kind` is 'persen' (percentage off the cups) or 'nominal'
 -- (a flat rupiah amount). Redemptions are counted so a limited code can't be
 -- over-used, and the count is incremented inside create_order under a row
@@ -122,6 +135,35 @@ alter table customers add column if not exists stamp_adjustment integer not null
 
 -- Birthday (optional) — drives the per-tier birthday perk.
 alter table customers add column if not exists birthday date;
+
+-- When the tier perks were last spent. Both are consumed inside create_order
+-- under the customer row lock, so a weekly free cup can't be taken twice by
+-- two checkouts racing in separate serverless invocations.
+--   weekly_cup_at      — timestamp of the last weekly free cup
+--   birthday_cup_year  — the year the birthday cup was last taken
+alter table customers add column if not exists weekly_cup_at timestamptz;
+alter table customers add column if not exists birthday_cup_year integer;
+
+-- Password resets. A customer has no email on file (the WhatsApp number is
+-- the username), so a reset is a request an admin approves out-of-band over
+-- WhatsApp: the admin generates a one-time code, reads it to the customer,
+-- and the customer sets their own password with it. Only the hash of the
+-- code is stored — the same rule as passwords, so a database dump can't be
+-- used to take over an account.
+create table if not exists password_resets (
+  id bigint generated always as identity primary key,
+  customer_id bigint not null references customers(id) on delete cascade,
+  status text not null default 'menunggu',  -- 'menunggu' | 'disetujui' | 'selesai' | 'ditolak'
+  code_hash text,                           -- "salt:hash", set when an admin approves
+  expires_at timestamptz,                   -- code validity, 30 minutes from approval
+  attempts integer not null default 0,      -- wrong-code tries, capped
+  note text,
+  approved_by text,
+  created_at timestamptz not null default now(),
+  settled_at timestamptz
+);
+create index if not exists idx_password_resets_customer on password_resets(customer_id, status);
+create index if not exists idx_password_resets_created on password_resets(created_at desc);
 
 -- Individual stamps, each with the date it was earned. A real row per stamp
 -- (rather than a derived count) is what makes expiry dates, "reset to zero on
@@ -254,7 +296,11 @@ create or replace function create_order(
   p_customer_id bigint,
   p_use_reward boolean,
   p_voucher_code text,
-  p_delivery_fee integer
+  p_delivery_fee integer,
+  p_tier_name text,
+  p_tier_percent integer,
+  p_tier_weekly boolean,
+  p_tier_birthday boolean
 ) returns jsonb
 language plpgsql
 as $$
@@ -285,6 +331,19 @@ declare
   v_oldest_stamp timestamptz;
   v_cheapest_price integer;
   v_cheapest_name text;
+  v_tier_percent integer := least(100, greatest(0, coalesce(p_tier_percent, 0)));
+  v_tier_name text;
+  v_tier_discount integer := 0;
+  v_perk_discount integer := 0;
+  v_perk_notes text[] := '{}';
+  v_perk_note text;
+  v_perk_price integer;
+  v_perk_name text;
+  v_free_taken integer := 0;
+  v_birthday date;
+  v_weekly_at timestamptz;
+  v_birthday_year integer;
+  v_base integer;
 begin
   if jsonb_array_length(p_items) = 0 then
     raise exception 'Keranjang kosong.';
@@ -329,9 +388,16 @@ begin
   -- customer row is locked FOR UPDATE, so two checkouts racing in separate
   -- serverless invocations can't both spend the same card, and a client can
   -- only ever ask for the reward (p_use_reward) — never name its value.
-  if p_use_reward and p_customer_id is not null then
-    perform 1 from customers where id = p_customer_id for update;
+  -- One lock for every per-customer benefit below (stamp card, weekly cup,
+  -- birthday cup): they all read-then-write the same row, so they have to be
+  -- serialized together, not one block at a time.
+  if p_customer_id is not null and (p_use_reward or coalesce(p_tier_weekly, false) or coalesce(p_tier_birthday, false)) then
+    select birthday, weekly_cup_at, birthday_cup_year
+      into v_birthday, v_weekly_at, v_birthday_year
+    from customers where id = p_customer_id for update;
+  end if;
 
+  if p_use_reward and p_customer_id is not null then
     select coalesce(value::integer, 10) into v_per_reward from settings where key = 'stamps_per_reward';
     if v_per_reward is null or v_per_reward < 1 then v_per_reward := 10; end if;
     select coalesce(value::integer, 2) into v_expiry_months from settings where key = 'stamp_expiry_months';
@@ -349,16 +415,29 @@ begin
     end if;
 
     if v_stamp_count >= v_per_reward then
-      -- The cheapest cup in the order is the one waived.
-      select p.price, p.name into v_cheapest_price, v_cheapest_name
-      from jsonb_array_elements(p_items) as item
-      join products p on p.id = (item->>'productId')::bigint
-      order by p.price asc
+      -- The cheapest cup in the order is the one waived. Cups are expanded
+      -- one row per unit (generate_series) and priced at their *effective*
+      -- price, so a wholesale line can't be waived at its full-price value.
+      select price, name into v_cheapest_price, v_cheapest_name
+      from (
+        select case
+                 when p.wholesale_price is not null and p.wholesale_min_qty > 0
+                      and (item->>'qty')::integer >= p.wholesale_min_qty
+                 then p.wholesale_price else p.price
+               end as price,
+               p.name as name
+        from jsonb_array_elements(p_items) as item
+        join products p on p.id = (item->>'productId')::bigint
+        cross join generate_series(1, (item->>'qty')::integer)
+      ) units
+      order by price asc
+      offset v_free_taken
       limit 1;
 
       if v_cheapest_price is not null then
         v_reward_discount := least(v_cheapest_price, v_subtotal);
         v_reward_item := v_cheapest_name;
+        v_free_taken := v_free_taken + 1;
         -- Spending a card resets the stamp count to zero and bumps the claim
         -- counter, which is what drives the membership tier.
         update stamps set status = 'redeemed', settled_at = now()
@@ -367,6 +446,98 @@ begin
         where id = p_customer_id;
       end if;
     end if;
+  end if;
+
+  -- Membership-tier free cups (weekly / birthday). Which tier the customer
+  -- holds is worked out by the app from their claim count and the saved
+  -- ladder, but whether the perk is still *available* is decided here, under
+  -- the customer lock taken above — that's what stops the same weekly cup
+  -- being spent twice by two checkouts at once. Each free cup takes the next
+  -- cheapest remaining unit, so three perks on a two-cup order can only ever
+  -- waive two cups.
+  if p_customer_id is not null then
+    if coalesce(p_tier_weekly, false)
+       and (v_weekly_at is null
+            or (v_weekly_at at time zone 'Asia/Jakarta') < date_trunc('week', now() at time zone 'Asia/Jakarta')) then
+      select price, name into v_perk_price, v_perk_name
+      from (
+        select case
+                 when p.wholesale_price is not null and p.wholesale_min_qty > 0
+                      and (item->>'qty')::integer >= p.wholesale_min_qty
+                 then p.wholesale_price else p.price
+               end as price,
+               p.name as name
+        from jsonb_array_elements(p_items) as item
+        join products p on p.id = (item->>'productId')::bigint
+        cross join generate_series(1, (item->>'qty')::integer)
+      ) units
+      order by price asc
+      offset v_free_taken
+      limit 1;
+
+      if v_perk_price is not null then
+        v_perk_price := least(v_perk_price, greatest(0, v_subtotal - v_reward_discount - v_perk_discount));
+        if v_perk_price > 0 then
+          v_perk_discount := v_perk_discount + v_perk_price;
+          v_free_taken := v_free_taken + 1;
+          v_perk_notes := array_append(
+            v_perk_notes,
+            'Cup gratis mingguan' || coalesce(' (' || nullif(btrim(coalesce(p_tier_name, '')), '') || ')', '') || ' — ' || v_perk_name
+          );
+          update customers set weekly_cup_at = now() where id = p_customer_id;
+        end if;
+      end if;
+    end if;
+
+    -- Birthday cup: keyed to the delivery date (the day they actually get
+    -- it), and only once per calendar year.
+    if coalesce(p_tier_birthday, false)
+       and v_birthday is not null
+       and to_char(v_birthday, 'MM-DD')
+           = to_char(coalesce(p_delivery_date, (now() at time zone 'Asia/Jakarta')::date), 'MM-DD')
+       and coalesce(v_birthday_year, 0)
+           <> extract(year from coalesce(p_delivery_date, (now() at time zone 'Asia/Jakarta')::date))::integer then
+      select price, name into v_perk_price, v_perk_name
+      from (
+        select case
+                 when p.wholesale_price is not null and p.wholesale_min_qty > 0
+                      and (item->>'qty')::integer >= p.wholesale_min_qty
+                 then p.wholesale_price else p.price
+               end as price,
+               p.name as name
+        from jsonb_array_elements(p_items) as item
+        join products p on p.id = (item->>'productId')::bigint
+        cross join generate_series(1, (item->>'qty')::integer)
+      ) units
+      order by price asc
+      offset v_free_taken
+      limit 1;
+
+      if v_perk_price is not null then
+        v_perk_price := least(v_perk_price, greatest(0, v_subtotal - v_reward_discount - v_perk_discount));
+        if v_perk_price > 0 then
+          v_perk_discount := v_perk_discount + v_perk_price;
+          v_free_taken := v_free_taken + 1;
+          v_perk_notes := array_append(v_perk_notes, 'Cup gratis ulang tahun — ' || v_perk_name);
+          update customers set birthday_cup_year =
+            extract(year from coalesce(p_delivery_date, (now() at time zone 'Asia/Jakarta')::date))::integer
+          where id = p_customer_id;
+        end if;
+      end if;
+    end if;
+  end if;
+
+  if array_length(v_perk_notes, 1) is not null then
+    v_perk_note := array_to_string(v_perk_notes, ' · ');
+  end if;
+
+  -- Tier percentage, applied to what's left after the free cups and before
+  -- any voucher — a member discount is part of the price, a promo code comes
+  -- off the discounted price.
+  v_tier_name := nullif(btrim(coalesce(p_tier_name, '')), '');
+  v_base := greatest(0, v_subtotal - v_reward_discount - v_perk_discount);
+  if v_tier_percent > 0 and v_base > 0 then
+    v_tier_discount := (v_base * v_tier_percent) / 100;
   end if;
 
   -- Voucher. Validated and consumed here, under a row lock, so a code with
@@ -392,9 +563,9 @@ begin
       raise exception 'Minimal belanja untuk kode ini adalah Rp%.', v_voucher.min_spend;
     end if;
 
-    -- The voucher applies to what's left after the free cup, so the two
-    -- discounts can never together exceed the value of the cups.
-    v_discountable := greatest(0, v_subtotal - v_reward_discount);
+    -- The voucher applies to what's left after the free cups and the member
+    -- discount, so the discounts can never together exceed the cups' value.
+    v_discountable := greatest(0, v_subtotal - v_reward_discount - v_perk_discount - v_tier_discount);
     if v_voucher.kind = 'nominal' then
       v_voucher_discount := least(v_voucher.amount, v_discountable);
     else
@@ -411,10 +582,11 @@ begin
 
   -- Delivery fee is added after discounts: a promo reduces the cups, not the
   -- cost of getting them there.
-  v_total := greatest(0, v_subtotal - v_reward_discount - v_voucher_discount) + v_delivery_fee;
+  v_total := greatest(0, v_subtotal - v_reward_discount - v_perk_discount - v_tier_discount - v_voucher_discount)
+             + v_delivery_fee;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee)
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee, tier_name, tier_percent, tier_discount, perk_discount, perk_note)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note)
   returning id into v_order_id;
 
   v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');
@@ -448,15 +620,21 @@ begin
     'voucherCode', v_voucher_code,
     'voucherDiscount', v_voucher_discount,
     'deliveryFee', v_delivery_fee,
+    'tierName', v_tier_name,
+    'tierPercent', v_tier_percent,
+    'tierDiscount', v_tier_discount,
+    'perkDiscount', v_perk_discount,
+    'perkNote', v_perk_note,
     'total', v_total
   );
 end;
 $$;
 
 -- Adding parameters creates an OVERLOAD rather than replacing the function,
--- so the previous 10-argument signature has to be dropped explicitly or both
--- versions stay callable and the old one silently ignores vouchers.
+-- so every previous signature has to be dropped explicitly or both versions
+-- stay callable and the old one silently ignores the newer discounts.
 drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean);
+drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean, text, integer);
 
 -- Note: there's no "storage buckets" step here anymore. File storage (product
 -- photos, payment proofs) lives in Vercel Blob, not in this Postgres

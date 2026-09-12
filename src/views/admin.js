@@ -15,6 +15,7 @@ const {
   ORDER_STATUSES,
 } = require('../utils');
 const { tierStyle: tierStyleFor } = require('../loyalty');
+const { discountLines, freeCupValue } = require('../orderMoney');
 
 function renderLogin({ error }) {
   const body = `
@@ -819,8 +820,12 @@ function whatsappButtons(order, items) {
 
 function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, flash = '', error = '' }) {
   const rewardDiscount = Number(order.reward_discount) || 0;
-  const voucherDiscount = Number(order.voucher_discount) || 0;
   const deliveryFee = Number(order.delivery_fee) || 0;
+  // Free cups, member discount and promo code all itemised from one place
+  // (src/orderMoney.js), so this page, the receipt and the email agree.
+  const orderDiscounts = discountLines(order);
+  const totalDiscount = orderDiscounts.reduce((sum, line) => sum + line.amount, 0);
+  const freeCups = freeCupValue(order);
   const itemCount = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
   const waButtons = whatsappButtons(order, items);
   const itemRows = items
@@ -915,28 +920,20 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
         <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;">Item Dipesan</h3>
         ${itemRows}
         ${
-          rewardDiscount > 0 || voucherDiscount > 0 || deliveryFee > 0
+          orderDiscounts.length || deliveryFee > 0
             ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:10px 0 0;color:var(--text-muted);">
                 <span>Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span>
               </div>`
             : ''
         }
-        ${
-          rewardDiscount > 0
-            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
-                <span>Cup gratis — ${escapeHtml(order.reward_item || '1 cup termurah')}</span>
-                <span class="tnum">&minus;${formatRupiah(rewardDiscount)}</span>
+        ${orderDiscounts
+          .map(
+            (line) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
+                <span>${escapeHtml(line.label)}</span>
+                <span class="tnum">&minus;${formatRupiah(line.amount)}</span>
               </div>`
-            : ''
-        }
-        ${
-          voucherDiscount > 0
-            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;padding:6px 0;color:#a15a1f;">
-                <span>Voucher ${escapeHtml(order.voucher_code || '')}</span>
-                <span class="tnum">&minus;${formatRupiah(voucherDiscount)}</span>
-              </div>`
-            : ''
-        }
+          )
+          .join('')}
         ${
           deliveryFee > 0
             ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0;color:var(--text-muted);">
@@ -945,13 +942,18 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
             : ''
         }
         <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;padding-top:16px;"><span>${
-          rewardDiscount > 0 || voucherDiscount > 0 ? 'Total Dibayar' : 'Total'
+          totalDiscount > 0 ? 'Total Dibayar' : 'Total'
         }</span><span class="tnum" style="color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
         ${
-          rewardDiscount > 0
+          totalDiscount > 0
             ? `<div style="background:var(--orange-soft);border-radius:10px;padding:12px 14px;margin-top:14px;font-size:12.5px;color:#7a4a1f;line-height:1.7;">
-                <strong>Catatan keuangan:</strong> pesanan ini menebus 1 cup gratis dari kartu stempel.
-                Uang masuk ${formatRupiah(order.total)}, nilai promo ${formatRupiah(rewardDiscount)} — bukan kurang bayar.
+                <strong>Catatan keuangan:</strong> pesanan ini dapat potongan ${formatRupiah(totalDiscount)}
+                (${escapeHtml(orderDiscounts.map((line) => line.label).join(' · '))}).
+                Uang masuk ${formatRupiah(order.total)} — bukan kurang bayar.${
+                  freeCups > 0
+                    ? ` Nilai cup yang keluar tanpa uang masuk: ${formatRupiah(freeCups)}.`
+                    : ''
+                }
               </div>`
             : ''
         }
@@ -1311,8 +1313,8 @@ function renderPelangganDetail({
               {
                 label: 'Catatan',
                 html: `<span style="font-size:12px;color:var(--text-muted);text-align:right;">${
-                  Number(o.reward_discount) > 0
-                    ? `Gratis: ${escapeHtml(o.reward_item || '1 cup')}`
+                  discountLines(o).length
+                    ? `Potongan ${formatRupiah(discountLines(o).reduce((sum, line) => sum + line.amount, 0))}`
                     : o.delivery_date
                     ? escapeHtml(formatShortDateID(o.delivery_date))
                     : '&mdash;'
@@ -1784,9 +1786,15 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
             { label: 'Pesanan', html: `<span class="tnum" style="font-size:13px;color:var(--text-muted);">${s.orders}</span>` },
             { label: 'Kotor', html: `<span class="tnum" style="font-size:13px;">${formatRupiah(s.gross)}</span>` },
             {
-              label: 'Promo',
+              label: 'Potongan',
               html: `<span class="tnum" style="font-size:13px;color:${s.discount ? '#a15a1f' : 'var(--text-muted)'};">${
                 s.discount ? `−${formatRupiah(s.discount)}` : '—'
+              }</span>`,
+            },
+            {
+              label: 'Ongkos',
+              html: `<span class="tnum" style="font-size:13px;color:var(--text-muted);">${
+                s.delivery ? formatRupiah(s.delivery) : '—'
               }</span>`,
             },
             {
@@ -1876,18 +1884,33 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
 
     <div class="grid-4" style="margin-bottom:16px;gap:16px;">
       ${bigStat('Uang Masuk', formatRupiah(report.net), `${report.orders} pesanan`, 'var(--green)')}
-      ${bigStat('Nilai Kotor', formatRupiah(report.gross), 'sebelum promo cup gratis', 'var(--text-muted)')}
-      ${bigStat('Promo Cup Gratis', report.discount ? `−${formatRupiah(report.discount)}` : formatRupiah(0), 'nilai cup yang digratiskan', 'var(--orange)')}
+      ${bigStat('Nilai Kotor', formatRupiah(report.gross), 'nilai cup sebelum potongan', 'var(--text-muted)')}
+      ${bigStat(
+        'Total Potongan',
+        report.discount ? `−${formatRupiah(report.discount)}` : formatRupiah(0),
+        'cup gratis + member + voucher',
+        'var(--orange)'
+      )}
       ${bigStat('Rata-rata / Pesanan', formatRupiah(report.averageOrder), `${report.cups} cup terjual`, 'oklch(60% 0.12 245)')}
     </div>
 
     ${
-      report.discount > 0
-        ? `<div class="card" style="padding:16px 20px;margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-mid);">
-      <div style="font-size:13px;color:#7a4a1f;line-height:1.7;">
-        <strong>Kenapa uang masuk lebih kecil dari nilai kotor:</strong> ${formatRupiah(report.discount)} adalah cup gratis
-        yang ditebus pelanggan lewat kartu stempel. Itu biaya promo, bukan kekurangan pembayaran — rinciannya ada di kolom
-        &ldquo;Diskon Cup Gratis&rdquo; pada CSV.
+      report.discount > 0 || report.delivery > 0
+        ? `<div class="card" style="padding:18px 20px;margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-mid);">
+      <div style="font-size:13px;color:#7a4a1f;line-height:1.8;">
+        <strong>Cara angka ini menutup:</strong> nilai kotor ${formatRupiah(report.gross)}
+        &minus; potongan ${formatRupiah(report.discount)}
+        + ongkos antar ${formatRupiah(report.delivery)}
+        = uang masuk <strong>${formatRupiah(report.net)}</strong>.
+      </div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#7a4a1f;">
+        <span>Cup gratis: <strong>${formatRupiah(report.freeCups)}</strong></span>
+        <span>Diskon member: <strong>${formatRupiah(report.tierDiscount)}</strong></span>
+        <span>Voucher: <strong>${formatRupiah(report.voucherDiscount)}</strong></span>
+      </div>
+      <div style="font-size:12.5px;color:#7a4a1f;line-height:1.7;margin-top:10px;">
+        Cup gratis adalah barang yang keluar tanpa uang masuk — biaya promo, bukan kekurangan pembayaran.
+        Semua kolom ini juga ada di CSV.
       </div>
     </div>`
         : ''
@@ -1895,9 +1918,9 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
 
     <div style="margin-bottom:24px;">
       ${admTable({
-        cols: '1.1fr 0.6fr 1fr 1fr 1.4fr',
-        minWidth: 700,
-        head: [view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL', 'PESANAN', 'KOTOR', 'PROMO', 'UANG MASUK'],
+        cols: '1.1fr 0.6fr 1fr 1fr 0.9fr 1.4fr',
+        minWidth: 780,
+        head: [view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL', 'PESANAN', 'KOTOR', 'POTONGAN', 'ONGKOS', 'UANG MASUK'],
         rows: seriesRows,
         empty: 'Tidak ada penjualan pada rentang ini.',
       })}
@@ -2064,6 +2087,13 @@ function renderPengaturan({ admin, shop, flash = '', error = '' }) {
           <input type="text" name="shopNotice" maxlength="200" value="${escapeAttr(shop.notice || '')}"
                  placeholder="Contoh: Libur Lebaran 1–5 April, pesanan dibuka lagi tanggal 6.">
           <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Tampil sebagai banner di atas halaman depan. Kosongkan kalau tidak ada pengumuman.</div>
+        </div>
+        <div class="field" style="margin-top:20px;margin-bottom:0;">
+          <label>Nomor WhatsApp toko</label>
+          <input type="tel" name="shopWhatsapp" inputmode="numeric" maxlength="20" value="${escapeAttr(
+            shop.whatsapp ? formatWhatsapp(shop.whatsapp) : ''
+          )}" placeholder="Contoh: 081234567890">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Dipakai untuk tombol &ldquo;hubungi admin&rdquo; — misalnya saat pelanggan minta reset password.</div>
         </div>
       </div>
 
@@ -2388,7 +2418,115 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
   return page({ title: 'Log Aktivitas — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
+// Customer password-reset queue. An account here has no email address, so a
+// reset can't be a mailed link — an admin confirms the person over WhatsApp,
+// generates a one-time code, and reads it to them. The code is shown on this
+// page exactly once, right after it's generated; only its hash is stored.
+function renderResetSandi({ requests, admin, flash = '', issued = null, error = '' }) {
+  const rows = requests.length
+    ? requests
+        .map((r) => {
+          const badge = {
+            menunggu: { label: 'Menunggu', color: '#a15a1f', bg: 'var(--orange-soft)' },
+            disetujui: { label: 'Kode aktif', color: '#3f7a42', bg: 'var(--green-soft)' },
+            selesai: { label: 'Selesai', color: 'var(--text-muted)', bg: 'var(--surface-2)' },
+            ditolak: { label: 'Ditolak', color: '#a13f3f', bg: '#f6dcdc' },
+          }[r.status] || { label: r.status, color: 'var(--text-muted)', bg: 'var(--surface-2)' };
+          const open = r.status === 'menunggu' || r.status === 'disetujui';
+          return admRow([
+            {
+              label: '',
+              html: `<div style="min-width:0;">
+                <div style="font-size:14px;font-weight:700;">${escapeHtml(r.name)}</div>
+                <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px;">${escapeHtml(
+                  formatWhatsapp(r.whatsapp)
+                )}</div>
+              </div>`,
+            },
+            {
+              label: 'Diminta',
+              html: `<span style="font-size:13px;color:var(--text-muted);">${escapeHtml(
+                formatDateTimeID(r.created_at)
+              )}</span>`,
+            },
+            {
+              label: 'Status',
+              html: `<span style="font-size:11.5px;font-weight:700;color:${badge.color};background:${badge.bg};padding:4px 10px;border-radius:99px;white-space:nowrap;display:inline-block;">${badge.label}</span>`,
+            },
+            {
+              label: 'Aksi',
+              html: open
+                ? `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+                    <form method="post" action="/admin/reset-sandi/${r.id}/setujui">
+                      <button type="submit" class="btn-primary" style="padding:9px 15px;border-radius:9px;font-size:12.5px;font-weight:700;">${
+                        r.status === 'disetujui' ? 'Buat Kode Baru' : 'Setujui &amp; Buat Kode'
+                      }</button>
+                    </form>
+                    <form method="post" action="/admin/reset-sandi/${r.id}/tolak" onsubmit="return confirm('Tolak permintaan reset ini?');">
+                      <button type="submit" class="icon-action" style="padding:9px 14px;font-size:12.5px;font-weight:700;color:#c94f4f;">Tolak</button>
+                    </form>
+                  </div>`
+                : `<span style="font-size:12.5px;color:var(--text-muted);">${
+                    r.approved_by ? `oleh ${escapeHtml(r.approved_by)}` : '—'
+                  }</span>`,
+            },
+          ]);
+        })
+        .join('')
+    : '';
+
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('reset', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  <main class="admin-main" id="konten">
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+    <div style="margin-bottom:8px;">
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Reset Password</div>
+      <h1 style="font-size:24px;font-weight:800;">Reset Password Pelanggan</h1>
+    </div>
+    <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;max-width:680px;margin:10px 0 24px;">
+      Pelanggan tidak punya email di sistem ini — nomor WhatsApp-nya adalah username. Jadi reset dilakukan lewat kamu:
+      pastikan dulu lewat chat bahwa itu memang orangnya, lalu klik <strong>Setujui</strong>. Kode 6 angka akan muncul
+      <strong>sekali saja</strong> di halaman ini — kirimkan ke pelanggan lewat WhatsApp. Password barunya diisi sendiri
+      oleh pelanggan; kamu tidak pernah melihat atau mengetiknya.
+    </p>
+
+    ${
+      issued
+        ? `<div class="card" style="margin-bottom:24px;background:var(--green-soft);border-color:var(--green);">
+        <div style="font-size:13.5px;font-weight:800;color:var(--green-dark);margin-bottom:10px;">Kode untuk ${escapeHtml(
+          issued.name
+        )} (${escapeHtml(formatWhatsapp(issued.whatsapp))})</div>
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:38px;font-weight:800;letter-spacing:8px;color:var(--green-dark);">${escapeHtml(
+          issued.code
+        )}</div>
+        <p style="font-size:13px;color:var(--green-dark);line-height:1.7;margin-top:12px;">
+          Berlaku ${issued.expiresInMinutes} menit. Kode ini tidak akan ditampilkan lagi — kalau hilang, buat kode baru.
+          Kirim lewat WhatsApp, jangan lewat jalur lain.
+        </p>
+        <a class="btn-primary" href="${escapeAttr(issued.waLink)}" target="_blank" rel="noopener"
+           style="display:inline-block;margin-top:14px;padding:12px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Kirim lewat WhatsApp</a>
+      </div>`
+        : ''
+    }
+
+    ${admTable({
+      cols: '1.6fr 1.2fr 0.9fr 1.3fr',
+      minWidth: 720,
+      head: ['PELANGGAN', 'DIMINTA', 'STATUS', 'AKSI'],
+      rows,
+      empty: 'Belum ada permintaan reset password.',
+      note: 'Kode berlaku 30 menit dan hangus setelah dipakai. Salah kode 5 kali menutup kode itu — buat kode baru kalau terjadi.',
+    })}
+  </main>
+</div>`;
+
+  return page({ title: 'Reset Password — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
 module.exports = {
+  renderResetSandi,
   renderPelangganList,
   renderPelangganDetail,
   renderLoyalitas,

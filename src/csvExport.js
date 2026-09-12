@@ -1,5 +1,6 @@
 const { csvEscape, formatTimeID, formatWhatsapp, toDateOnly, orderStatus } = require('./utils');
 const { getOrderItemsForOrders } = require('./queries');
+const { discountLines, freeCupValue } = require('./orderMoney');
 
 // Money is exported as bare numbers (18000, not "Rp 18.000") so the columns
 // can be summed in Excel/Sheets without cleaning them up first. That's the
@@ -23,6 +24,11 @@ async function buildDailyOrdersCsv(orders) {
     'Subtotal',
     'Diskon Cup Gratis',
     'Item Digratiskan',
+    'Diskon Member',
+    'Diskon Voucher',
+    'Kode Voucher',
+    'Total Potongan',
+    'Ongkos Antar',
     'Total Dibayar',
     'Status',
     'Bukti Transfer',
@@ -34,7 +40,11 @@ async function buildDailyOrdersCsv(orders) {
   const itemsByOrder = await getOrderItemsForOrders(orders.map((o) => o.id));
 
   let totalSubtotal = 0;
+  let totalFreeCups = 0;
+  let totalTier = 0;
+  let totalVoucher = 0;
   let totalDiscount = 0;
+  let totalDelivery = 0;
   let totalPaid = 0;
   let totalCups = 0;
 
@@ -42,15 +52,25 @@ async function buildDailyOrdersCsv(orders) {
     const items = itemsByOrder.get(Number(o.id)) || [];
     const itemsText = items.map((it) => `${it.product_name} x${it.qty}`).join('; ');
     const cups = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
-    const discount = Number(o.reward_discount) || 0;
+    // Every way money came off this order, itemised the same way the receipt
+    // and the confirmation email itemise it (src/orderMoney.js).
+    const discount = discountLines(o).reduce((sum, line) => sum + line.amount, 0);
+    const freeCups = freeCupValue(o);
+    const tierCut = Number(o.tier_discount) || 0;
+    const voucherCut = Number(o.voucher_discount) || 0;
+    const delivery = Number(o.delivery_fee) || 0;
     // Older rows pre-date the subtotal column; fall back to total + discount.
-    const subtotal = Number(o.subtotal) || Number(o.total) + discount;
+    const subtotal = Number(o.subtotal) || Number(o.total) + discount - delivery;
 
     // Only completed orders count toward the money totals — pending and
     // in-progress orders aren't revenue yet.
     if (o.status === 'selesai') {
       totalSubtotal += subtotal;
+      totalFreeCups += freeCups;
+      totalTier += tierCut;
+      totalVoucher += voucherCut;
       totalDiscount += discount;
+      totalDelivery += delivery;
       totalPaid += Number(o.total) || 0;
       totalCups += cups;
     }
@@ -68,8 +88,13 @@ async function buildDailyOrdersCsv(orders) {
         String(cups),
         o.notes || '',
         money(subtotal),
+        money(freeCups),
+        freeCups > 0 ? o.perk_note || o.reward_item || '1 cup termurah' : '',
+        money(tierCut),
+        money(voucherCut),
+        o.voucher_code || '',
         money(discount),
-        discount > 0 ? o.reward_item || '1 cup termurah' : '',
+        money(delivery),
         money(o.total),
         orderStatus(o.status).label,
         o.proof_filename || '',
@@ -83,7 +108,8 @@ async function buildDailyOrdersCsv(orders) {
   lines.push('');
   lines.push(
     ['TOTAL (pesanan selesai saja)', '', '', '', '', '', '', '', String(totalCups), '',
-      money(totalSubtotal), money(totalDiscount), '', money(totalPaid), '', '', '']
+      money(totalSubtotal), money(totalFreeCups), '', money(totalTier), money(totalVoucher), '',
+      money(totalDiscount), money(totalDelivery), money(totalPaid), '', '', '']
       .map(csvEscape)
       .join(',')
   );

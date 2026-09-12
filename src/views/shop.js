@@ -1,6 +1,7 @@
 const { page, customerHeader, customerFooter, backButton } = require('./layout');
 const { productThumb, productPhotos } = require('./productIcon');
 const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID } = require('../utils');
+const { discountLines, freeCupValue } = require('../orderMoney');
 
 const DEFAULT_PRODUCT_DESCRIPTION = 'Buah potong segar, dipotong higienis dan dikemas rapi dalam cup.';
 
@@ -511,6 +512,7 @@ function renderCheckout({
   formValues = {},
   customer = null,
   reward = { available: 0, discount: 0, itemName: null },
+  membership = { tier: null, percent: 0, perks: { withReward: [], withoutReward: [] }, discount: { withReward: 0, withoutReward: 0 } },
   useReward = false,
   shop = { open: true, notice: '', minOrder: 0, deliveryFee: 0, freeDeliveryOver: 0, sameDayCutoff: '' },
   voucher = { applied: false, code: '', discount: 0, error: '', label: '' },
@@ -528,6 +530,36 @@ function renderCheckout({
   // the number instantly and still matches what will actually be charged.
   const totalFull = totals ? totals.withoutReward : Math.max(0, subtotal - voucherCut) + deliveryFee;
   const totalDiscounted = totals ? totals.withReward : Math.max(0, subtotal - reward.discount - voucherCut) + deliveryFee;
+
+  // Membership perks. Which cup each free perk waives shifts depending on
+  // whether the stamp-card cup is also being used (they take the cheapest
+  // cups in turn), so — like the total — both versions are rendered and the
+  // checkbox swaps between them without a round trip.
+  const perkCount = Math.max(membership.perks.withReward.length, membership.perks.withoutReward.length);
+  const perkRows = Array.from({ length: perkCount }, (unused, i) => {
+    const on = membership.perks.withReward[i];
+    const off = membership.perks.withoutReward[i];
+    const active = rewardOn ? on : off;
+    // A perk can drop out entirely in one of the two states — a one-cup order
+    // has nothing left to waive once the stamp-card cup takes it.
+    return `<div style="display:${active ? 'flex' : 'none'};justify-content:space-between;gap:12px;font-size:13.5px;padding:10px 0;color:var(--green-dark);font-weight:700;"
+                 data-perk-row data-full-amount="${off ? off.amount : 0}" data-discounted-amount="${on ? on.amount : 0}">
+      <span data-perk-label data-full="${escapeAttr(off ? off.label : '')}" data-discounted="${escapeAttr(on ? on.label : '')}">${escapeHtml(active ? active.label : '')}</span>
+      <span class="tnum" style="white-space:nowrap;" data-perk-amount
+            data-full="${escapeAttr(`− ${formatRupiah(off ? off.amount : 0)}`)}"
+            data-discounted="${escapeAttr(`− ${formatRupiah(on ? on.amount : 0)}`)}">− ${formatRupiah(active ? active.amount : 0)}</span>
+    </div>`;
+  }).join('');
+  const tierCutNow = totals ? (rewardOn ? totals.tierWith : totals.tierWithout) : 0;
+  const tierRow =
+    membership.percent > 0 && totals && (totals.tierWith > 0 || totals.tierWithout > 0)
+      ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:var(--green-dark);font-weight:700;">
+          <span>Diskon member ${escapeHtml((membership.tier && membership.tier.name) || '')} (${membership.percent}%)</span>
+          <span class="tnum" style="white-space:nowrap;" data-tier-cut
+                data-full="${escapeAttr(`− ${formatRupiah(totals.tierWithout)}`)}"
+                data-discounted="${escapeAttr(`− ${formatRupiah(totals.tierWith)}`)}">− ${formatRupiah(tierCutNow)}</span>
+        </div>`
+      : '';
   const summaryRows = items
     .map(
       (it) => `
@@ -678,9 +710,11 @@ function renderCheckout({
                 </div>`
               : ''
           }
+          ${perkRows}
           <div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:10px 0;color:var(--text-muted);">
             <span>Subtotal</span><span class="tnum">${formatRupiah(subtotal)}</span>
           </div>
+          ${tierRow}
           ${
             activeVoucher.applied
               ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:#a15a1f;font-weight:700;">
@@ -748,9 +782,17 @@ ${
     var on = box.checked;
     var row = document.getElementById('rewardRow');
     if(row) row.style.display = on ? 'flex' : 'none';
-    var totals = document.querySelectorAll('[data-total]');
+    var totals = document.querySelectorAll('[data-total], [data-perk-amount], [data-perk-label], [data-tier-cut]');
     for(var i = 0; i < totals.length; i++){
       totals[i].textContent = on ? totals[i].dataset.discounted : totals[i].dataset.full;
+    }
+    // Free cups take the cheapest cups in turn, so a perk can have nothing
+    // left to waive once the stamp-card cup is used — hide it rather than
+    // showing "− Rp 0".
+    var perks = document.querySelectorAll('[data-perk-row]');
+    for(var p = 0; p < perks.length; p++){
+      var amount = Number(on ? perks[p].dataset.discountedAmount : perks[p].dataset.fullAmount) || 0;
+      perks[p].style.display = amount > 0 ? 'flex' : 'none';
     }
     // A fully-waived order has nothing to transfer.
     var payment = document.getElementById('paymentSection');
@@ -773,6 +815,10 @@ ${
 
 function renderSukses({ order, items, emailOk, customer = null }) {
   const rewardDiscount = Number(order.reward_discount) || 0;
+  // Same list the email and the admin page render, from src/orderMoney.js —
+  // the receipt a customer keeps must itemise exactly what the shop's copy does.
+  const orderDiscounts = discountLines(order);
+  const freeCups = freeCupValue(order);
   const emailNote = emailOk
     ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
     : `Pesananmu sudah tersimpan, tapi email notifikasi ke toko belum berhasil terkirim otomatis — tim kami tetap bisa melihatnya lewat panel admin.`;
@@ -803,24 +849,38 @@ function renderSukses({ order, items, emailOk, customer = null }) {
             : ''
         }
         ${
-          rewardDiscount > 0
+          orderDiscounts.length
             ? `<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
-          <span style="color:#a15a1f;font-weight:700;">Cup gratis${order.reward_item ? ` — ${escapeHtml(order.reward_item)}` : ''}</span>
-          <span class="tnum" style="font-weight:700;color:#a15a1f;">&minus;${formatRupiah(rewardDiscount)}</span>
+        ${orderDiscounts
+          .map(
+            (line) => `<div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
+          <span style="color:#a15a1f;font-weight:700;">${escapeHtml(line.label)}</span>
+          <span class="tnum" style="font-weight:700;color:#a15a1f;">&minus;${formatRupiah(line.amount)}</span>
         </div>`
+          )
+          .join('')}`
+            : ''
+        }
+        ${
+          Number(order.delivery_fee) > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Ongkos antar</span><span class="tnum">${formatRupiah(order.delivery_fee)}</span></div>`
             : ''
         }
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Total Pembayaran</span><span class="tnum" style="font-weight:700;color:var(--green-dark);">${formatRupiah(order.total)}</span></div>
       </div>
       ${
-        rewardDiscount > 0
+        orderDiscounts.length
           ? `<div style="width:100%;background:var(--orange-soft);border-radius:14px;padding:16px 20px;text-align:left;display:flex;gap:12px;align-items:flex-start;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a15a1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/></svg>
         <div style="font-size:13px;color:#7a4a1f;line-height:1.7;">
-          <strong>Kartu stempelmu terpakai di pesanan ini.</strong>
-          ${order.reward_item ? `${escapeHtml(order.reward_item)} digratiskan` : '1 cup digratiskan'} senilai ${formatRupiah(rewardDiscount)}.
-          Stempelmu sekarang kembali ke nol — kumpulkan lagi untuk cup gratis berikutnya.
+          <strong>Potongan di pesanan ini:</strong>
+          ${orderDiscounts.map((line) => `${escapeHtml(line.label)} (${formatRupiah(line.amount)})`).join('<br>')}
+          ${freeCups > 0 ? `<br>Total nilai cup gratis: <strong>${formatRupiah(freeCups)}</strong>.` : ''}
+          ${
+            rewardDiscount > 0
+              ? '<br>Stempelmu sekarang kembali ke nol — kumpulkan lagi untuk cup gratis berikutnya.'
+              : ''
+          }
         </div>
       </div>`
           : ''

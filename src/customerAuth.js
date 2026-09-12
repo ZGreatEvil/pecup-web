@@ -116,6 +116,7 @@ async function listCustomerOrders(customerId, limit = 50) {
 }
 
 module.exports = {
+  hashPassword,
   findByWhatsapp,
   findById,
   createCustomer,

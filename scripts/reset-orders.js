@@ -4,8 +4,14 @@
 //
 // Products, categories, admin accounts and the activity log are NOT touched.
 //
-//   node scripts/reset-orders.js          # dry run — only reports what it would delete
-//   node scripts/reset-orders.js --yes    # actually deletes
+// Loyalty stamps are NOT deleted by default, because a stamp whose order is
+// gone looks exactly like one an admin added by hand — there's no way to tell
+// them apart afterwards. Pass --stempel to clear them too, which is what you
+// want when the orders being wiped were test data.
+//
+//   node scripts/reset-orders.js              # dry run — only reports what it would delete
+//   node scripts/reset-orders.js --yes        # actually deletes
+//   node scripts/reset-orders.js --yes --stempel   # ...including loyalty stamps
 const path = require('path');
 
 const { loadEnv } = require('../src/env');
@@ -16,14 +22,20 @@ const db = require('../src/db');
 const { list, del } = require('@vercel/blob');
 
 const confirmed = process.argv.includes('--yes');
+const clearStamps = process.argv.includes('--stempel');
 
 async function main() {
   const orders = await db.query('select id, order_number, proof_filename from orders order by id');
   const itemCount = await db.query('select count(*)::int as n from order_items');
+  const stampCount = await db.query("select count(*)::int as n from stamps where status = 'active'");
 
   console.log(`Pesanan tersimpan : ${orders.length}`);
   console.log(`Baris item        : ${itemCount[0].n}`);
   console.log(`Bukti transfer    : ${orders.filter((o) => o.proof_filename).length} berkas`);
+  console.log(
+    `Stempel aktif     : ${stampCount[0].n}` +
+      (clearStamps ? ' (akan dihapus — --stempel)' : ' (TIDAK dihapus; pakai --stempel kalau mau)')
+  );
 
   if (!orders.length) {
     console.log('\nTidak ada yang perlu dihapus.');
@@ -55,6 +67,14 @@ async function main() {
     console.log('PROOFS_BLOB_READ_WRITE_TOKEN tidak diatur — berkas bukti transfer dilewati.');
   }
 
+  if (clearStamps) {
+    // Stamps outlive their order (the FK is ON DELETE SET NULL), so wiping
+    // test orders otherwise leaves customers holding cards they earned from
+    // data that no longer exists.
+    await db.query('delete from stamps');
+    await db.query('update customers set rewards_claimed = 0');
+  }
+
   await db.query('delete from orders');
   // Restart numbering so the first real order is PC-<tanggal>-0001 again.
   await db.query('alter table orders alter column id restart with 1');
@@ -62,6 +82,7 @@ async function main() {
 
   console.log(`\nSelesai. ${orders.length} pesanan dihapus, ${blobsDeleted} berkas bukti transfer dihapus.`);
   console.log('Nomor pesanan berikutnya dimulai lagi dari 0001.');
+  if (clearStamps) console.log('Semua stempel dan hitungan klaim pelanggan juga direset ke nol.');
 }
 
 main().catch((err) => {

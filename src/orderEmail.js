@@ -1,9 +1,14 @@
 const { formatRupiah, escapeHtml, formatWhatsapp, formatDateID } = require('./utils');
+const { discountLines, freeCupValue } = require('./orderMoney');
 
 function buildOrderEmailHtml({ order, items }) {
-  // A waived cup makes the total lower than the line items add up to. Say so
-  // explicitly, or the shop's books look like an underpayment.
-  const rewardDiscount = Number(order.reward_discount) || 0;
+  // Anything waived — a free cup, a member discount, a promo code — makes the
+  // total lower than the line items add up to. Every one of them is itemised
+  // here, or the shop's books look like an underpayment.
+  const discounts = discountLines(order);
+  const totalDiscount = discounts.reduce((sum, line) => sum + line.amount, 0);
+  const freeCups = freeCupValue(order);
+  const deliveryFee = Number(order.delivery_fee) || 0;
   const rows = items
     .map(
       (it) => `
@@ -43,16 +48,26 @@ function buildOrderEmailHtml({ order, items }) {
       <tbody>${rows}</tbody>
       <tfoot>
         ${
-          rewardDiscount > 0
+          totalDiscount > 0 || deliveryFee > 0
             ? `<tr>
           <td colspan="2" style="padding:8px 12px;text-align:right;color:#666;">Subtotal</td>
           <td style="padding:8px 12px;text-align:right;">${formatRupiah(order.subtotal)}</td>
-        </tr>
-        <tr>
-          <td colspan="2" style="padding:8px 12px;text-align:right;color:#a15a1f;font-weight:bold;">
-            Cup gratis (kartu stempel)${order.reward_item ? ` — ${escapeHtml(order.reward_item)}` : ''}
-          </td>
-          <td style="padding:8px 12px;text-align:right;color:#a15a1f;font-weight:bold;">&minus;${formatRupiah(rewardDiscount)}</td>
+        </tr>`
+            : ''
+        }
+        ${discounts
+          .map(
+            (line) => `<tr>
+          <td colspan="2" style="padding:8px 12px;text-align:right;color:#a15a1f;font-weight:bold;">${escapeHtml(line.label)}</td>
+          <td style="padding:8px 12px;text-align:right;color:#a15a1f;font-weight:bold;">&minus;${formatRupiah(line.amount)}</td>
+        </tr>`
+          )
+          .join('')}
+        ${
+          deliveryFee > 0
+            ? `<tr>
+          <td colspan="2" style="padding:8px 12px;text-align:right;color:#666;">Ongkos antar</td>
+          <td style="padding:8px 12px;text-align:right;">${formatRupiah(deliveryFee)}</td>
         </tr>`
             : ''
         }
@@ -64,15 +79,19 @@ function buildOrderEmailHtml({ order, items }) {
     </table>
 
     ${
-      rewardDiscount > 0
+      totalDiscount > 0
         ? `<div style="margin-top:16px;padding:14px 16px;background:#fdf1e3;border-left:4px solid #e88a3a;border-radius:6px;">
-      <div style="font-weight:bold;color:#7a4a1f;margin-bottom:4px;">Pesanan ini memakai 1 cup gratis</div>
+      <div style="font-weight:bold;color:#7a4a1f;margin-bottom:4px;">Pesanan ini dapat potongan ${formatRupiah(totalDiscount)}</div>
       <div style="font-size:13px;color:#7a4a1f;line-height:1.6;">
-        Kartu stempel pelanggan sudah penuh, jadi ${
-          order.reward_item ? `<strong>${escapeHtml(order.reward_item)}</strong>` : '1 cup termurah'
-        } digratiskan senilai <strong>${formatRupiah(rewardDiscount)}</strong>.
+        ${discounts.map((line) => escapeHtml(line.label)).join('<br>')}
+        <br><br>
         Uang yang masuk hanya <strong>${formatRupiah(order.total)}</strong> — selisihnya adalah biaya promo, bukan kekurangan bayar.
-        Stempel pelanggan sudah kembali ke nol.
+        ${
+          freeCups > 0
+            ? `Nilai cup yang digratiskan: <strong>${formatRupiah(freeCups)}</strong> (barang keluar, uang tidak masuk).`
+            : ''
+        }
+        ${Number(order.reward_discount) > 0 ? 'Stempel pelanggan sudah kembali ke nol.' : ''}
       </div>
     </div>`
         : ''

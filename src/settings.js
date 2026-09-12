@@ -9,6 +9,9 @@ const DEFAULTS = {
   // same-day delivery isn't offered any more.
   shop_open: '1',
   shop_notice: '',
+  // The shop's own WhatsApp number, in 62xxxxxxxxx form. Used for the
+  // "contact admin" links (password resets, order questions).
+  shop_whatsapp: '',
   min_order: '0',
   delivery_fee: '0',
   free_delivery_over: '0', // 0 = never free
@@ -28,6 +31,7 @@ async function shopConfig() {
   return {
     open: all.shop_open !== '0',
     notice: all.shop_notice || '',
+    whatsapp: all.shop_whatsapp || '',
     minOrder: num('min_order'),
     deliveryFee: num('delivery_fee'),
     freeDeliveryOver: num('free_delivery_over'),

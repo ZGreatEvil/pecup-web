@@ -140,9 +140,11 @@ async function createOrder({
   useReward,
   voucherCode,
   deliveryFee,
+  tier = {},
 }) {
   const rows = await db.query(
-    'select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean, $11, $12::integer) as result',
+    `select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean, $11, $12::integer,
+                         $13, $14::integer, $15::boolean, $16::boolean) as result`,
     [
       customerName,
       whatsapp,
@@ -156,6 +158,13 @@ async function createOrder({
       Boolean(useReward),
       voucherCode || null,
       Math.max(0, Math.round(Number(deliveryFee) || 0)),
+      // Which tier the customer holds is decided by the app (the ladder lives
+      // in settings); whether each perk is still unspent is decided inside
+      // create_order, under the customer row lock.
+      tier.name || null,
+      Math.max(0, Math.min(100, Math.round(Number(tier.discountPercent) || 0))),
+      Boolean(tier.weeklyFreeCup),
+      Boolean(tier.birthdayFreeCup),
     ]
   );
   const raw = rows[0].result;
@@ -170,6 +179,11 @@ async function createOrder({
     voucherCode: result.voucherCode || null,
     voucherDiscount: Number(result.voucherDiscount) || 0,
     deliveryFee: Number(result.deliveryFee) || 0,
+    tierName: result.tierName || null,
+    tierPercent: Number(result.tierPercent) || 0,
+    tierDiscount: Number(result.tierDiscount) || 0,
+    perkDiscount: Number(result.perkDiscount) || 0,
+    perkNote: result.perkNote || null,
   };
 }
 
@@ -350,9 +364,16 @@ async function dashboardData({ todayKey, monthStart }) {
 
 // ---------------- revenue reporting ----------------
 
+// Every way money comes off an order. Summed as one expression so the books
+// balance: gross − discount + delivery = net, exactly. Leaving any of these
+// out (as an earlier version did, counting only the free cup) makes the
+// report look like money went missing.
+const DISCOUNT_SUM =
+  'coalesce(sum(o.reward_discount + o.perk_discount + o.tier_discount + o.voucher_discount), 0)::bigint';
+
 // Revenue is counted from completed orders only by default — a pending order
-// isn't money. `subtotal` is what the cups were worth, `reward_discount` is
-// the promo given away, `total` is what actually came in.
+// isn't money. `subtotal` is what the cups were worth, the discount columns
+// are the promo given away, `total` is what actually came in.
 async function revenueReport({ from = '', to = '', statuses = ['selesai'], groupBy = 'hari' } = {}) {
   const clauses = [];
   const params = [];
@@ -383,7 +404,11 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
     db.query(
       `select count(*)::int as orders,
               coalesce(sum(o.subtotal), 0)::bigint as gross,
-              coalesce(sum(o.reward_discount), 0)::bigint as discount,
+              ${DISCOUNT_SUM} as discount,
+              coalesce(sum(o.reward_discount + o.perk_discount), 0)::bigint as free_cups,
+              coalesce(sum(o.tier_discount), 0)::bigint as tier,
+              coalesce(sum(o.voucher_discount), 0)::bigint as voucher,
+              coalesce(sum(o.delivery_fee), 0)::bigint as delivery,
               coalesce(sum(o.total), 0)::bigint as net
        from orders o ${where}`,
       params
@@ -397,7 +422,8 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
       `select ${grouping.expr} as periode,
               count(*)::int as orders,
               coalesce(sum(o.subtotal), 0)::bigint as gross,
-              coalesce(sum(o.reward_discount), 0)::bigint as discount,
+              ${DISCOUNT_SUM} as discount,
+              coalesce(sum(o.delivery_fee), 0)::bigint as delivery,
               coalesce(sum(o.total), 0)::bigint as net
        from orders o ${where}
        group by ${grouping.expr} order by ${grouping.expr} desc limit 400`,
@@ -426,6 +452,10 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
     orders,
     gross: Number(t.gross) || 0,
     discount: Number(t.discount) || 0,
+    freeCups: Number(t.free_cups) || 0,
+    tierDiscount: Number(t.tier) || 0,
+    voucherDiscount: Number(t.voucher) || 0,
+    delivery: Number(t.delivery) || 0,
     net,
     cups: Number((cups[0] || {}).cups) || 0,
     averageOrder: orders ? Math.round(net / orders) : 0,
@@ -434,6 +464,7 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
       orders: Number(r.orders) || 0,
       gross: Number(r.gross) || 0,
       discount: Number(r.discount) || 0,
+      delivery: Number(r.delivery) || 0,
       net: Number(r.net) || 0,
     })),
     byProduct: byProduct.map((r) => ({

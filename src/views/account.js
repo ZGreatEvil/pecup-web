@@ -8,6 +8,7 @@ const {
   formatShortDateID,
   orderStatus,
 } = require('../utils');
+const { discountLines } = require('../orderMoney');
 
 const WA_INPUT_ATTRS =
   'type="tel" inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" ' +
@@ -57,7 +58,67 @@ function renderMasuk({ cartCount = 0, errors = [], values = {}, next = '' } = {}
         <div class="field" style="margin-bottom:8px;"><label>Password</label><input type="password" name="password" required autocomplete="current-password"></div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Masuk</button>
       </form>`,
-    footerHtml: `Belum punya akun? <a href="/daftar">Daftar di sini</a>`,
+    footerHtml: `Belum punya akun? <a href="/daftar">Daftar di sini</a> &middot; <a href="/lupa-sandi">Lupa password?</a>`,
+  });
+}
+
+// Step 1 of a reset: the customer only types their number. Whether that number
+// has an account is deliberately not revealed — the same message comes back
+// either way, so this page can't be used to check who shops here.
+function renderLupaSandi({ cartCount = 0, errors = [], values = {}, sent = false, waLink = '' } = {}) {
+  return authShell({
+    title: 'Lupa Password — Pecup',
+    heading: 'Lupa Password',
+    subheading:
+      'Akun Pecup pakai nomor WhatsApp, bukan email — jadi resetnya lewat admin. Masukkan nomormu, lalu hubungi admin di WhatsApp untuk menerima kode resetnya.',
+    cartCount,
+    formHtml: sent
+      ? `<div class="flash flash-ok">Permintaan reset sudah dicatat. Sekarang hubungi admin lewat WhatsApp — setelah admin memastikan itu memang kamu, kamu akan dikirimi kode 6 angka.</div>
+        ${
+          waLink
+            ? `<a class="btn-primary" href="${escapeAttr(waLink)}" target="_blank" rel="noopener" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-bottom:12px;">Hubungi Admin di WhatsApp</a>`
+            : ''
+        }
+        <a class="btn-outline" href="/lupa-sandi/kode" style="display:block;text-align:center;width:100%;padding:14px;border-radius:12px;font-size:14.5px;font-weight:700;">Sudah punya kode? Ganti password</a>`
+      : `
+      ${errorBox(errors)}
+      <form method="post" action="/lupa-sandi">
+        <div class="field" style="margin-bottom:8px;">
+          <label>Nomor WhatsApp <span class="req">*</span></label>
+          <input name="whatsapp" required ${WA_INPUT_ATTRS} value="${escapeAttr(values.whatsapp || '')}">
+          <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor yang kamu pakai untuk masuk.</span>
+        </div>
+        <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Minta Kode Reset</button>
+      </form>`,
+    footerHtml: `Ingat passwordmu lagi? <a href="/masuk">Masuk di sini</a>`,
+  });
+}
+
+// Step 2: the customer types the code the admin sent them and picks their own
+// new password. No admin ever sees or sets that password.
+function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = false } = {}) {
+  return authShell({
+    title: 'Ganti Password — Pecup',
+    heading: 'Masukkan Kode Reset',
+    subheading: done
+      ? 'Password kamu sudah diganti.'
+      : 'Masukkan kode 6 angka yang dikirim admin lewat WhatsApp, lalu pilih password barumu. Kode berlaku 30 menit.',
+    cartCount,
+    formHtml: done
+      ? `<div class="flash flash-ok">Password berhasil diganti. Silakan masuk dengan password barumu.</div>
+        <a class="btn-primary" href="/masuk" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Masuk Sekarang</a>`
+      : `
+      ${errorBox(errors)}
+      <form method="post" action="/lupa-sandi/kode">
+        <div class="field"><label>Nomor WhatsApp <span class="req">*</span></label><input name="whatsapp" required ${WA_INPUT_ATTRS} value="${escapeAttr(values.whatsapp || '')}"></div>
+        <div class="field">
+          <label>Kode Reset <span class="req">*</span></label>
+          <input name="code" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6 angka" value="${escapeAttr(values.code || '')}">
+        </div>
+        <div class="field" style="margin-bottom:8px;"><label>Password Baru <span class="req">*</span></label><input type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="Minimal 6 karakter"></div>
+        <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Simpan Password Baru</button>
+      </form>`,
+    footerHtml: `Belum punya kode? <a href="/lupa-sandi">Minta kode reset</a>`,
   });
 }
 
@@ -205,7 +266,8 @@ function tierCard(loyalty) {
 
 function orderRow(o) {
   const status = orderStatus(o.status);
-  const discount = Number(o.reward_discount) || 0;
+  const discounts = discountLines(o);
+  const discount = discounts.reduce((sum, line) => sum + line.amount, 0);
   return `
       <a href="/pesanan-berhasil/${o.id}" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;color:inherit;">
         <div style="min-width:0;">
@@ -213,9 +275,9 @@ function orderRow(o) {
           <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px;">${escapeHtml(formatDateID(o.created_at))}</div>
           ${
             discount > 0
-              ? `<div style="font-size:11.5px;font-weight:700;color:#a15a1f;margin-top:4px;">★ Pakai cup gratis${
-                  o.reward_item ? ` — ${escapeHtml(o.reward_item)}` : ''
-                }</div>`
+              ? `<div style="font-size:11.5px;font-weight:700;color:#a15a1f;margin-top:4px;">★ Hemat ${formatRupiah(
+                  discount
+                )} — ${escapeHtml(discounts.map((line) => line.label).join(' · '))}</div>`
               : ''
           }
         </div>
@@ -402,4 +464,11 @@ function renderAkun({
   return page({ title: 'Akun Saya — Pecup', bodyHtml: body, noindex: true });
 }
 
-module.exports = { renderMasuk, renderDaftar, renderAkun, renderRiwayatPesanan };
+module.exports = {
+  renderMasuk,
+  renderDaftar,
+  renderAkun,
+  renderRiwayatPesanan,
+  renderLupaSandi,
+  renderResetSandi,
+};

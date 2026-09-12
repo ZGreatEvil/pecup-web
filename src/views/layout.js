@@ -972,6 +972,7 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
       ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
       ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>')}
       ${item('/admin/laporan', 'laporan', 'Laporan Penjualan', '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>')}
+      ${item('/admin/reset-sandi', 'reset', 'Reset Password', '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>')}
       ${
         isSuperadmin
           ? item('/admin/voucher', 'voucher', 'Kode Promo', '<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-6z"/><path d="M13 5v14" stroke-dasharray="2 3"/>') +
