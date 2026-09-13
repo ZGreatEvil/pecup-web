@@ -99,13 +99,22 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
   const [tint, tintSoft] = tintFor(product.id);
   const soldOut = Number(product.stock) <= 0;
   const dim = soldOut ? 'filter:grayscale(1);opacity:0.6;' : '';
-  const media = productMedia(product);
   // A clip is only playable where it isn't standing inside a link — that's
   // the product page, which is also the only place that autoplays.
   const interactive = autoplay;
-  // Stand-in frame for any clip that isn't playing. The product's own first
-  // photo, so a card shows the fruit rather than a black square.
+  // Stand-in frame for a clip that isn't playing: the product's own first
+  // photo, so nothing ever renders as a black square.
   const poster = productPhotos(product)[0] || '';
+
+  // Cards show PHOTOS; the product page shows the clip.
+  //
+  // A card is a link the shopper taps to get to the product, so a clip there
+  // can never play anyway — it was only ever a still with a play badge, and it
+  // still cost every visitor a video download on the listing page. Photos say
+  // the same thing for less. A product with nothing but a clip keeps it, or
+  // the card would have nothing at all to show.
+  const everything = productMedia(product);
+  const media = interactive || !poster ? everything : everything.filter((url) => !isVideoUrl(url));
 
   let inner;
   if (media.length === 0) {
@@ -114,7 +123,9 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
       size
     )}</div>`;
   } else if (media.length === 1) {
-    inner = mediaElement(media[0], { alt: product.name, dim, interactive, autoplay, poster });
+    // No poster on the clip that is supposed to start by itself — see the note
+    // in the carousel branch below.
+    inner = mediaElement(media[0], { alt: product.name, dim, interactive, autoplay, poster: autoplay ? '' : poster });
   } else {
     // Each item sits in its own clipping box (.carousel-slide) rather than
     // being a flex item itself — the card's hover zoom scales the image, and
@@ -130,7 +141,13 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
             // Only the slide the gallery opens on — the rest must not all
             // start playing at once behind the scenes.
             autoplay: autoplay && i === 0,
-            poster,
+            // ...and that one gets NO poster. Several mobile browsers treat a
+            // poster as permission to leave the video alone until somebody
+            // asks for it, which is what stopped the product page starting by
+            // itself. It plays immediately, so a still frame would flash by in
+            // an instant regardless. Clips further along the gallery aren't
+            // racing to start, so they keep theirs.
+            poster: autoplay && i === 0 ? '' : poster,
           })}</div>`
       )
       .join('');

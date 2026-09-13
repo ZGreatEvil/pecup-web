@@ -694,6 +694,18 @@ const SHARED_STYLE = `
     .detail-img{max-width:100%;}
     .success-card{padding:32px 22px;}
   }
+  /* Tablets. The product page asks for 340 + 64 + 380 before it will sit side
+     by side, which no tablet has once the page gutters are taken off — so it
+     wrapped, and the photo kept its 420px cap with the rest of the row left
+     empty. Asking for less keeps the two columns a tablet has room for. */
+  @media (min-width: 561px) and (max-width: 1024px){
+    .detail-layout{gap:32px;}
+    .detail-img{flex:1 1 280px;max-width:380px;}
+    .detail-info{flex:1 1 300px;}
+    .split-layout{gap:28px;}
+    .split-main{flex-basis:360px;}
+    .split-side{flex-basis:280px;}
+  }
 `;
 
 const SITE_NAME = 'Pecup';
