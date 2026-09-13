@@ -1156,9 +1156,18 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
 
   // proofUrl is a short-lived signed Vercel Blob URL resolved by the
   // route handler right before rendering (the "proofs" store is private).
+  // A proof that isn't an image (a PDF) falls back to naming the file. The
+  // filename rides in a data attribute rather than being pasted into an inline
+  // onerror handler: escapeAttr protects an attribute VALUE, but a browser
+  // decodes entities before it parses the JavaScript inside an event
+  // attribute, so an apostrophe in the value would have closed the string
+  // literal and let whatever followed run. Proof filenames are minted by the
+  // server today, so it was never reachable — but it only stayed safe because
+  // of an invariant somewhere else, which is not a thing to rely on.
   const proofBlock = proofUrl
     ? `<a href="${escapeAttr(proofUrl)}" target="_blank" style="display:block;">
-        <img src="${escapeAttr(proofUrl)}" style="max-width:100%;border-radius:14px;border:1px solid var(--border);" onerror="this.replaceWith(Object.assign(document.createElement('div'),{innerText:'Berkas: ${escapeAttr(order.proof_filename || '')}',style:'padding:16px;background:var(--surface-2);border-radius:12px;font-size:13px;'}))">
+        <img src="${escapeAttr(proofUrl)}" data-proof-name="${escapeAttr(order.proof_filename || '')}"
+             style="max-width:100%;border-radius:14px;border:1px solid var(--border);">
       </a>`
     : `<span style="color:var(--text-muted);font-size:13px;">Tidak ada bukti transfer.</span>`;
 
@@ -1293,7 +1302,20 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
       </div>
     </div>
   </main>
-</div>`;
+</div>
+<script>
+// A proof that will not render as an image (a PDF) is replaced by its filename.
+// The name comes off a data attribute and is set with textContent, so it is
+// text and can never be code. "error" does not bubble, hence the capture.
+document.addEventListener('error', function(e){
+  var img = e.target;
+  if(!img || img.tagName !== 'IMG' || !img.hasAttribute('data-proof-name')) return;
+  var box = document.createElement('div');
+  box.textContent = 'Berkas: ' + img.getAttribute('data-proof-name');
+  box.style.cssText = 'padding:16px;background:var(--surface-2);border-radius:12px;font-size:13px;';
+  if(img.parentNode) img.parentNode.replaceChild(box, img);
+}, true);
+</script>`;
 
   return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body, noindex: true });
 }
@@ -1383,9 +1405,14 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
 
 function tierPill(c, tiersEnabled) {
   if (!tiersEnabled) return `<span style="font-size:12px;color:var(--text-muted);">&mdash;</span>`;
-  const style = c.tierStyle;
+  // A customer that reached here without its loyalty status resolved used to
+  // take the whole admin page down with it — one missing field and the render
+  // threw. A pill is decoration; it must never be the thing that 500s a page.
+  const style = c.tierStyle || { color: 'var(--text-muted)', bg: 'var(--surface-2)' };
+  const name = c.tier && c.tier.name ? String(c.tier.name) : '';
+  if (!name) return `<span style="font-size:12px;color:var(--text-muted);">&mdash;</span>`;
   return `<span style="display:inline-block;font-size:11.5px;font-weight:800;letter-spacing:0.4px;padding:4px 12px;border-radius:99px;color:${style.color};background:${style.bg};white-space:nowrap;">${escapeHtml(
-    c.tier.name.toUpperCase()
+    name.toUpperCase()
   )}</span>`;
 }
 
@@ -1600,8 +1627,11 @@ const STAMP_STATUS_LABELS = {
 function renderPelangganDetail({
   customer,
   loyalty,
-  orders,
-  stamps,
+  // Lists default to empty. A caller that forgets one should get a page with
+  // an empty table, not a 500 — the route always passes them, but a renderer
+  // has no business crashing over a missing list.
+  orders = [],
+  stamps = [],
   admin,
   canEdit,
   tiersEnabled,

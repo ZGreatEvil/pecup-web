@@ -24,7 +24,13 @@ const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
 const passwordReset = require('../src/passwordReset');
 const retention = require('../src/retention');
-const { logAdminAction, queryAdminLogs, queryAllAdminLogs, listLogFilters } = require('../src/adminLog');
+const {
+  logAdminAction,
+  changeSummary,
+  queryAdminLogs,
+  queryAllAdminLogs,
+  listLogFilters,
+} = require('../src/adminLog');
 const queries = require('../src/queries');
 const {
   toDateKey,
@@ -47,8 +53,6 @@ const {
 } = require('../src/uploads');
 const { productMedia } = require('../src/views/productIcon');
 const media = require('../src/media');
-// TEMPORARY diagnostic — remove with its route once autoplay is understood.
-const videoDiagViews = require('../src/views/videoDiag');
 
 const shopViews = require('../src/views/shop');
 const adminViews = require('../src/views/admin');
@@ -1039,23 +1043,6 @@ router.post('/admin/media/video/presign', requireAdmin(async (req, res) => {
   }
 }));
 
-// TEMPORARY — see src/views/videoDiag.js. Delete this route and that file
-// once it is known why a phone won't start a clip on its own.
-router.get('/admin/uji-video', requireAdmin(async (req, res) => {
-  const products = await queries.listProducts({});
-  let videoUrl = '';
-  let posterUrl = '';
-  for (const product of products) {
-    const found = productMedia(product).find((url) => media.isVideoUrl(url));
-    if (found) {
-      videoUrl = found;
-      posterUrl = product.image || '';
-      break;
-    }
-  }
-  sendHtml(res, videoDiagViews.renderVideoDiag({ videoUrl, posterUrl }));
-}));
-
 router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
   const categories = await queries.listCategories();
   sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin }));
@@ -1106,7 +1093,16 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     isRecommended: fields.is_recommended ? 1 : 0,
     ...wholesaleFields(fields),
   });
-  await logAdminAction(req.admin, 'product.create', fields.name.trim());
+  const photoCount = images.filter((url) => !media.isVideoUrl(url)).length;
+  const videoCount = images.length - photoCount;
+  await logAdminAction(
+    req.admin,
+    'product.create',
+    `${fields.name.trim()} — ${formatRupiah(Number(fields.price))}, stok ${Number(fields.stock)}, ` +
+      `kategori ${fields.category || 'Buah Tunggal'}, ${photoCount} foto` +
+      (videoCount ? `, ${videoCount} video` : '') +
+      (fields.active ? '' : ', disembunyikan')
+  );
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk baru berhasil ditambahkan.'));
 }));
 
@@ -1162,7 +1158,7 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   }
   const images = [...kept, ...uploaded];
 
-  await queries.updateProduct(id, {
+  const next = {
     name: fields.name.trim(),
     description: (fields.description || '').trim(),
     category: fields.category || 'Buah Tunggal',
@@ -1174,21 +1170,70 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
     ...wholesaleFields(fields),
-  });
-  await logAdminAction(req.admin, 'product.update', fields.name.trim());
+  };
+  await queries.updateProduct(id, next);
+
+  // The log used to say only the product's name, which left "what did they
+  // actually change?" unanswerable. Now it names the fields that moved.
+  const countKind = (list, video) =>
+    (list || []).filter((url) => (video ? media.isVideoUrl(url) : !media.isVideoUrl(url))).length;
+  const summary = changeSummary(
+    existing,
+    next,
+    [
+      { label: 'nama', get: (p) => p.name },
+      { label: 'kategori', get: (p) => p.category },
+      { label: 'berat', get: (p) => p.weight },
+      { label: 'harga', get: (p) => Number(p.price), format: (v) => formatRupiah(v) },
+      { label: 'stok', get: (p) => Number(p.stock) },
+      { label: 'tampil di toko', get: (p) => (Number(p.active) ? 'ya' : 'tidak') },
+      { label: 'best seller', get: (p) => (Number(p.is_bestseller ?? p.isBestseller) ? 'ya' : 'tidak') },
+      { label: 'direkomendasikan', get: (p) => (Number(p.is_recommended ?? p.isRecommended) ? 'ya' : 'tidak') },
+      { label: 'min. grosir', get: (p) => Number(p.wholesale_min_qty ?? p.wholesaleMinQty) || 0 },
+      {
+        label: 'harga grosir',
+        get: (p) => (p.wholesale_price ?? p.wholesalePrice) || 0,
+        format: (v) => (Number(v) > 0 ? formatRupiah(v) : '(tidak ada)'),
+      },
+      { label: 'jumlah foto', get: (p) => countKind(productMedia(p), false) },
+      { label: 'jumlah video', get: (p) => countKind(productMedia(p), true) },
+      { label: 'deskripsi', get: (p) => ((p.description || '').trim() ? 'ada' : 'kosong') },
+    ],
+    { nothing: 'disimpan tanpa perubahan' }
+  );
+  await logAdminAction(req.admin, 'product.update', `${next.name}: ${summary}`);
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk berhasil diperbarui.'));
 }));
 
 router.post('/admin/produk/:id/hapus', requireAdmin(async (req, res) => {
   const existing = await queries.getProduct(Number(req.params.id));
   await queries.deleteProduct(Number(req.params.id));
-  await logAdminAction(req.admin, 'product.delete', existing ? existing.name : `#${req.params.id}`);
+  // A deletion is the one entry nobody can go back and check against the
+  // product itself, so it records what was actually lost.
+  await logAdminAction(
+    req.admin,
+    'product.delete',
+    existing
+      ? `${existing.name} — ${formatRupiah(Number(existing.price))}, stok ${Number(existing.stock)}, ` +
+        `kategori ${existing.category}, ${productMedia(existing).length} media`
+      : `#${req.params.id} (produk tidak ditemukan)`
+  );
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk telah dihapus.'));
 }));
 
 router.post('/admin/produk/:id/toggle', requireAdmin(async (req, res) => {
-  await queries.toggleProductActive(Number(req.params.id));
-  await logAdminAction(req.admin, 'product.toggle', `#${req.params.id}`);
+  const id = Number(req.params.id);
+  const before = await queries.getProduct(id);
+  await queries.toggleProductActive(id);
+  // Was "#3", which tells a reader nothing at all: not which product, not
+  // which way it went.
+  await logAdminAction(
+    req.admin,
+    'product.toggle',
+    before
+      ? `${before.name} — ${before.active ? 'ditampilkan → disembunyikan' : 'disembunyikan → ditampilkan'}`
+      : `#${id} (produk tidak ditemukan)`
+  );
   redirect(res, '/admin/produk');
 }));
 
@@ -1596,7 +1641,13 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   await logAdminAction(
     req.admin,
     'order.status_update',
-    `${order.order_number} -> ${status}${nowCancelled !== wasCancelled ? (nowCancelled ? ' (stok dikembalikan)' : ' (stok dipotong lagi)') : ''}`
+    // Both ends of the change, and the customer — "PC-… -> selesai" left you
+    // unable to tell what it had been, which is the thing you want when
+    // checking whether a stamp or a stock movement was correct.
+    `${order.order_number} (${order.customer_name}): ${order.status} → ${status}` +
+      (nowCancelled !== wasCancelled ? (nowCancelled ? ', stok dikembalikan' : ', stok dipotong lagi') : '') +
+      (order.customer_id && status === 'selesai' ? ', stempel diberikan' : '') +
+      (order.customer_id && order.status === 'selesai' && status !== 'selesai' ? ', stempel ditarik' : '')
   );
   redirect(res, `/admin/pesanan/${id}`);
 }));
@@ -1632,22 +1683,44 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     return redirect(res, '/admin/pengaturan?error=' + encodeURIComponent('Format jam tidak valid.'));
   }
 
-  await Promise.all([
-    settings.setValue('shop_open', fields.shopOpen ? '1' : '0'),
-    settings.setValue('shop_notice', (fields.shopNotice || '').trim().slice(0, 200)),
-    settings.setValue('shop_whatsapp', normalizeWhatsapp(fields.shopWhatsapp || '') || ''),
-    settings.setValue('min_order', num(fields.minOrder)),
-    settings.setValue('delivery_fee', num(fields.deliveryFee)),
-    settings.setValue('free_delivery_over', num(fields.freeDeliveryOver)),
-    settings.setValue('same_day_cutoff', cutoff),
-    settings.setValue('open_time', openTime),
-    settings.setValue('close_time', closeTime),
+  // Read first: this form writes eleven settings at once and the log used to
+  // mention only whether the shop was open, so any other change — the delivery
+  // fee, the cut-off, the retention policy — left no trace of what it had been.
+  const settingsBefore = await settings.getAll({ fresh: true });
+  const settingsAfter = {
+    shop_open: fields.shopOpen ? '1' : '0',
+    shop_notice: (fields.shopNotice || '').trim().slice(0, 200),
+    shop_whatsapp: normalizeWhatsapp(fields.shopWhatsapp || '') || '',
+    min_order: num(fields.minOrder),
+    delivery_fee: num(fields.deliveryFee),
+    free_delivery_over: num(fields.freeDeliveryOver),
+    same_day_cutoff: cutoff,
+    open_time: openTime,
+    close_time: closeTime,
     // 0 is meaningful here (keep forever), so these are clamped rather than
     // coerced through the falsy-to-default path the money fields use.
-    settings.setValue('retention_proof_days', Math.min(3650, num(fields.retentionProofDays))),
-    settings.setValue('retention_log_months', Math.min(120, num(fields.retentionLogMonths))),
+    retention_proof_days: Math.min(3650, num(fields.retentionProofDays)),
+    retention_log_months: Math.min(120, num(fields.retentionLogMonths)),
+  };
+  await Promise.all(
+    Object.entries(settingsAfter).map(([key, value]) => settings.setValue(key, value))
+  );
+
+  const rupiah = (v) => formatRupiah(Number(v) || 0);
+  const summary = changeSummary(settingsBefore, settingsAfter, [
+    { key: 'shop_open', label: 'toko', format: (v) => (String(v) === '1' ? 'buka' : 'tutup') },
+    { key: 'shop_notice', label: 'pengumuman' },
+    { key: 'shop_whatsapp', label: 'WhatsApp toko' },
+    { key: 'min_order', label: 'min. belanja', format: rupiah },
+    { key: 'delivery_fee', label: 'ongkir', format: rupiah },
+    { key: 'free_delivery_over', label: 'gratis ongkir di atas', format: rupiah },
+    { key: 'same_day_cutoff', label: 'batas pesan hari ini' },
+    { key: 'open_time', label: 'jam buka' },
+    { key: 'close_time', label: 'jam tutup' },
+    { key: 'retention_proof_days', label: 'simpan bukti (hari)' },
+    { key: 'retention_log_months', label: 'simpan log (bulan)' },
   ]);
-  await logAdminAction(req.admin, 'settings.update', `toko ${fields.shopOpen ? 'buka' : 'tutup'}`);
+  await logAdminAction(req.admin, 'settings.update', summary);
   redirect(res, '/admin/pengaturan?flash=' + encodeURIComponent('Pengaturan toko disimpan.'));
 }));
 
@@ -1677,7 +1750,11 @@ router.post('/admin/voucher/tambah', requireSuperadmin(async (req, res) => {
   });
   if (!result.ok) return redirect(res, '/admin/voucher?error=' + encodeURIComponent(result.error));
 
-  await logAdminAction(req.admin, 'voucher.create', result.code);
+  await logAdminAction(
+    req.admin,
+    'voucher.create',
+    `${result.code} — ${vouchers.describe(result)}`
+  );
   redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${result.code} dibuat.`));
 }));
 
@@ -1689,7 +1766,11 @@ router.post('/admin/voucher/:id/toggle', requireSuperadmin(async (req, res) => {
   if (!target) return notFound(res, req);
 
   await vouchers.setActive(id, !target.active);
-  await logAdminAction(req.admin, 'voucher.update', `${target.code} -> ${target.active ? 'nonaktif' : 'aktif'}`);
+  await logAdminAction(
+    req.admin,
+    'voucher.update',
+    `${target.code} — ${target.active ? 'aktif → nonaktif' : 'nonaktif → aktif'} (${vouchers.describe(target)})`
+  );
   redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${target.code} diperbarui.`));
 }));
 
@@ -1700,7 +1781,7 @@ router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
   if (!target) return notFound(res, req);
 
   await vouchers.remove(id);
-  await logAdminAction(req.admin, 'voucher.delete', target.code);
+  await logAdminAction(req.admin, 'voucher.delete', `${target.code} — ${vouchers.describe(target)}`);
   redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${target.code} dihapus.`));
 }));
 
@@ -1736,7 +1817,11 @@ router.post('/admin/reset-sandi/:id/setujui', requireAdmin(async (req, res) => {
   }
 
   const row = requests.find((r) => Number(r.id) === id) || {};
-  await logAdminAction(req.admin, 'customer.password_reset_approved', `Pelanggan ${row.name || result.customerId}`);
+  await logAdminAction(
+    req.admin,
+    'customer.password_reset_approved',
+    `${row.name || 'pelanggan #' + result.customerId}${row.whatsapp ? ` (${formatWhatsapp(row.whatsapp)})` : ''} — password baru dikirim`
+  );
   // The code is rendered once here and never stored in plaintext — if the
   // admin loses it, they generate a new one.
   sendHtml(
@@ -1760,8 +1845,18 @@ router.post('/admin/reset-sandi/:id/setujui', requireAdmin(async (req, res) => {
 }));
 
 router.post('/admin/reset-sandi/:id/tolak', requireAdmin(async (req, res) => {
-  await passwordReset.reject(Number(req.params.id), req.admin.username);
-  await logAdminAction(req.admin, 'customer.password_reset_rejected', `Permintaan #${req.params.id}`);
+  const rejectId = Number(req.params.id);
+  // Was "Permintaan #12", which named nobody. The request is read before it is
+  // rejected so the entry can say whose reset was turned down.
+  const rejected = (await passwordReset.listRequests()).find((r) => Number(r.id) === rejectId);
+  await passwordReset.reject(rejectId, req.admin.username);
+  await logAdminAction(
+    req.admin,
+    'customer.password_reset_rejected',
+    rejected
+      ? `${rejected.name || 'pelanggan'} (${formatWhatsapp(rejected.whatsapp || '')}) — permintaan #${rejectId}`
+      : `permintaan #${rejectId} (tidak ditemukan)`
+  );
   redirect(res, '/admin/reset-sandi?ok=1');
 }));
 
@@ -1849,7 +1944,7 @@ router.post('/admin/akun/:id/password', requireSuperadmin(async (req, res) => {
   }
 
   await adminAuth.updateAdminPassword(id, password);
-  await logAdminAction(req.admin, 'admin.password', target.username);
+  await logAdminAction(req.admin, 'admin.password', `${target.username} (${target.role})`);
   redirect(res, '/admin/akun?flash=' + encodeURIComponent(`Password ${target.username} berhasil diganti.`));
 }));
 
@@ -2048,8 +2143,13 @@ router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) =
     return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent('Jumlah stempel tidak valid.'));
   }
 
+  const stampsBefore = (await loyalty.statusFor(id)).stamps;
   const updated = await loyalty.setStampCount(id, target, { by: req.admin.username });
-  await logAdminAction(req.admin, 'loyalty.stamps', `${customer.name} -> ${updated.stamps} stempel`);
+  await logAdminAction(
+    req.admin,
+    'loyalty.stamps',
+    `${customer.name} (${formatWhatsapp(customer.whatsapp)}): stempel ${stampsBefore} → ${updated.stamps}`
+  );
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
 }));
 
@@ -2079,8 +2179,21 @@ router.post('/admin/pelanggan/:id/ubah', requireSuperadmin(async (req, res) => {
     return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent(result.error));
   }
 
-  const renamed = customer.name !== name ? ` (dulu ${customer.name})` : '';
-  await logAdminAction(req.admin, 'customer.update', `${name}${renamed}`);
+  // A rename was the only change the log ever showed; a changed number or
+  // address left no record of what it had been.
+  const summary = changeSummary(
+    customer,
+    { name, whatsapp: normalizeWhatsapp(fields.whatsapp || '') || customer.whatsapp,
+      address: (fields.address || '').trim(), birthday: birthday || null },
+    [
+      { label: 'nama', get: (c) => c.name },
+      { label: 'WhatsApp', get: (c) => formatWhatsapp(c.whatsapp) },
+      { label: 'alamat', get: (c) => (c.address || '').trim() },
+      { label: 'ulang tahun', get: (c) => (c.birthday ? toDateKey(new Date(c.birthday)) : '') },
+    ],
+    { nothing: 'disimpan tanpa perubahan' }
+  );
+  await logAdminAction(req.admin, 'customer.update', `${name}: ${summary}`);
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent('Data pelanggan diperbarui.'));
 }));
 
@@ -2096,7 +2209,11 @@ router.post('/admin/pelanggan/:id/password', requireSuperadmin(async (req, res) 
   }
 
   await customerAuth.updatePassword(id, fields.password);
-  await logAdminAction(req.admin, 'customer.password', customer.name);
+  await logAdminAction(
+    req.admin,
+    'customer.password',
+    `${customer.name} (${formatWhatsapp(customer.whatsapp)})`
+  );
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Password ${customer.name} berhasil diganti.`));
 }));
 
@@ -2118,7 +2235,11 @@ router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => 
   const result = await loyalty.claimReward(id, { note: `Ditukar admin ${req.admin.username}` });
   if (!result.ok) return redirect(res, `/admin/pelanggan/${id}?error=` + encodeURIComponent(result.error));
 
-  await logAdminAction(req.admin, 'loyalty.redeem', customer.name);
+  await logAdminAction(
+    req.admin,
+    'loyalty.redeem',
+    `${customer.name} (${formatWhatsapp(customer.whatsapp)}) — 1 cup gratis ditukar`
+  );
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Cup gratis ${customer.name} ditukar.`));
 }));
 

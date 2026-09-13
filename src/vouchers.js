@@ -6,7 +6,7 @@
 // check. The preview is advisory — the database has the final word, which is
 // what stops a code being spent more times than it allows.
 const db = require('./db');
-const { toDateKey } = require('./utils');
+const { toDateKey, formatRupiah } = require('./utils');
 
 // Short labels: the select sits in a narrow column on a phone and anything
 // longer was cut to "Potongan persen…". Its field label is "Jenis potongan",
@@ -122,4 +122,28 @@ async function preview(code, { subtotal, discountable }) {
   };
 }
 
-module.exports = { KINDS, list, findByCode, create, setActive, remove, preview, normalizeCode, discountFor };
+// One readable line describing what a code actually does — for the activity
+// log, which used to record nothing but the code itself. Reading back "SEGAR10
+// dihapus" told you a code was gone but not what it had been worth.
+function describe(voucher) {
+  if (!voucher) return 'kode tidak ditemukan';
+  const parts = [];
+  parts.push(
+    voucher.kind === 'nominal'
+      ? `potongan ${formatRupiah(voucher.amount)}`
+      : `potongan ${Number(voucher.amount)}%`
+  );
+  if (voucher.kind !== 'nominal' && Number(voucher.max_discount) > 0) {
+    parts.push(`maks ${formatRupiah(voucher.max_discount)}`);
+  }
+  if (Number(voucher.min_spend) > 0) parts.push(`min. belanja ${formatRupiah(voucher.min_spend)}`);
+  parts.push(
+    voucher.usage_limit === null || voucher.usage_limit === undefined
+      ? 'tanpa batas pakai'
+      : `batas ${Number(voucher.usage_limit)}x (terpakai ${Number(voucher.used_count) || 0}x)`
+  );
+  if (voucher.expires_at) parts.push(`berlaku sampai ${toDateKey(voucher.expires_at)}`);
+  return parts.join(', ');
+}
+
+module.exports = { KINDS, list, findByCode, create, setActive, remove, preview, normalizeCode, discountFor, describe };

@@ -14,6 +14,35 @@ async function logAdminAction(admin, action, detail) {
   }
 }
 
+// Turns a before/after pair into a plain list of what actually changed, so a
+// log line says "harga 18.000 → 20.000, stok 25 → 30" instead of just naming
+// the product and leaving the reader to guess. Fields that didn't move are
+// left out entirely — the point is to make the change readable at a glance.
+//
+// Each field is { key, label, format? } or { get, label, format? }.
+function describeChanges(before, after, fields) {
+  const parts = [];
+  const show = (v) => {
+    if (v === null || v === undefined || v === '') return '(kosong)';
+    return String(v);
+  };
+  for (const field of fields) {
+    const rawFrom = field.get ? field.get(before) : before[field.key];
+    const rawTo = field.get ? field.get(after) : after[field.key];
+    const from = field.format ? field.format(rawFrom) : rawFrom;
+    const to = field.format ? field.format(rawTo) : rawTo;
+    if (show(from) === show(to)) continue;
+    parts.push(`${field.label} ${show(from)} → ${show(to)}`);
+  }
+  return parts;
+}
+
+/** describeChanges, joined for a log detail — or a plain note when nothing moved. */
+function changeSummary(before, after, fields, { nothing = 'tidak ada perubahan' } = {}) {
+  const parts = describeChanges(before, after, fields);
+  return parts.length ? parts.join(', ') : nothing;
+}
+
 // Paged + filtered view for the Log Aktivitas page. Date bounds are WIB
 // calendar days ('YYYY-MM-DD' from the date pickers), converted to an
 // instant range so they line up with what the timestamps display as.
@@ -94,4 +123,11 @@ async function queryAllAdminLogs({ sort = 'desc', username = '', action = '', fr
   );
 }
 
-module.exports = { logAdminAction, queryAdminLogs, queryAllAdminLogs, listLogFilters };
+module.exports = {
+  logAdminAction,
+  describeChanges,
+  changeSummary,
+  queryAdminLogs,
+  queryAllAdminLogs,
+  listLogFilters,
+};
