@@ -48,7 +48,7 @@ const PLAY_BADGE =
 //
 // `#t=0.1` asks the browser for a frame a hair into the clip: without it
 // Safari and older Chrome show a black box until you press play.
-function mediaElement(url, { alt, dim = '', interactive = false, eager = true }) {
+function mediaElement(url, { alt, dim = '', interactive = false, eager = true, autoplay = false }) {
   if (!isVideoUrl(url)) {
     return `<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" class="thumb-fill"${
       eager ? '' : ' loading="lazy"'
@@ -56,9 +56,17 @@ function mediaElement(url, { alt, dim = '', interactive = false, eager = true })
   }
   // No `loop`: the carousel waits for the clip's "ended" event before moving
   // on, and a looping video never ends.
+  //
+  // `autoplay` is set as a real attribute on the clip that leads the gallery,
+  // not left to a scripted play() alone. Phones honour the attribute far more
+  // readily — a script calling play() at page load is the case browsers are
+  // most suspicious of. `muted` and `playsinline` are what make it permitted
+  // at all, and both have to be on the element before it loads.
+  // preload="auto" only for that one clip: it is about to play, so waiting for
+  // metadata first just delays it.
   const common =
-    `class="thumb-fill" muted playsinline preload="metadata" disablepictureinpicture ` +
-    `aria-label="${escapeAttr(alt)}"`;
+    `class="thumb-fill" muted playsinline ${autoplay ? 'autoplay preload="auto"' : 'preload="metadata"'} ` +
+    `disablepictureinpicture aria-label="${escapeAttr(alt)}"`;
   if (interactive) {
     return `<video src="${escapeAttr(url)}#t=0.1" ${common} controls controlslist="nodownload noplaybackrate" style="${dim}"></video>`;
   }
@@ -92,7 +100,7 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
       size
     )}</div>`;
   } else if (media.length === 1) {
-    inner = mediaElement(media[0], { alt: product.name, dim, interactive });
+    inner = mediaElement(media[0], { alt: product.name, dim, interactive, autoplay });
   } else {
     // Each item sits in its own clipping box (.carousel-slide) rather than
     // being a flex item itself — the card's hover zoom scales the image, and
@@ -105,6 +113,9 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
             dim,
             interactive,
             eager: i === 0,
+            // Only the slide the gallery opens on — the rest must not all
+            // start playing at once behind the scenes.
+            autoplay: autoplay && i === 0,
           })}</div>`
       )
       .join('');

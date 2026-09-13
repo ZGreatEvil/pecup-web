@@ -1008,9 +1008,12 @@ const CART_SCRIPT = `
 
       var played = null;
       try{ played = video.play(); }catch(err){}
-      // Autoplay refused (data saver, a browser that won't budge): fall back
-      // to the ordinary timer so the gallery doesn't just stop dead.
-      if(played && played.catch) played.catch(function(){ clearGuard(carousel); startTimer(carousel); });
+      // Autoplay refused — a phone on low power, data saver, or a browser that
+      // simply won't start video on its own. The clip still gets its own length
+      // on screen: the deadline above is already armed, and it is left running.
+      // Falling back to the photo beat here is what made a clip flash past in
+      // two seconds without ever playing. The shopper still has the controls.
+      if(played && played.catch) played.catch(function(){ armGuard(); });
     }
 
     function show(carousel, index){
