@@ -945,6 +945,14 @@ const CART_SCRIPT = `
     function stopTimer(carousel){
       if(carousel.dataset.timer){ clearInterval(Number(carousel.dataset.timer)); carousel.dataset.timer = ''; }
     }
+    // The backstop behind a playing clip. "ended" is the signal we want, but it
+    // is not one to stake the whole gallery on: a clip that stalls on a slow
+    // connection, or sits at its last frame without firing anything (seen in a
+    // headless browser with this very page), would leave the gallery parked on
+    // it forever. So every clip also gets a deadline of its own length.
+    function clearGuard(carousel){
+      if(carousel.dataset.guard){ clearTimeout(Number(carousel.dataset.guard)); carousel.dataset.guard = ''; }
+    }
     function startTimer(carousel){
       if(carousel.dataset.timer || carousel.dataset.auto !== '1') return;
       var delay = Number(carousel.dataset.autoplay) || 2000;
@@ -969,17 +977,40 @@ const CART_SCRIPT = `
           try{ all[i].pause(); all[i].currentTime = 0; }catch(err){}
         }
       }
+      clearGuard(carousel);
       var video = videoIn(carousel, index);
       if(!video){ startTimer(carousel); return; }
       // A clip is showing: hand it the timing.
       stopTimer(carousel);
       if(carousel.dataset.auto !== '1') return;
       video.muted = true;   // muted is what makes autoplay allowed at all
+
+      // Deadline: however long the clip runs, plus a moment's grace. Re-armed
+      // once the real duration is known, since it isn't at this point.
+      function armGuard(){
+        if(carousel.dataset.auto !== '1') return;
+        clearGuard(carousel);
+        var d = Number(video.duration);
+        var left = (isFinite(d) && d > 0) ? d - (Number(video.currentTime) || 0) : 0;
+        var ms = left > 0 ? (left * 1000) + 1500 : (Number(carousel.dataset.autoplay) || 2000) * 3;
+        carousel.dataset.guard = String(setTimeout(function(){
+          carousel.dataset.guard = '';
+          if(carousel.dataset.auto !== '1') return;
+          // Only if this clip is still the one on screen.
+          if(videoIn(carousel, current(carousel)) !== video) return;
+          show(carousel, current(carousel) + 1);
+        }, ms));
+      }
+      video.addEventListener('loadedmetadata', armGuard, { once: true });
+      // A clip that can't be fetched or decoded must not hold the gallery up.
+      video.addEventListener('error', function(){ clearGuard(carousel); startTimer(carousel); }, { once: true });
+      armGuard();
+
       var played = null;
       try{ played = video.play(); }catch(err){}
       // Autoplay refused (data saver, a browser that won't budge): fall back
       // to the ordinary timer so the gallery doesn't just stop dead.
-      if(played && played.catch) played.catch(function(){ startTimer(carousel); });
+      if(played && played.catch) played.catch(function(){ clearGuard(carousel); startTimer(carousel); });
     }
 
     function show(carousel, index){
@@ -1010,6 +1041,7 @@ const CART_SCRIPT = `
       // otherwise. Cleared before show() so it doesn't start a clip either.
       carousel.dataset.auto = '';
       stopTimer(carousel);
+      clearGuard(carousel);
       if(dot) show(carousel, Number(dot.dataset.index) || 0);
       else show(carousel, current(carousel) + (arrow.classList.contains('carousel-next') ? 1 : -1));
     });
@@ -1020,7 +1052,8 @@ const CART_SCRIPT = `
       if(!video || !video.closest) return;
       var carousel = video.closest('.carousel');
       if(!carousel || carousel.dataset.auto !== '1') return;
-      // The clip has had its turn — move along.
+      // The clip has had its turn — move along, and stand the backstop down.
+      clearGuard(carousel);
       show(carousel, current(carousel) + 1);
     }, true);
 
