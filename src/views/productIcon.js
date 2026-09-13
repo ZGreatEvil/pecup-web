@@ -46,9 +46,13 @@ const PLAY_BADGE =
 // muted, silent first frame with a play badge, and the click goes through to
 // the product page. On the product page itself it gets real controls.
 //
-// `#t=0.1` asks the browser for a frame a hair into the clip: without it
-// Safari and older Chrome show a black box until you press play.
-function mediaElement(url, { alt, dim = '', interactive = false, eager = true, autoplay = false }) {
+// A clip that isn't playing must still show something. `#t=0.1` asks the
+// browser for a frame a hair into the clip, but plenty of phones ignore it and
+// draw a black box — which is exactly what a product card became, since cards
+// never play. So a clip also carries a `poster`: the product's own first photo,
+// already being downloaded for the rest of the page. It is then never blank,
+// whether it plays, waits, or is refused outright.
+function mediaElement(url, { alt, dim = '', interactive = false, eager = true, autoplay = false, poster = '' }) {
   if (!isVideoUrl(url)) {
     return `<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" class="thumb-fill"${
       eager ? '' : ' loading="lazy"'
@@ -66,12 +70,19 @@ function mediaElement(url, { alt, dim = '', interactive = false, eager = true, a
   // metadata first just delays it.
   const common =
     `class="thumb-fill" muted playsinline ${autoplay ? 'autoplay preload="auto"' : 'preload="metadata"'} ` +
+    `${poster ? `poster="${escapeAttr(poster)}" ` : ''}` +
     `disablepictureinpicture aria-label="${escapeAttr(alt)}"`;
+  // `#t=0.1` tells the browser to show the frame a hair into the clip, and it
+  // displays that frame INSTEAD of the poster. That is only wanted when there
+  // is no poster to show: a clip that opens on a fade from black then renders
+  // as a black tile, which is exactly how a product card came out blank. With
+  // a poster, the product's own photo is the better first impression.
+  const frag = poster ? '' : '#t=0.1';
   if (interactive) {
-    return `<video src="${escapeAttr(url)}#t=0.1" ${common} controls controlslist="nodownload noplaybackrate" style="${dim}"></video>`;
+    return `<video src="${escapeAttr(url)}${frag}" ${common} controls controlslist="nodownload noplaybackrate" style="${dim}"></video>`;
   }
   // pointer-events:none keeps the card's own link in charge of the tap.
-  return `<video src="${escapeAttr(url)}#t=0.1" ${common} style="${dim}pointer-events:none;"></video>${PLAY_BADGE}`;
+  return `<video src="${escapeAttr(url)}${frag}" ${common} style="${dim}pointer-events:none;"></video>${PLAY_BADGE}`;
 }
 
 const ARROW_LEFT =
@@ -92,6 +103,9 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
   // A clip is only playable where it isn't standing inside a link — that's
   // the product page, which is also the only place that autoplays.
   const interactive = autoplay;
+  // Stand-in frame for any clip that isn't playing. The product's own first
+  // photo, so a card shows the fruit rather than a black square.
+  const poster = productPhotos(product)[0] || '';
 
   let inner;
   if (media.length === 0) {
@@ -100,7 +114,7 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
       size
     )}</div>`;
   } else if (media.length === 1) {
-    inner = mediaElement(media[0], { alt: product.name, dim, interactive, autoplay });
+    inner = mediaElement(media[0], { alt: product.name, dim, interactive, autoplay, poster });
   } else {
     // Each item sits in its own clipping box (.carousel-slide) rather than
     // being a flex item itself — the card's hover zoom scales the image, and
@@ -116,6 +130,7 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
             // Only the slide the gallery opens on — the rest must not all
             // start playing at once behind the scenes.
             autoplay: autoplay && i === 0,
+            poster,
           })}</div>`
       )
       .join('');
