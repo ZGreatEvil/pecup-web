@@ -1030,17 +1030,25 @@ const CART_SCRIPT = `
       if(gestureWired) return;
       gestureWired = true;
       function retry(){
-        var list = document.querySelectorAll('.carousel[data-auto="1"]');
+        // Keyed on the gallery being an autoplaying one, NOT on data-auto:
+        // that flag gets cleared by all sorts of things, and when it does the
+        // recovery must still work. A clip the shopper actually paused is
+        // marked, and that is the only thing skipped here.
+        var list = document.querySelectorAll('.carousel[data-autoplay]');
         for(var i = 0; i < list.length; i++){
+          if(list[i].dataset.userpaused === '1') continue;
           var v = activeVideo(list[i]);
-          // Only a clip that never got going. One the shopper paused has
-          // already turned data-auto off, so it is not touched here.
           if(v && v.paused && !v.ended){
             v.muted = true;
             try{ v.play(); }catch(err){}
           }
         }
       }
+      // pointerdown/touchstart fire first and still count as the gesture, so
+      // the clip starts on the touch rather than waiting for the finger to
+      // lift — and a tap that turns into a scroll still counts.
+      document.addEventListener('pointerdown', retry, true);
+      document.addEventListener('touchstart', retry, true);
       document.addEventListener('touchend', retry, true);
       document.addEventListener('click', retry, true);
     }
@@ -1050,6 +1058,9 @@ const CART_SCRIPT = `
     function wireVideo(video){
       if(video.getAttribute('data-wired') === '1') return;
       video.setAttribute('data-wired', '1');
+
+      // The only trustworthy sign that the clip has really played a frame.
+      video.addEventListener('playing', function(){ video.setAttribute('data-started', '1'); });
 
       // Some browsers only decide once there is data to play. If the clip is
       // ready and still hasn't started, ask once more before giving up on it.
@@ -1092,6 +1103,16 @@ const CART_SCRIPT = `
         if(!carousel || video.ended) return;
         var d = Number(video.duration);
         if(isFinite(d) && d > 0 && video.currentTime >= d - 0.1) return;  // paused at the end
+        // A clip that never actually started is not the shopper pausing it —
+        // a refused autoplay can fire "pause" too, and treating that as a
+        // deliberate stop switched off the very flag the tap-to-start
+        // recovery below looks for. The refusal was disarming its own fix.
+        //
+        // "Has it played?" cannot be read off currentTime: the src carries a
+        // #t=0.1 fragment, so the clip sits at 0.1s before it has played a
+        // single frame. Only the "playing" event settles it.
+        if(video.getAttribute('data-started') !== '1') return;
+        carousel.dataset.userpaused = '1';
         carousel.dataset.auto = '';
         clearGuard(carousel);
         stopTimer(carousel);
@@ -1116,6 +1137,8 @@ const CART_SCRIPT = `
       wireVideo(target);
       wireGestureRetry();
       target.muted = true;   // muted is what makes autoplay allowed at all
+      // Fresh turn, fresh question: has THIS run of the clip played anything?
+      target.removeAttribute('data-started');
       // Covers the clip that never starts: it still gets its own length.
       holdForLength(carousel, target);
 

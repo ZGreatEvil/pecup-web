@@ -47,6 +47,8 @@ const {
 } = require('../src/uploads');
 const { productMedia } = require('../src/views/productIcon');
 const media = require('../src/media');
+// TEMPORARY diagnostic — remove with its route once autoplay is understood.
+const videoDiagViews = require('../src/views/videoDiag');
 
 const shopViews = require('../src/views/shop');
 const adminViews = require('../src/views/admin');
@@ -1035,6 +1037,23 @@ router.post('/admin/media/video/presign', requireAdmin(async (req, res) => {
   } catch (err) {
     sendJson(res, { error: 'Penyimpanan video sedang tidak bisa dihubungi. Coba lagi.' }, 502);
   }
+}));
+
+// TEMPORARY — see src/views/videoDiag.js. Delete this route and that file
+// once it is known why a phone won't start a clip on its own.
+router.get('/admin/uji-video', requireAdmin(async (req, res) => {
+  const products = await queries.listProducts({});
+  let videoUrl = '';
+  let posterUrl = '';
+  for (const product of products) {
+    const found = productMedia(product).find((url) => media.isVideoUrl(url));
+    if (found) {
+      videoUrl = found;
+      posterUrl = product.image || '';
+      break;
+    }
+  }
+  sendHtml(res, videoDiagViews.renderVideoDiag({ videoUrl, posterUrl }));
 }));
 
 router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
