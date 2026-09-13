@@ -66,12 +66,21 @@ router.get('/assets/pecup-logo.png', (req, res) => {
 // crawlers
 // ---------------------------------------------------------------------
 
-// Works out the public origin from the request, so this is correct on the
-// Vercel domain, a custom domain, and localhost without configuration.
+// Works out the public origin. SITE_ORIGIN wins when it's set, because the
+// Host header is attacker-controlled: without a fixed value, a request with a
+// forged Host would put someone else's domain into our canonical tags, the
+// sitemap and robots.txt. Falling back to the request keeps localhost and
+// preview deployments working with no configuration.
 function originFor(req) {
+  const configured = String(process.env.SITE_ORIGIN || '').trim().replace(/\/+$/, '');
+  if (/^https?:\/\/[^/\s]+$/.test(configured)) return configured;
   const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
-  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-  return `${proto}://${host}`;
+  const raw = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const host = String(raw).split(',')[0].trim();
+  // Only ever a hostname[:port] — never a path, scheme or anything smuggled in.
+  const safeHost = /^[A-Za-z0-9.\-]+(:\d+)?$/.test(host) ? host : 'localhost';
+  const safeProto = proto === 'http' || proto === 'https' ? proto : 'https';
+  return `${safeProto}://${safeHost}`;
 }
 
 router.get('/robots.txt', (req, res) => {
@@ -1456,9 +1465,16 @@ router.post('/admin/pesanan/:id/tukar-stempel', requireAdmin(async (req, res) =>
 router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
-  // Only accept one of the three known states — an unexpected value would
-  // otherwise silently break the stamp rules, which key off 'selesai'.
-  const status = ORDER_STATUSES.some((s) => s.value === fields.status) ? fields.status : 'menunggu';
+  // Only the known states are accepted. An unrecognised value changes nothing:
+  // falling back to a default would let a stale form or a typo quietly move a
+  // finished order back to "waiting", revoking its stamp and re-taking stock.
+  const status = fields.status;
+  if (!ORDER_STATUSES.some((s) => s.value === status)) {
+    return redirect(
+      res,
+      `/admin/pesanan/${id}?error=` + encodeURIComponent('Status pesanan tidak dikenal, jadi tidak ada yang diubah.')
+    );
+  }
 
   const order = await queries.getOrder(id);
   if (!order) return notFound(res, req);

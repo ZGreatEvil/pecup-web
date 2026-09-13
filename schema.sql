@@ -227,6 +227,11 @@ create table if not exists order_items (
 
 create index if not exists idx_orders_date_key on orders(date_key);
 create index if not exists idx_order_items_order_id on order_items(order_id);
+-- The order list and the revenue report both filter on status, usually
+-- together with a date range, so the two columns are indexed as a pair.
+create index if not exists idx_orders_status_date on orders(status, date_key);
+-- Sorting the order list by newest.
+create index if not exists idx_orders_created_at on orders(created_at desc);
 
 -- Admin accounts. There's always at least one 'superadmin' — only
 -- superadmins can add/remove admin accounts or view the activity log;
@@ -254,6 +259,9 @@ create table if not exists admin_logs (
 );
 
 create index if not exists idx_admin_logs_created_at on admin_logs(created_at desc);
+-- The activity log page filters by who did it and by what kind of action.
+create index if not exists idx_admin_logs_username on admin_logs(admin_username, created_at desc);
+create index if not exists idx_admin_logs_action on admin_logs(action, created_at desc);
 
 -- No Row Level Security here on purpose: unlike Supabase, a plain Neon
 -- database has no bundled public REST API or anon key sitting in front of
@@ -589,7 +597,10 @@ begin
   values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note)
   returning id into v_order_id;
 
-  v_order_number := 'PC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(v_order_id::text, 4, '0');
+  -- Explicitly WIB: the database session runs in GMT, so a plain now() would
+  -- stamp orders taken between midnight and 07:00 WIB with the previous day.
+  v_order_number := 'PC-' || to_char(now() at time zone 'Asia/Jakarta', 'YYYYMMDD')
+                    || '-' || lpad(v_order_id::text, 4, '0');
   update orders set order_number = v_order_number where id = v_order_id;
 
   for v_item in select * from jsonb_array_elements(p_items) loop
@@ -608,7 +619,17 @@ begin
     insert into order_items (order_id, product_id, product_name, price, qty, subtotal)
     values (v_order_id, v_product_id, coalesce(v_label, v_name), v_price, v_qty, v_price * v_qty);
 
-    update products set stock = greatest(0, stock - v_qty) where id = v_product_id;
+    -- The check above (near the top of this function) catches the ordinary
+    -- case, but it is a separate statement: two orders submitted in the same
+    -- moment can both pass it and oversell the last cups. Here the check and
+    -- the decrement are ONE statement, so the row lock settles the race and
+    -- the loser raises instead of the stock silently clamping to zero.
+    update products set stock = stock - v_qty
+     where id = v_product_id and stock >= v_qty;
+    if not found then
+      raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.',
+        coalesce(v_label, v_name, 'produk');
+    end if;
   end loop;
 
   return jsonb_build_object(

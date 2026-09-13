@@ -2773,10 +2773,14 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
           <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:9px;">
+        <div class="qty-pick" data-max="${p.stock}">
           <label style="margin:0;font-size:12px;color:var(--text-muted);">Jumlah</label>
+          <button type="button" class="step-btn qty-step" data-delta="-1"
+                  aria-label="Kurangi jumlah ${escapeAttr(p.name)}">&minus;</button>
           <input type="number" name="qty_${p.id}" min="0" max="${p.stock}" value="${escapeAttr(qty[p.id] || '')}"
-                 placeholder="0" style="width:90px;text-align:center;">
+                 inputmode="numeric" placeholder="0" aria-label="Jumlah ${escapeAttr(p.name)}">
+          <button type="button" class="step-btn qty-step" data-delta="1"
+                  aria-label="Tambah jumlah ${escapeAttr(p.name)}">+</button>
         </div>
       </div>`
     )
@@ -2925,6 +2929,24 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
   .cust-chosen .cust-chosen-text{font-size:13.5px;font-weight:700;min-width:0;word-break:break-word;flex:1 1 auto;}
   .cust-chosen button{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);
     border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;color:var(--text);}
+
+  /* Quantity stepper. Typing a number still works; the buttons are there so a
+     phone doesn't need the keyboard at all. */
+  .qty-pick{display:flex;align-items:center;gap:7px;}
+  .qty-pick .step-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800;
+    color:var(--text);font-family:inherit;line-height:1;}
+  .qty-pick input[type="number"]{width:64px;text-align:center;font-weight:700;
+    -moz-appearance:textfield;appearance:textfield;}
+  /* The native spinners sit under our own buttons and make the box cramped. */
+  .qty-pick input[type="number"]::-webkit-outer-spin-button,
+  .qty-pick input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+  .qty-pick .step-btn:disabled{opacity:0.35;cursor:not-allowed;}
+  @media (max-width: 860px){
+    /* Real thumb targets once this is a phone form. */
+    .qty-pick .step-btn{width:42px;height:42px;font-size:19px;}
+    .qty-pick input[type="number"]{width:62px;}
+  }
 </style>
 <script>
 (function(){
@@ -3009,6 +3031,36 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
   var pre=opts.filter(function(o){return o.value===sel.value;})[0];
   if(pre&&!pre.guest) setChosen(pre);
   render('');
+})();
+
+// Quantity steppers: clamp between 0 and the stock on hand, and grey out the
+// button that would take it past either end.
+(function(){
+  function sync(box){
+    var input=box.querySelector('input[type="number"]');
+    var max=Number(box.getAttribute('data-max'))||0;
+    var v=Math.max(0,Math.min(max,Math.round(Number(input.value)||0)));
+    var btns=box.querySelectorAll('.qty-step');
+    for(var i=0;i<btns.length;i++){
+      var d=Number(btns[i].getAttribute('data-delta'));
+      btns[i].disabled = (d<0 && v<=0) || (d>0 && v>=max);
+    }
+    return {input:input,max:max,value:v};
+  }
+  var boxes=document.querySelectorAll('.qty-pick');
+  for(var i=0;i<boxes.length;i++){(function(box){
+    sync(box);
+    box.addEventListener('click',function(e){
+      var btn=e.target.closest?e.target.closest('.qty-step'):null;
+      if(!btn||btn.disabled)return;
+      var s=sync(box);
+      var next=Math.max(0,Math.min(s.max,s.value+Number(btn.getAttribute('data-delta'))));
+      // Blank rather than 0 keeps "not ordered" visually distinct from "zero".
+      s.input.value = next===0 ? '' : String(next);
+      sync(box);
+    });
+    box.addEventListener('input',function(){ sync(box); });
+  })(boxes[i]);}
 })();
 </script>`;
   return page({ title: 'Catat Pesanan Manual — Admin Pecup', bodyHtml: body, noindex: true });
