@@ -1018,11 +1018,48 @@ const CART_SCRIPT = `
       show(carousel, current(carousel) + 1);
     }
 
+    // Getting back from a refused autoplay.
+    //
+    // Nothing in a web page can override a phone that has decided not to play
+    // video by itself — iOS Low Power Mode and Android's data saver both do
+    // exactly that, whatever the markup says. What IS allowed is starting on a
+    // gesture, so the first thing the shopper touches becomes permission to
+    // try again. Wired once for the whole page.
+    var gestureWired = false;
+    function wireGestureRetry(){
+      if(gestureWired) return;
+      gestureWired = true;
+      function retry(){
+        var list = document.querySelectorAll('.carousel[data-auto="1"]');
+        for(var i = 0; i < list.length; i++){
+          var v = activeVideo(list[i]);
+          // Only a clip that never got going. One the shopper paused has
+          // already turned data-auto off, so it is not touched here.
+          if(v && v.paused && !v.ended){
+            v.muted = true;
+            try{ v.play(); }catch(err){}
+          }
+        }
+      }
+      document.addEventListener('touchend', retry, true);
+      document.addEventListener('click', retry, true);
+    }
+
     // Wired once per clip: re-attaching on every pass through syncMedia piled
     // up duplicate listeners, and each one fired.
     function wireVideo(video){
       if(video.getAttribute('data-wired') === '1') return;
       video.setAttribute('data-wired', '1');
+
+      // Some browsers only decide once there is data to play. If the clip is
+      // ready and still hasn't started, ask once more before giving up on it.
+      video.addEventListener('canplay', function(){
+        var carousel = ownsTurn(video);
+        if(carousel && video.paused && !video.ended){
+          video.muted = true;
+          try{ video.play(); }catch(err){}
+        }
+      });
 
       video.addEventListener('timeupdate', function(){
         var carousel = ownsTurn(video);
@@ -1077,6 +1114,7 @@ const CART_SCRIPT = `
       stopTimer(carousel);
       if(carousel.dataset.auto !== '1') return;
       wireVideo(target);
+      wireGestureRetry();
       target.muted = true;   // muted is what makes autoplay allowed at all
       // Covers the clip that never starts: it still gets its own length.
       holdForLength(carousel, target);
