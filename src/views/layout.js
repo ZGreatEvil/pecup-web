@@ -1133,17 +1133,29 @@ const CART_SCRIPT = `
       if(!target){ startTimer(carousel); return; }
       // A clip is showing: hand it the timing.
       stopTimer(carousel);
-      if(carousel.dataset.auto !== '1') return;
+
       wireVideo(target);
       wireGestureRetry();
       target.muted = true;   // muted is what makes autoplay allowed at all
       // Fresh turn, fresh question: has THIS run of the clip played anything?
       target.removeAttribute('data-started');
-      // Covers the clip that never starts: it still gets its own length.
-      holdForLength(carousel, target);
 
+      // ALWAYS try to play the clip that is on screen. Whether the gallery is
+      // still advancing by itself is a separate question, and gating playback
+      // on it was a mistake: tapping an arrow switches that off, so arriving
+      // at a clip by hand — in any position — left it sitting there frozen.
+      //
+      // It also throws away the best chance of playing at all. A tap is a user
+      // gesture, and a gesture is the one moment every browser allows video to
+      // start; that is precisely when this now runs.
       var played = null;
       try{ played = target.play(); }catch(err){}
+
+      // Everything below is about the gallery MOVING ON, which the shopper may
+      // well have switched off. Playing the clip above is not conditional on it.
+      if(carousel.dataset.auto !== '1') return;
+      // Covers the clip that never starts: it still gets its own length.
+      holdForLength(carousel, target);
       // Autoplay refused — a phone on low power, data saver, or a browser that
       // won't start video on its own. The clip keeps its full length on screen
       // and the shopper still has the controls. Falling back to the photo beat
