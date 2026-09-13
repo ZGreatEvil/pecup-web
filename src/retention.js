@@ -110,6 +110,57 @@ async function pruneProofs(days, { dryRun = false } = {}) {
   return { files: deleted, orders: expired.length, bytes };
 }
 
+// Product videos are uploaded straight from the admin's browser BEFORE the
+// product is saved, so an abandoned form — or a save that bounced, or a clip
+// the admin changed their mind about — leaves a file in the public store that
+// nothing points at. Nobody would ever find it to delete it by hand.
+//
+// Only clips with no product referencing them are touched, and only once
+// they're a day old, so a video being uploaded right now is never swept out
+// from under the admin filling in the form.
+const ORPHAN_VIDEO_GRACE_MS = 24 * 60 * 60 * 1000;
+
+async function pruneOrphanVideos({ dryRun = false, graceMs = ORPHAN_VIDEO_GRACE_MS } = {}) {
+  const token = process.env.PRODUCTS_BLOB_READ_WRITE_TOKEN || '';
+  if (!token) return { skipped: 'PRODUCTS_BLOB_READ_WRITE_TOKEN tidak diatur', files: 0 };
+
+  const blobs = [];
+  let cursor;
+  do {
+    const page = await list({ token, prefix: 'produk-video-', cursor, limit: 1000 });
+    blobs.push(...page.blobs);
+    cursor = page.hasMore ? page.cursor : null;
+  } while (cursor);
+  if (!blobs.length) return { files: 0, bytes: 0 };
+
+  // Every url any product points at, primary photo included.
+  const rows = await db.query('select image, images from products');
+  const referenced = new Set();
+  for (const row of rows) {
+    if (row.image) referenced.add(row.image);
+    for (const url of row.images || []) referenced.add(url);
+  }
+
+  // graceMs is a parameter only so the deletion path can be tested without
+  // waiting a day; the sweep itself always uses the full grace period.
+  const cutoff = Date.now() - Math.max(0, Number(graceMs) || 0);
+  const doomed = blobs.filter((b) => !referenced.has(b.url) && Date.parse(b.uploadedAt) < cutoff);
+  if (dryRun) return { files: doomed.length, bytes: doomed.reduce((s, b) => s + (b.size || 0), 0) };
+
+  let deleted = 0;
+  let bytes = 0;
+  for (const blob of doomed) {
+    try {
+      await del(blob.url, { token });
+      deleted += 1;
+      bytes += blob.size || 0;
+    } catch (err) {
+      console.error(`retention: gagal hapus ${blob.pathname}: ${err.message}`);
+    }
+  }
+  return { files: deleted, bytes };
+}
+
 async function pruneLogs(months, { dryRun = false } = {}) {
   if (!months) return { skipped: 'retensi log dimatikan', rows: 0 };
   const where = `created_at < now() - ($1 || ' months')::interval`;
@@ -139,14 +190,18 @@ async function runRetention({ force = false, dryRun = false } = {}) {
 
   const proofs = await pruneProofs(proofDays, { dryRun });
   const logs = await pruneLogs(logMonths, { dryRun });
+  // Not tied to a retention setting: an unreferenced clip isn't data anyone
+  // chose to keep, it's a file left behind by an abandoned upload.
+  const videos = await pruneOrphanVideos({ dryRun });
 
   if (!dryRun) await settings.setValue('last_prune_at', new Date().toISOString());
-  return { ran: true, proofDays, logMonths, proofs, logs };
+  return { ran: true, proofDays, logMonths, proofs, logs, videos };
 }
 
 module.exports = {
   runRetention,
   pruneProofs,
+  pruneOrphanVideos,
   pruneLogs,
   policy,
   DEFAULT_PROOF_DAYS,

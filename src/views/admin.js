@@ -1,5 +1,6 @@
 const { page, adminSidebar, logoMark, backButton } = require('./layout');
-const { productThumb, productPhotos } = require('./productIcon');
+const { productThumb, productMedia } = require('./productIcon');
+const { isVideoUrl, MAX_VIDEO_BYTES, PRODUCT_VIDEO_TYPES } = require('../media');
 const {
   formatRupiah,
   escapeHtml,
@@ -315,29 +316,39 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
   return page({ title: 'Kelola Produk — Admin Pecup', bodyHtml: body, noindex: true });
 }
 
-// The gallery editor: each photo carries a hidden `fotoUrutan` input, so the
+// The gallery editor: each item carries a hidden `fotoUrutan` input, so the
 // order the tiles are in when the form is submitted *is* the saved order —
 // no separate "position" field to keep in sync. The first tile is the main
-// photo and is labelled as such, which is why moving one left matters.
-function photoReorder(photos) {
-  const tiles = photos
-    .map(
-      (url) => `
+// item and is labelled as such, which is why moving one left matters.
+//
+// Photos and videos share this grid and reorder identically; only what's
+// drawn inside the frame differs.
+function photoReorder(items) {
+  const tiles = items
+    .map((url) => {
+      const video = isVideoUrl(url);
+      const what = video ? 'Video' : 'Foto';
+      const inner = video
+        ? `<video src="${escapeAttr(url)}#t=0.1" muted playsinline preload="metadata"
+                  aria-label="Video produk"></video>
+           <span class="foto-jenis">VIDEO</span>`
+        : `<img src="${escapeAttr(url)}" alt="Foto produk" draggable="false">`;
+      return `
       <div class="foto-tile" draggable="true" data-url="${escapeAttr(url)}" tabindex="0"
-           role="listitem" aria-label="Foto produk — seret untuk mengurutkan, atau tekan panah kiri/kanan">
+           role="listitem" aria-label="${what} produk — seret untuk mengurutkan, atau tekan panah kiri/kanan">
         <input type="hidden" name="fotoUrutan" value="${escapeAttr(url)}">
         <div class="foto-frame">
-          <img src="${escapeAttr(url)}" alt="Foto produk" draggable="false">
+          ${inner}
           <span class="foto-utama">UTAMA</span>
           <span class="foto-grip" aria-hidden="true">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
           </span>
         </div>
-        <label class="foto-hapus" title="Centang untuk menghapus foto ini saat disimpan">
+        <label class="foto-hapus" title="Centang untuk menghapus ${what.toLowerCase()} ini saat disimpan">
           <input type="checkbox" name="hapusFoto" value="${escapeAttr(url)}"> Hapus
         </label>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
 
   return `
@@ -348,9 +359,14 @@ function photoReorder(photos) {
       .foto-tile:active{cursor:grabbing;}
       .foto-tile:focus-visible{outline:2.5px solid var(--orange);outline-offset:3px;}
       .foto-frame{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2);}
-      .foto-frame img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+      .foto-frame img, .foto-frame video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+      .foto-frame video{background:#0b0b0c;}
       .foto-utama{display:none;position:absolute;top:4px;left:4px;background:var(--green);color:#fff;font-size:8.5px;
         font-weight:800;letter-spacing:0.3px;padding:3px 7px;border-radius:99px;}
+      /* Marks a tile as a clip, at the bottom so it never sits under the
+         UTAMA badge or the drag grip. */
+      .foto-jenis{position:absolute;left:4px;bottom:4px;background:rgba(17,17,19,0.72);color:#fff;font-size:8.5px;
+        font-weight:800;letter-spacing:0.4px;padding:3px 7px;border-radius:99px;pointer-events:none;}
       /* Whichever tile is first in the DOM is the main photo — so the badge
          and the green frame follow the order instead of being baked in. */
       .foto-tile:first-child .foto-utama{display:block;}
@@ -376,8 +392,8 @@ function photoReorder(photos) {
     </style>
     <div class="foto-grid" id="fotoGaleri" role="list">${tiles}</div>
     <p style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin:0 0 14px;">
-      Seret foto untuk mengurutkan — di HP, tahan ikon titik-titik di pojok foto lalu geser.
-      Bisa juga pilih foto lalu tekan tombol panah &larr; &rarr; di keyboard. Foto pertama jadi foto utama.
+      Seret untuk mengurutkan — di HP, tahan ikon titik-titik di pojok lalu geser.
+      Bisa juga pilih satu lalu tekan tombol panah &larr; &rarr; di keyboard. Yang pertama jadi tampilan utama.
     </p>
     <script>
     (function(){
@@ -489,7 +505,7 @@ function photoReorder(photos) {
     </script>`;
 }
 
-function renderProdukForm({ product, error, categories = [], admin }) {
+function renderProdukForm({ product, error, categories = [], admin, pendingVideos = [] }) {
   const isEdit = Boolean(product && product.id);
   const p = product || {
     name: '',
@@ -504,7 +520,27 @@ function renderProdukForm({ product, error, categories = [], admin }) {
     wholesale_min_qty: '',
     wholesale_price: '',
   };
-  const existingPhotos = productPhotos(p);
+  const existingMedia = productMedia(p);
+  const videoAccept = Object.keys(PRODUCT_VIDEO_TYPES).join(',');
+  const maxVideoMb = Math.round(MAX_VIDEO_BYTES / 1024 / 1024);
+
+  // Clips uploaded before the form bounced on a validation error. They are
+  // already sitting in penyimpanan, so they're handed straight back rather
+  // than making the admin upload 40MB a second time.
+  const pendingRows = pendingVideos
+    .map(
+      (url) => `
+      <div class="video-row is-done">
+        <div class="video-row-top">
+          <div class="video-row-name">Video siap disimpan</div>
+          <button type="button" class="video-row-drop">Batal</button>
+        </div>
+        <div class="video-row-note">Video siap — tersimpan setelah produk disimpan.</div>
+        <input type="hidden" name="videoBaru" value="${escapeAttr(url)}">
+        <video src="${escapeAttr(url)}#t=0.1" muted playsinline controls preload="metadata"></video>
+      </div>`
+    )
+    .join('');
 
   const body = `
 <div class="admin-shell">
@@ -528,14 +564,29 @@ function renderProdukForm({ product, error, categories = [], admin }) {
       <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;">
         <div style="flex:0 0 320px;display:flex;flex-direction:column;gap:20px;">
           <div class="card">
-            <h3 style="font-size:15px;font-weight:800;margin-bottom:6px;">Foto Produk</h3>
-            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Foto pertama jadi <strong>foto utama</strong>. Kalau lebih dari satu, pembeli bisa geser-geser fotonya di halaman produk.</p>
-            ${isEdit && existingPhotos.length ? photoReorder(existingPhotos) : ''}
+            <h3 style="font-size:15px;font-weight:800;margin-bottom:6px;">Foto &amp; Video Produk</h3>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Yang pertama jadi <strong>tampilan utama</strong>. Kalau lebih dari satu, pembeli bisa geser-geser di halaman produk — video ikut diputar di sana.</p>
+            ${isEdit && existingMedia.length ? photoReorder(existingMedia) : ''}
             <div class="dropzone" style="padding:24px;text-align:center;">
               <input type="file" name="image" accept="image/jpeg,image/png,image/webp" multiple style="border:none;padding:0;background:transparent;">
               <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">JPG / PNG / WEBP${
                 isEdit ? ' — foto baru ditambahkan ke galeri' : ''
               }. Bisa pilih beberapa sekaligus.</div>
+            </div>
+
+            <!-- Video is uploaded straight from this page to penyimpanan, not
+                 through the form: a clip is far bigger than the request body
+                 limit. What the form posts is only the resulting address. -->
+            <div class="video-add" id="videoAdd">
+              <label class="video-pick">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.5 10.5l5.2-3v9l-5.2-3z"/><rect x="2.8" y="6" width="12.7" height="12" rx="2.6"/></svg>
+                <span>Tambah Video</span>
+                <input type="file" id="videoPick" accept="${escapeAttr(videoAccept)}">
+              </label>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.6;">
+                MP4 / WEBM / MOV, maksimal ${maxVideoMb}MB. Klip pendek 5&ndash;15 detik paling enak dilihat pembeli.
+              </div>
+              <div class="video-queue" id="videoQueue">${pendingRows}</div>
             </div>
           </div>
         </div>
@@ -606,7 +657,211 @@ function renderProdukForm({ product, error, categories = [], admin }) {
       </div>
     </form>
   </main>
-</div>`;
+</div>
+<style>
+  .video-add{margin-top:14px;padding-top:16px;border-top:1px solid var(--border);}
+  .video-pick{display:inline-flex;align-items:center;gap:9px;margin:0;padding:11px 18px;border-radius:11px;
+    border:1.5px dashed var(--border);background:var(--surface-2);font-size:13.5px;font-weight:700;
+    color:var(--text);cursor:pointer;line-height:1.2;}
+  .video-pick:hover{border-color:var(--orange);color:var(--orange);}
+  /* The real input is driven by the label, so it is hidden without being
+     display:none — a hidden input can still be focused by the keyboard. */
+  .video-pick input[type="file"]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;}
+  .video-pick:focus-within{outline:2.5px solid var(--orange);outline-offset:2px;}
+  .video-queue:empty{display:none;}
+  .video-queue{margin-top:12px;display:flex;flex-direction:column;gap:10px;}
+  .video-row{border:1px solid var(--border);border-radius:12px;padding:11px 13px;background:var(--surface);}
+  .video-row-top{display:flex;align-items:center;gap:10px;}
+  .video-row-name{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:700;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .video-row-drop{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    padding:6px 11px;font-size:11.5px;font-weight:700;font-family:inherit;color:#a13f3f;cursor:pointer;}
+  .video-bar{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:9px;}
+  .video-bar span{display:block;height:100%;width:0;background:var(--orange);border-radius:99px;
+    transition:width 0.18s ease;}
+  .video-row-note{font-size:11.5px;color:var(--text-muted);margin-top:7px;line-height:1.55;}
+  .video-row.is-error{border-color:#e0b4b4;background:#fdf4f4;}
+  .video-row.is-error .video-row-note{color:#a13f3f;}
+  .video-row.is-done{border-color:var(--green);}
+  .video-row video{width:100%;max-height:150px;object-fit:cover;border-radius:9px;margin-top:9px;
+    background:#0b0b0c;display:block;}
+</style>
+<script>
+// Video upload.
+//
+// A clip cannot go through the form: the serverless request body is capped
+// around 4.5MB and a phone video is many times that. So the browser asks the
+// server for a short-lived, single-purpose upload address, PUTs the file
+// straight to penyimpanan, and drops the resulting address into a hidden
+// field. Saving the product then only stores that address.
+//
+// Without JavaScript the photo input still works exactly as before; only the
+// video button needs a script, which is why it isn't a plain file field.
+(function(){
+  var pick = document.getElementById('videoPick');
+  var queue = document.getElementById('videoQueue');
+  if(!pick || !queue) return;
+  var form = pick.form || (pick.closest ? pick.closest('form') : null);
+  if(!form) return;
+
+  var MAX_BYTES = ${MAX_VIDEO_BYTES};
+  var TYPES = ${JSON.stringify(Object.keys(PRODUCT_VIDEO_TYPES))};
+  var pending = 0;
+
+  function readable(bytes){
+    return bytes >= 1024 * 1024
+      ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+      : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  }
+
+  // Saving mid-upload would store a product pointing at a half-written file,
+  // so the submit button waits until every clip has landed.
+  function lock(){
+    var buttons = form.querySelectorAll('button[type="submit"]');
+    for(var i = 0; i < buttons.length; i++){
+      buttons[i].disabled = pending > 0;
+      buttons[i].textContent = pending > 0 ? 'Menunggu video…' : 'Simpan Produk';
+    }
+  }
+
+  function makeRow(name){
+    var row = document.createElement('div');
+    row.className = 'video-row';
+    var top = document.createElement('div');
+    top.className = 'video-row-top';
+    var label = document.createElement('div');
+    label.className = 'video-row-name';
+    label.textContent = name;
+    top.appendChild(label);
+    row.appendChild(top);
+    var bar = document.createElement('div');
+    bar.className = 'video-bar';
+    var fill = document.createElement('span');
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    var note = document.createElement('div');
+    note.className = 'video-row-note';
+    note.textContent = 'Menyiapkan…';
+    row.appendChild(note);
+    queue.appendChild(row);
+    return { row: row, top: top, bar: bar, fill: fill, note: note };
+  }
+
+  function dropButton(label){
+    var drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'video-row-drop';
+    drop.textContent = label;
+    return drop;   // the click is handled by delegation, below
+  }
+
+  // One handler for every row, including the ones the server rendered back
+  // after a failed save.
+  queue.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.video-row-drop') : null;
+    if(!btn) return;
+    var row = btn.closest('.video-row');
+    if(!row) return;
+    var preview = row.querySelector('video');
+    if(preview && String(preview.src).indexOf('blob:') === 0){
+      try{ URL.revokeObjectURL(preview.src); }catch(err){}
+    }
+    row.remove();
+  });
+
+  function fail(ui, message){
+    ui.row.className = 'video-row is-error';
+    ui.bar.hidden = true;
+    ui.note.textContent = message;
+    ui.top.appendChild(dropButton('Tutup'));
+  }
+
+  function succeed(ui, url, file){
+    ui.row.className = 'video-row is-done';
+    ui.bar.hidden = true;
+    ui.note.textContent = 'Video siap — tersimpan setelah produk disimpan.';
+    // This hidden field is the only thing the form actually posts.
+    var hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = 'videoBaru';
+    hidden.value = url;
+    ui.row.appendChild(hidden);
+    var preview = document.createElement('video');
+    preview.src = URL.createObjectURL(file);
+    preview.muted = true;
+    preview.playsInline = true;
+    preview.controls = true;
+    preview.preload = 'metadata';
+    ui.row.appendChild(preview);
+    ui.top.appendChild(dropButton('Batal'));
+  }
+
+  function upload(file){
+    var ui = makeRow(file.name + ' (' + readable(file.size) + ')');
+    pending += 1;
+    lock();
+    function done(){ pending -= 1; lock(); }
+
+    fetch('/admin/media/video/presign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'contentType=' + encodeURIComponent(file.type) + '&size=' + encodeURIComponent(String(file.size))
+    }).then(function(res){
+      return res.json().then(function(data){ return { ok: res.ok, data: data }; });
+    }).then(function(out){
+      if(!out.ok || !out.data || !out.data.uploadUrl){
+        throw new Error((out.data && out.data.error) || 'Tidak bisa menyiapkan unggahan video.');
+      }
+      ui.note.textContent = 'Mengunggah…';
+      // XMLHttpRequest, not fetch: fetch has no upload progress, and a 40MB
+      // clip with no progress bar looks like a frozen page.
+      return new Promise(function(resolve, reject){
+        var xhr = new XMLHttpRequest();
+        xhr.open('PUT', out.data.uploadUrl, true);
+        xhr.setRequestHeader('content-type', file.type);
+        xhr.upload.onprogress = function(e){
+          if(!e.lengthComputable) return;
+          var pct = Math.round((e.loaded / e.total) * 100);
+          ui.fill.style.width = pct + '%';
+          ui.note.textContent = 'Mengunggah… ' + pct + '%';
+        };
+        xhr.onload = function(){
+          if(xhr.status < 200 || xhr.status >= 300) return reject(new Error('Unggahan ditolak (' + xhr.status + ').'));
+          var body = null;
+          try{ body = JSON.parse(xhr.responseText); }catch(err){}
+          if(!body || !body.url) return reject(new Error('Unggahan selesai tapi alamatnya tidak terbaca.'));
+          resolve(body.url);
+        };
+        xhr.onerror = function(){ reject(new Error('Koneksi terputus saat mengunggah.')); };
+        xhr.onabort = function(){ reject(new Error('Unggahan dibatalkan.')); };
+        xhr.send(file);
+      });
+    }).then(function(url){
+      succeed(ui, url, file);
+      done();
+    }).catch(function(err){
+      fail(ui, (err && err.message) || 'Gagal mengunggah video.');
+      done();
+    });
+  }
+
+  pick.addEventListener('change', function(){
+    var file = pick.files && pick.files[0];
+    // Cleared straight away so picking the same file again still fires.
+    pick.value = '';
+    if(!file) return;
+    if(TYPES.indexOf(file.type) < 0){
+      fail(makeRow(file.name), 'Format video harus MP4, WEBM atau MOV.');
+      return;
+    }
+    if(file.size > MAX_BYTES){
+      fail(makeRow(file.name), 'Video terlalu besar (' + readable(file.size) + '). Maksimal ' + readable(MAX_BYTES) + '.');
+      return;
+    }
+    upload(file);
+  });
+})();
+</script>`;
 
   return page({ title: `${isEdit ? 'Edit' : 'Tambah'} Produk — Admin Pecup`, bodyHtml: body, noindex: true });
 }
@@ -1447,6 +1702,15 @@ function renderPelangganDetail({
           ${tierPill(loyalty, tiersEnabled)}
         </div>
       </div>
+      ${
+        canEdit
+          ? // Also the route that needs no JavaScript: the manual-order form's
+            // account picker searches over the network, so this link is how an
+            // account gets attached without a script.
+            `<a class="btn-outline" href="/admin/pesanan/tambah?pelanggan=${customer.id}"
+              style="margin-left:auto;padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Catat Pesanan Manual</a>`
+          : ''
+      }
     </div>
 
     <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">
@@ -2760,7 +3024,7 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
 // Manual order entry: a sale that happened over WhatsApp or at the door, typed
 // in afterwards. It runs through the same create_order path as a web checkout,
 // so stock, stamps, tier perks and the books all move together.
-function renderPesananTambah({ admin, products, customers, errors = [], values = {} }) {
+function renderPesananTambah({ admin, products, picked = null, errors = [], values = {} }) {
   // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
   // would pre-fill the wrong day.
   const today = toDateKey(new Date());
@@ -2805,26 +3069,22 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
         <h2 style="font-size:16px;font-weight:800;margin-bottom:16px;">Pemesan</h2>
         <div class="field">
           <label>Akun Pelanggan</label>
-          <!-- The <select> stays as the real form control and the only thing
-               posted, so this works with no JavaScript at all. When JS runs it
-               hides the select and drives it from the search box below. -->
-          <select name="customerId" id="custSelect" class="cust-fallback">
-            <option value="">Tanpa akun (tamu)</option>
-            ${customers
-              .map(
-                (c) =>
-                  `<option value="${c.id}" ${String(values.customerId || '') === String(c.id) ? 'selected' : ''}
-                     data-name="${escapeAttr(c.name)}" data-wa="${escapeAttr(formatWhatsapp(c.whatsapp))}"
-                     data-digits="${escapeAttr(String(c.whatsapp || '').replace(/\D/g, ''))}"
-                     data-address="${escapeAttr(c.address || '')}">${escapeHtml(c.name)} — ${escapeHtml(
-                    formatWhatsapp(c.whatsapp)
-                  )}</option>`
-              )
-              .join('')}
-          </select>
+          <!-- The account is posted by this one hidden field. The page no
+               longer carries a list of every customer — that list only grows,
+               and on a phone it was already the heaviest thing here. The
+               search box below asks the server instead, as you type. -->
+          <input type="hidden" name="customerId" id="custValue" value="${escapeAttr(
+            picked ? String(picked.id) : ''
+          )}">
 
-          <div class="cust-picker" id="custPicker" hidden>
-            <div class="cust-chosen" id="custChosen"></div>
+          <div class="cust-picker" id="custPicker">
+            <div class="cust-chosen${picked ? ' is-on' : ''}" id="custChosen">${
+              picked
+                ? `<span class="cust-chosen-text">${escapeHtml(picked.name)}${
+                    picked.wa ? ` — ${escapeHtml(picked.wa)}` : ''
+                  }</span><button type="button" data-cust-clear>Ganti</button>`
+                : ''
+            }</div>
             <div class="cust-search-wrap">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
               <input type="search" id="custSearch" autocomplete="off" placeholder="Cari nama atau nomor WhatsApp…"
@@ -2833,9 +3093,11 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
             <div class="cust-results" id="custResults" role="listbox"></div>
           </div>
 
-          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
             Pilih akun supaya pesanan ini menambah stempel — nama, nomor dan alamatnya ikut terisi.
-            Belum punya akun? <a href="/admin/pelanggan/tambah">Buat dulu di sini</a>.
+            Kosongkan saja kalau pembeli tidak punya akun.
+            Belum punya akun? <a href="/admin/pelanggan/tambah">Buat dulu di sini</a>,
+            atau buka <a href="/admin/pelanggan">daftar pelanggan</a> lalu catat pesanan dari sana.
           </div>
         </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
@@ -2949,34 +3211,39 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
   }
 </style>
 <script>
+// Account picker.
+//
+// The customer list is not in this page — it is asked for as you type, 20 rows
+// at a time. Embedding the whole table was fine at a handful of customers and
+// would not have stayed fine: it grows forever, and it is the phone on the
+// other end that pays for it.
 (function(){
-  var sel=document.getElementById('custSelect');
+  var value=document.getElementById('custValue');
   var picker=document.getElementById('custPicker');
-  if(!sel||!picker||!sel.options)return;
   var search=document.getElementById('custSearch');
   var results=document.getElementById('custResults');
   var chosen=document.getElementById('custChosen');
-  // Only swap in the search UI once we know the script runs: without JS the
-  // plain <select> stays and the form still works.
-  sel.style.display='none';
-  picker.hidden=false;
+  if(!value||!picker||!search||!results||!chosen) return;
 
-  var opts=[];
-  for(var i=0;i<sel.options.length;i++){
-    var o=sel.options[i];
-    opts.push({value:o.value,name:o.getAttribute('data-name')||o.text,
-      wa:o.getAttribute('data-wa')||'',digits:o.getAttribute('data-digits')||'',
-      address:o.getAttribute('data-address')||'',guest:!o.value});
+  var timer=null;
+  var inflight=null;      // the request in progress, so a stale reply can't win
+  var lastTerm=null;
+
+  function field(n){ return document.querySelector('[name="'+n+'"]'); }
+
+  function clearChoice(){
+    value.value='';
+    chosen.className='cust-chosen';
+    chosen.innerHTML='';
   }
-  function field(n){return document.querySelector('[name="'+n+'"]');}
+
   function setChosen(o){
-    sel.value=o.value;
-    if(o.guest){ chosen.className='cust-chosen'; chosen.innerHTML=''; return; }
+    value.value=String(o.id);
     chosen.className='cust-chosen is-on';
     var t=document.createElement('span'); t.className='cust-chosen-text';
     t.textContent=o.name+(o.wa?' — '+o.wa:'');
     var b=document.createElement('button'); b.type='button'; b.textContent='Ganti';
-    b.addEventListener('click',function(){ setChosen({value:'',guest:true}); search.value=''; render(''); search.focus(); });
+    b.setAttribute('data-cust-clear','');
     chosen.innerHTML=''; chosen.appendChild(t); chosen.appendChild(b);
     // Fill the order fields from the account — that is the point of picking one.
     var n=field('customerName'), w=field('whatsapp'), a=field('address');
@@ -2984,53 +3251,94 @@ function renderPesananTambah({ admin, products, customers, errors = [], values =
     if(w) w.value=o.wa||o.digits;
     if(a && o.address && !a.value) a.value=o.address;
   }
-  // Numbers are stored as 62xxx but people type 0xxx, so try every spelling of
-  // the same number - the server-side customer search does exactly this too.
-  function phoneForms(digits){
-    if(!digits) return [];
-    var forms=[digits];
-    if(digits.charAt(0)==='0') forms.push('62'+digits.slice(1));
-    if(digits.slice(0,2)==='62') forms.push('0'+digits.slice(2));
-    if(digits.slice(0,3)==='620') forms.push('62'+digits.slice(3));
-    return forms;
+
+  // Works for the "Ganti" button the server rendered as well as ours.
+  chosen.addEventListener('click',function(e){
+    var btn=e.target.closest?e.target.closest('[data-cust-clear]'):null;
+    if(!btn) return;
+    clearChoice();
+    search.value='';
+    message('Ketik nama atau nomor WhatsApp untuk mencari akun.');
+    search.focus();
+  });
+
+  function message(text){
+    results.innerHTML='';
+    var e=document.createElement('div'); e.className='cust-empty';
+    e.textContent=text;
+    results.appendChild(e);
   }
-  function render(q){
-    var term=String(q||'').trim().toLowerCase();
-    var forms=phoneForms(term.replace(/\\D/g,''));
-    var list=opts.filter(function(o){
-      if(o.guest) return !term;
-      if(!term) return true;
-      if(o.name.toLowerCase().indexOf(term)>=0) return true;
-      for(var i=0;i<forms.length;i++){ if(forms[i].length>=3 && o.digits.indexOf(forms[i])>=0) return true; }
-      return false;
-    });
+
+  function draw(list){
     results.innerHTML='';
     if(!list.length){
-      var e=document.createElement('div'); e.className='cust-empty';
-      e.textContent='Tidak ada pelanggan yang cocok. Pesanan bisa tetap dicatat tanpa akun.';
-      results.appendChild(e); return;
+      message('Tidak ada pelanggan yang cocok. Pesanan bisa tetap dicatat tanpa akun.');
+      return;
     }
-    list.slice(0,60).forEach(function(o){
+    list.forEach(function(o){
       var b=document.createElement('button');
       b.type='button'; b.className='cust-opt'; b.setAttribute('role','option');
-      b.setAttribute('aria-selected', String(sel.value===o.value));
+      b.setAttribute('aria-selected', String(value.value===String(o.id)));
       var nm=document.createElement('span'); nm.className='cust-opt-name';
-      nm.textContent=o.guest?'Tanpa akun (tamu)':o.name;
+      nm.textContent=o.name;
       b.appendChild(nm);
-      if(!o.guest){ var wa=document.createElement('span'); wa.className='cust-opt-wa'; wa.textContent=o.wa; b.appendChild(wa); }
-      b.addEventListener('click',function(){ setChosen(o); render(search.value); });
+      if(o.wa){ var wa=document.createElement('span'); wa.className='cust-opt-wa'; wa.textContent=o.wa; b.appendChild(wa); }
+      b.addEventListener('click',function(){
+        setChosen(o);
+        results.innerHTML='';
+        search.value='';
+      });
       results.appendChild(b);
     });
   }
-  search.addEventListener('input',function(){ render(search.value); });
+
+  function run(term){
+    if(term===lastTerm) return;
+    lastTerm=term;
+    if(!term){
+      if(inflight){ inflight.abort(); inflight=null; }
+      message('Ketik nama atau nomor WhatsApp untuk mencari akun.');
+      return;
+    }
+    // Only the newest question gets an answer: without this a slow reply for
+    // "an" can land after the reply for "andi" and overwrite it.
+    if(inflight) inflight.abort();
+    var ctrl=new AbortController();
+    inflight=ctrl;
+    fetch('/admin/pelanggan/cari?q='+encodeURIComponent(term),{signal:ctrl.signal,credentials:'same-origin'})
+      .then(function(res){ if(!res.ok) throw new Error('gagal'); return res.json(); })
+      .then(function(data){
+        if(ctrl!==inflight) return;
+        inflight=null;
+        draw((data&&data.customers)||[]);
+      })
+      .catch(function(err){
+        if(err&&err.name==='AbortError') return;
+        if(ctrl!==inflight) return;
+        inflight=null;
+        message('Pencarian gagal. Periksa koneksi lalu ketik lagi.');
+      });
+  }
+
+  search.addEventListener('input',function(){
+    var term=search.value.trim();
+    if(timer) clearTimeout(timer);
+    // Long enough that typing a name isn't one request per letter, short
+    // enough that the list doesn't feel late.
+    timer=setTimeout(function(){ run(term); },220);
+  });
+
   // Enter must not submit the whole order form from the search box.
   search.addEventListener('keydown',function(ev){
-    if(ev.key==='Enter'){ ev.preventDefault();
-      var first=results.querySelector('.cust-opt'); if(first) first.click(); }
+    if(ev.key!=='Enter') return;
+    ev.preventDefault();
+    var first=results.querySelector('.cust-opt');
+    if(first){ first.click(); return; }
+    if(timer){ clearTimeout(timer); timer=null; }
+    run(search.value.trim());
   });
-  var pre=opts.filter(function(o){return o.value===sel.value;})[0];
-  if(pre&&!pre.guest) setChosen(pre);
-  render('');
+
+  message('Ketik nama atau nomor WhatsApp untuk mencari akun.');
 })();
 
 // Quantity steppers: clamp between 0 and the stock on hand, and grey out the

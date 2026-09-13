@@ -376,6 +376,49 @@ const CUSTOMER_SORTS = {
   'tier-asc': (a, b) => a.tier.minClaims - b.tier.minClaims || a.claims - b.claims,
 };
 
+// `%` and `_` are wildcards to LIKE, so a search for a literal one has to be
+// escaped or it quietly matches everything.
+function likeTerm(value) {
+  return `%${String(value).replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
+/**
+ * A deliberately thin lookup for the manual-order account picker.
+ *
+ * It does NOT go through listCustomersWithLoyalty: that one resolves stamps,
+ * tiers and expiry for every row, which is the right thing for the customer
+ * list page and pure waste for a picker that shows a name and a number. It
+ * also never returns the whole table — the picker searches, it doesn't browse.
+ */
+async function searchCustomersForPicker(search, limit = 20) {
+  const term = String(search || '').trim();
+  if (!term) return [];
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+  const digits = term.replace(/\D/g, '');
+
+  const clauses = ['name ilike $1'];
+  const params = [likeTerm(term)];
+  if (digits) {
+    // 0812… and 62812… are the same number.
+    params.push(`%${digits}%`);
+    clauses.push(`whatsapp like $${params.length}`);
+    params.push(`%${digits.replace(/^0/, '')}%`);
+    clauses.push(`whatsapp like $${params.length}`);
+  }
+  params.push(safeLimit);
+  return db.query(
+    `select id, name, whatsapp, address from customers
+      where ${clauses.join(' or ')}
+      order by name limit $${params.length}`,
+    params
+  );
+}
+
+async function getCustomerBasic(id) {
+  const rows = await db.query('select id, name, whatsapp, address from customers where id = $1', [id]);
+  return rows[0] || null;
+}
+
 async function listCustomersWithLoyalty({ search = '', limit = 100, sort = 'baru', tier = '', only = '' } = {}) {
   const term = String(search || '').trim();
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
@@ -391,7 +434,7 @@ async function listCustomersWithLoyalty({ search = '', limit = 100, sort = 'baru
     // letters-only search must not turn into `whatsapp like '%%'`, which
     // would quietly match every customer.
     const clauses = ['name ilike $1'];
-    const params = [`%${term}%`];
+    const params = [likeTerm(term)];
     if (digits) {
       params.push(`%${digits}%`);
       clauses.push(`whatsapp like $${params.length}`);
@@ -478,4 +521,6 @@ module.exports = {
   setClaims,
   listStamps,
   listCustomersWithLoyalty,
+  searchCustomersForPicker,
+  getCustomerBasic,
 };

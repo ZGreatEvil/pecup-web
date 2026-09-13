@@ -1,4 +1,5 @@
 const { escapeAttr } = require('../utils');
+const { isVideoUrl, productMedia, productPhotos } = require('../media');
 
 // Deterministic pastel tint per product so the placeholder icon (used until
 // a real photo is uploaded) stays visually distinct across the catalog.
@@ -35,15 +36,34 @@ function soldOutBanner() {
   </div>`;
 }
 
-// Every photo for a product, in display order. `image` is the primary and
-// always comes first; `images` may repeat it, so duplicates are dropped.
-function productPhotos(product) {
-  const list = [];
-  if (product.image) list.push(product.image);
-  for (const url of product.images || []) {
-    if (url && !list.includes(url)) list.push(url);
+const PLAY_BADGE =
+  `<span class="media-play" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.6v12.8c0 .8.9 1.3 1.6.9l10-6.4a1 1 0 000-1.8l-10-6.4A1 1 0 008 5.6z"/></svg></span>`;
+
+// One slot of the gallery: a photo, or a video shown the same size and shape.
+//
+// Two quite different jobs, hence `interactive`. On a product *card* the whole
+// tile is a link, so the video must not swallow the tap — it renders as a
+// muted, silent first frame with a play badge, and the click goes through to
+// the product page. On the product page itself it gets real controls.
+//
+// `#t=0.1` asks the browser for a frame a hair into the clip: without it
+// Safari and older Chrome show a black box until you press play.
+function mediaElement(url, { alt, dim = '', interactive = false, eager = true }) {
+  if (!isVideoUrl(url)) {
+    return `<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" class="thumb-fill"${
+      eager ? '' : ' loading="lazy"'
+    } style="${dim}">`;
   }
-  return list;
+  // No `loop`: the carousel waits for the clip's "ended" event before moving
+  // on, and a looping video never ends.
+  const common =
+    `class="thumb-fill" muted playsinline preload="metadata" disablepictureinpicture ` +
+    `aria-label="${escapeAttr(alt)}"`;
+  if (interactive) {
+    return `<video src="${escapeAttr(url)}#t=0.1" ${common} controls controlslist="nodownload noplaybackrate" style="${dim}"></video>`;
+  }
+  // pointer-events:none keeps the card's own link in charge of the tap.
+  return `<video src="${escapeAttr(url)}#t=0.1" ${common} style="${dim}pointer-events:none;"></video>${PLAY_BADGE}`;
 }
 
 const ARROW_LEFT =
@@ -51,47 +71,60 @@ const ARROW_LEFT =
 const ARROW_RIGHT =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
 
-// Renders a square product thumbnail: the uploaded photo(s) if present,
-// otherwise the pastel fruit-cup placeholder icon. Out-of-stock products get
-// a greyed-out image with a centered "Stok Habis" banner. With more than one
-// photo it becomes a carousel — arrows and dots everywhere it appears, but
-// only auto-advancing where `autoplay` is set (the product page).
+// Renders a square product thumbnail: the uploaded photo(s) and video(s) if
+// present, otherwise the pastel fruit-cup placeholder icon. Out-of-stock
+// products get a greyed-out image with a centered "Stok Habis" banner. With
+// more than one item it becomes a carousel — arrows and dots everywhere it
+// appears, but only auto-advancing where `autoplay` is set (the product page).
 function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}) {
   const [tint, tintSoft] = tintFor(product.id);
   const soldOut = Number(product.stock) <= 0;
   const dim = soldOut ? 'filter:grayscale(1);opacity:0.6;' : '';
-  const photos = productPhotos(product);
+  const media = productMedia(product);
+  // A clip is only playable where it isn't standing inside a link — that's
+  // the product page, which is also the only place that autoplays.
+  const interactive = autoplay;
 
   let inner;
-  if (photos.length === 0) {
+  if (media.length === 0) {
     inner = `<div class="thumb-fill" style="display:flex;align-items:center;justify-content:center;${dim}">${placeholderSvg(
       tint,
       size
     )}</div>`;
-  } else if (photos.length === 1) {
-    inner = `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(product.name)}" class="thumb-fill" style="${dim}">`;
+  } else if (media.length === 1) {
+    inner = mediaElement(media[0], { alt: product.name, dim, interactive });
   } else {
-    // Each photo sits in its own clipping box (.carousel-slide) rather than
+    // Each item sits in its own clipping box (.carousel-slide) rather than
     // being a flex item itself — the card's hover zoom scales the image, and
     // without a clip that overflow spills into the neighbouring photo.
-    const slides = photos
+    const slides = media
       .map(
-        (url, i) => `<div class="carousel-slide"><img src="${escapeAttr(url)}" alt="${escapeAttr(
-          product.name
-        )} foto ${i + 1}" loading="${i === 0 ? 'eager' : 'lazy'}" style="${dim}"></div>`
+        (url, i) =>
+          `<div class="carousel-slide">${mediaElement(url, {
+            alt: `${product.name} ${isVideoUrl(url) ? 'video' : 'foto'} ${i + 1}`,
+            dim,
+            interactive,
+            eager: i === 0,
+          })}</div>`
       )
       .join('');
-    const dots = photos
+    const dots = media
       .map(
-        (_, i) =>
-          `<button type="button" class="carousel-dot${i === 0 ? ' is-active' : ''}" data-index="${i}" aria-label="Foto ${i + 1}"></button>`
+        (url, i) =>
+          `<button type="button" class="carousel-dot${i === 0 ? ' is-active' : ''}" data-index="${i}" aria-label="${
+            isVideoUrl(url) ? 'Video' : 'Foto'
+          } ${i + 1}"></button>`
       )
       .join('');
 
-    inner = `<div class="carousel" data-count="${photos.length}"${autoplay ? ' data-autoplay="2000"' : ''}>
+    // Auto-advance still applies with a video in the gallery — it's the clip
+    // that sets the pace there: the timer stands down while a video plays and
+    // the carousel moves on when the clip ends (see the carousel script in
+    // layout.js).
+    inner = `<div class="carousel" data-count="${media.length}"${autoplay ? ' data-autoplay="2000"' : ''}>
       <div class="carousel-track">${slides}</div>
-      <button type="button" class="carousel-arrow carousel-prev" aria-label="Foto sebelumnya">${ARROW_LEFT}</button>
-      <button type="button" class="carousel-arrow carousel-next" aria-label="Foto berikutnya">${ARROW_RIGHT}</button>
+      <button type="button" class="carousel-arrow carousel-prev" aria-label="Sebelumnya">${ARROW_LEFT}</button>
+      <button type="button" class="carousel-arrow carousel-next" aria-label="Berikutnya">${ARROW_RIGHT}</button>
       <div class="carousel-dots">${dots}</div>
     </div>`;
   }
@@ -106,4 +139,4 @@ function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}
   </div>`;
 }
 
-module.exports = { productThumb, productPhotos, tintFor, placeholderSvg };
+module.exports = { productThumb, productMedia, productPhotos, mediaElement, tintFor, placeholderSvg };

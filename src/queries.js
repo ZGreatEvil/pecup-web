@@ -3,6 +3,7 @@
 // Every function here is async.
 const db = require('./db');
 const { toDateKey } = require('./utils');
+const { isVideoUrl } = require('./media');
 
 // ---------------- products ----------------
 
@@ -66,9 +67,11 @@ async function createProduct(data) {
 async function updateProduct(id, data) {
   // The gallery is always rewritten wholesale from `data.images` (the caller
   // has already merged keeps + removals + new uploads). `image` stays in sync
-  // as the first photo so the rest of the app's single-photo paths still work.
+  // as the first photo so the rest of the app's single-photo paths still work
+  // — the first *photo*, not the first item, since a video may lead the
+  // gallery and og:image or structured data can't use one.
   const images = data.images || [];
-  const primary = images[0] || null;
+  const primary = images.find((url) => !isVideoUrl(url)) || null;
   await db.query(
     `update products set name = $1, description = $2, category = $3, weight = $4,
             price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9,

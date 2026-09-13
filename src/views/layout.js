@@ -236,7 +236,17 @@ const SHARED_STYLE = `
      (.p-card:hover img -> scale) pushes each image past its slot and the
      neighbouring photo peeks in at the edges. */
   .carousel-slide{flex:0 0 100%;width:100%;height:100%;overflow:hidden;position:relative;}
-  .carousel-slide img{width:100%;height:100%;object-fit:cover;display:block;}
+  .carousel-slide img, .carousel-slide video{width:100%;height:100%;object-fit:cover;display:block;}
+  /* A video fills the same square as a photo, so a gallery of both keeps one
+     shape. object-fit crops rather than letterboxes, matching the photos. */
+  video.thumb-fill{background:#0b0b0c;}
+  /* Marks a slot as a clip where the video itself can't be tapped (product
+     cards are links). Sits out of the way of the carousel dots. */
+  .media-play{position:absolute;left:8px;bottom:8px;z-index:2;width:26px;height:26px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;background:rgba(17,17,19,0.62);color:#fff;
+    pointer-events:none;box-shadow:0 1px 5px rgba(0,0,0,0.3);}
+  .media-play svg{margin-left:1.5px;}
+  @media (max-width: 560px){ .media-play{width:23px;height:23px;} }
   .carousel-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:30px;height:30px;border-radius:50%;
     border:none;background:rgba(255,255,255,0.86);color:#2b2b2f;display:flex;align-items:center;justify-content:center;
     box-shadow:0 2px 8px rgba(0,0,0,0.18);opacity:0;transition:opacity 0.2s ease, background 0.18s ease;}
@@ -921,8 +931,57 @@ const CART_SCRIPT = `
     }
   });
 
-  // ---- Product photo carousel -------------------------------------------
+  // ---- Product photo / video carousel -----------------------------------
+  //
+  // A gallery can mix photos and clips. Photos are held for a fixed beat by a
+  // timer; a clip instead *is* the beat — the timer stands down, the clip
+  // plays muted, and the carousel moves on when it ends. "data-auto" is the
+  // single switch for all of that, and it is turned off for good the moment
+  // the shopper touches an arrow or a dot.
   (function(){
+    function current(carousel){ return Number(carousel.dataset.index) || 0; }
+    function slides(carousel){ return carousel.querySelectorAll('.carousel-slide'); }
+
+    function stopTimer(carousel){
+      if(carousel.dataset.timer){ clearInterval(Number(carousel.dataset.timer)); carousel.dataset.timer = ''; }
+    }
+    function startTimer(carousel){
+      if(carousel.dataset.timer || carousel.dataset.auto !== '1') return;
+      var delay = Number(carousel.dataset.autoplay) || 2000;
+      var timer = setInterval(function(){
+        if(!document.body.contains(carousel)){ clearInterval(timer); return; }
+        show(carousel, current(carousel) + 1);
+      }, delay);
+      carousel.dataset.timer = String(timer);
+    }
+
+    function videoIn(carousel, index){
+      var box = slides(carousel)[index];
+      return box ? box.querySelector('video') : null;
+    }
+
+    // Everything that isn't on screen is stopped and rewound, so coming back
+    // to a clip starts it from the top rather than mid-sentence.
+    function syncMedia(carousel, index){
+      var all = carousel.querySelectorAll('video');
+      for(var i = 0; i < all.length; i++){
+        if(all[i] !== videoIn(carousel, index)){
+          try{ all[i].pause(); all[i].currentTime = 0; }catch(err){}
+        }
+      }
+      var video = videoIn(carousel, index);
+      if(!video){ startTimer(carousel); return; }
+      // A clip is showing: hand it the timing.
+      stopTimer(carousel);
+      if(carousel.dataset.auto !== '1') return;
+      video.muted = true;   // muted is what makes autoplay allowed at all
+      var played = null;
+      try{ played = video.play(); }catch(err){}
+      // Autoplay refused (data saver, a browser that won't budge): fall back
+      // to the ordinary timer so the gallery doesn't just stop dead.
+      if(played && played.catch) played.catch(function(){ startTimer(carousel); });
+    }
+
     function show(carousel, index){
       var count = Number(carousel.dataset.count) || 1;
       var next = ((index % count) + count) % count; // wrap both directions
@@ -933,8 +992,8 @@ const CART_SCRIPT = `
       for(var i = 0; i < dots.length; i++){
         dots[i].classList.toggle('is-active', i === next);
       }
+      syncMedia(carousel, next);
     }
-    function current(carousel){ return Number(carousel.dataset.index) || 0; }
 
     document.addEventListener('click', function(e){
       if(!e.target.closest) return;
@@ -947,26 +1006,34 @@ const CART_SCRIPT = `
       // when the tap was meant for the carousel.
       e.preventDefault();
       e.stopPropagation();
+      // A manual interaction cancels autoplay — it's fighting the shopper
+      // otherwise. Cleared before show() so it doesn't start a clip either.
+      carousel.dataset.auto = '';
+      stopTimer(carousel);
       if(dot) show(carousel, Number(dot.dataset.index) || 0);
       else show(carousel, current(carousel) + (arrow.classList.contains('carousel-next') ? 1 : -1));
-      // A manual interaction cancels autoplay — it's fighting the shopper otherwise.
-      if(carousel.dataset.timer){ clearInterval(Number(carousel.dataset.timer)); carousel.dataset.timer = ''; }
     });
+
+    // "ended" doesn't bubble, so it's caught on the way down instead.
+    document.addEventListener('ended', function(e){
+      var video = e.target;
+      if(!video || !video.closest) return;
+      var carousel = video.closest('.carousel');
+      if(!carousel || carousel.dataset.auto !== '1') return;
+      // The clip has had its turn — move along.
+      show(carousel, current(carousel) + 1);
+    }, true);
 
     function startAutoplay(){
       var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if(reduce) return;
       var list = document.querySelectorAll('.carousel[data-autoplay]');
       for(var i = 0; i < list.length; i++){
-        (function(carousel){
-          if(carousel.dataset.timer) return;
-          var delay = Number(carousel.dataset.autoplay) || 2000;
-          var timer = setInterval(function(){
-            if(!document.body.contains(carousel)){ clearInterval(timer); return; }
-            show(carousel, current(carousel) + 1);
-          }, delay);
-          carousel.dataset.timer = String(timer);
-        })(list[i]);
+        var carousel = list[i];
+        if(carousel.dataset.auto === '1') continue;
+        carousel.dataset.auto = '1';
+        // Starts the timer, or plays the clip if the gallery opens on one.
+        syncMedia(carousel, current(carousel));
       }
     }
     if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startAutoplay);

@@ -117,8 +117,13 @@ Buat repo baru di GitHub (disarankan PRIVATE), lalu:
      RESEND_API_KEY           = (dari langkah 3)
      SELLER_EMAIL             = (dari langkah 3)
 
+   Opsional (boleh dikosongkan):
+     PRODUCT_VIDEO_MAX_MB     = batas ukuran video produk, default 50
+     SITE_ORIGIN              = alamat tokomu, kalau tautan di email pesanan
+                                perlu dipaksa ke satu alamat tertentu
+
 4. Klik "Deploy". Tunggu sekitar 30-60 detik, selesai -- kamu dapat URL
-   seperti pecup-app-vercel.vercel.app
+   dari Vercel (bentuknya nama-proyek.vercel.app)
 
 
 8. (ALTERNATIF) DEPLOY LEWAT VERCEL CLI TANPA GITHUB

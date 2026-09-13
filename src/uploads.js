@@ -1,7 +1,13 @@
 // Turns an uploaded file (as parsed by src/body.js) into a stored Vercel
 // Blob object, returning whatever value the database should keep.
 const crypto = require('crypto');
-const { uploadProductImage, uploadProofFile, signedProofUrl } = require('./storage');
+const {
+  uploadProductImage,
+  uploadProofFile,
+  signedProofUrl,
+  presignProductVideoUpload,
+  productBlobInfo,
+} = require('./storage');
 
 const EXT_BY_MIME = {
   'image/jpeg': '.jpg',
@@ -30,4 +36,14 @@ async function saveProofFile(file) {
   return uploadProofFile(objectPath, file.buffer, file.mimetype);
 }
 
-module.exports = { saveProductImage, saveProofFile, signedProofUrl };
+// Videos aren't uploaded here at all — they go straight from the admin's
+// browser to the public store (see src/media.js for why). These two are the
+// server's half of that: handing out the address, and checking afterwards
+// that what came back really is a blob of ours.
+module.exports = {
+  saveProductImage,
+  saveProofFile,
+  signedProofUrl,
+  presignProductVideoUpload,
+  productBlobInfo,
+};

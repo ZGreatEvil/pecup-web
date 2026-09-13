@@ -38,8 +38,15 @@ const {
 } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
-const { saveProductImage, saveProofFile, signedProofUrl } = require('../src/uploads');
-const { productPhotos } = require('../src/views/productIcon');
+const {
+  saveProductImage,
+  saveProofFile,
+  signedProofUrl,
+  presignProductVideoUpload,
+  productBlobInfo,
+} = require('../src/uploads');
+const { productMedia } = require('../src/views/productIcon');
+const media = require('../src/media');
 
 const shopViews = require('../src/views/shop');
 const adminViews = require('../src/views/admin');
@@ -994,33 +1001,75 @@ router.get('/admin/produk', requireAdmin(async (req, res, { query }) => {
   );
 }));
 
+// Mints a one-shot upload address for a product video.
+//
+// The clip never passes through here — a Vercel function body is capped near
+// 4.5MB. The browser PUTs the file straight to the public store using this
+// address, which is scoped to a single pathname, a single content type, a
+// hard byte ceiling and a few minutes of life, all enforced by the store
+// itself rather than trusted from the page.
+router.post('/admin/media/video/presign', requireAdmin(async (req, res) => {
+  const { fields } = await parseBody(req);
+  const contentType = String(fields.contentType || '').trim();
+  const size = Number(fields.size);
+
+  if (!media.PRODUCT_VIDEO_TYPES[contentType]) {
+    return sendJson(res, { error: 'Format video harus MP4, WEBM atau MOV.' }, 400);
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    return sendJson(res, { error: 'Ukuran video tidak terbaca.' }, 400);
+  }
+  if (size > media.MAX_VIDEO_BYTES) {
+    const mb = Math.round(media.MAX_VIDEO_BYTES / 1024 / 1024);
+    return sendJson(res, { error: `Video terlalu besar. Maksimal ${mb}MB.` }, 400);
+  }
+
+  const pathname = media.videoPathname(contentType);
+  try {
+    const uploadUrl = await presignProductVideoUpload({
+      pathname,
+      contentType,
+      maximumSizeInBytes: media.MAX_VIDEO_BYTES,
+    });
+    sendJson(res, { uploadUrl, pathname });
+  } catch (err) {
+    sendJson(res, { error: 'Penyimpanan video sedang tidak bisa dihubungi. Coba lagi.' }, 502);
+  }
+}));
+
 router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
   const categories = await queries.listCategories();
   sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin }));
 }));
 
 router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
-  const { fields, fileLists } = await parseBody(req);
-  const error = validateProductFields(fields);
-  if (error) {
-    const categories = await queries.listCategories();
-    return sendHtml(res, adminViews.renderProdukForm({ product: fields, error, categories, admin: req.admin }));
-  }
-
-  let images;
-  try {
-    images = await uploadGalleryFiles(fileLists.image);
-  } catch (err) {
-    const categories = await queries.listCategories();
-    return sendHtml(
+  const { fields, fieldLists, fileLists } = await parseBody(req);
+  // Clips are already uploaded by the time the form is posted, so they're
+  // carried back through every failure path — bouncing the form must not cost
+  // the admin the upload.
+  const pendingVideos = (fieldLists.videoBaru || []).filter((url) => media.isProductVideoUrl(String(url || '').trim()));
+  const bounce = async (message) =>
+    sendHtml(
       res,
       adminViews.renderProdukForm({
         product: fields,
-        error: err.userMessage || 'Gagal mengunggah foto. Coba lagi.',
-        categories,
+        error: message,
+        categories: await queries.listCategories(),
         admin: req.admin,
+        pendingVideos,
       })
     );
+
+  const error = validateProductFields(fields);
+  if (error) return bounce(error);
+
+  let images;
+  try {
+    const photos = await uploadGalleryFiles(fileLists.image);
+    const videos = await acceptVideoUrls(fieldLists.videoBaru);
+    images = [...photos, ...videos];
+  } catch (err) {
+    return bounce(err.userMessage || 'Gagal mengunggah foto. Coba lagi.');
   }
   await queries.createProduct({
     name: fields.name.trim(),
@@ -1029,7 +1078,9 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     weight: fields.weight.trim(),
     price: Number(fields.price),
     stock: Number(fields.stock),
-    image: images[0] || null,
+    // `image` is the primary *photo*, not the first item: a video can lead the
+    // gallery, but og:image and structured data need a still.
+    image: images.find((url) => !media.isVideoUrl(url)) || null,
     images,
     active: fields.active ? 1 : 0,
     isBestseller: fields.is_bestseller ? 1 : 0,
@@ -1053,26 +1104,28 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   if (!existing) return notFound(res);
 
   const { fields, fieldLists, fileLists } = await parseBody(req);
-  const error = validateProductFields(fields);
-  if (error) {
-    const categories = await queries.listCategories();
-    return sendHtml(
+  const pendingVideos = (fieldLists.videoBaru || []).filter((url) => media.isProductVideoUrl(String(url || '').trim()));
+  const bounce = async (message) =>
+    sendHtml(
       res,
       adminViews.renderProdukForm({
         product: { ...fields, id, image: existing.image, images: existing.images },
-        error,
-        categories,
+        error: message,
+        categories: await queries.listCategories(),
         admin: req.admin,
+        pendingVideos,
       })
     );
-  }
+
+  const error = validateProductFields(fields);
+  if (error) return bounce(error);
 
   // Gallery = (existing photos the admin didn't tick "Hapus" on, in whatever
   // order the tiles ended up in) + new uploads appended. `fotoUrutan` carries
   // that order; it's filtered against the photos actually on the product so a
   // forged or stale value can't inject a URL.
   const removed = new Set(fieldLists.hapusFoto || []);
-  const onProduct = productPhotos(existing);
+  const onProduct = productMedia(existing);
   const requested = (fieldLists.fotoUrutan || []).filter((url) => onProduct.includes(url));
   // Anything the form didn't mention (older tab, JS off) keeps its old spot
   // at the end rather than silently disappearing.
@@ -1080,18 +1133,13 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   const kept = Array.from(new Set(ordered)).filter((url) => !removed.has(url));
   let uploaded;
   try {
-    uploaded = await uploadGalleryFiles(fileLists.image);
+    const photos = await uploadGalleryFiles(fileLists.image);
+    const videos = await acceptVideoUrls(fieldLists.videoBaru);
+    // Anything already on the product is filtered out: re-posting the same
+    // clip must not put it in the gallery twice.
+    uploaded = [...photos, ...videos].filter((url) => !kept.includes(url));
   } catch (err) {
-    const categories = await queries.listCategories();
-    return sendHtml(
-      res,
-      adminViews.renderProdukForm({
-        product: { ...fields, id, image: existing.image, images: existing.images },
-        error: err.userMessage || 'Gagal mengunggah foto. Coba lagi.',
-        categories,
-        admin: req.admin,
-      })
-    );
+    return bounce(err.userMessage || 'Gagal mengunggah foto. Coba lagi.');
   }
   const images = [...kept, ...uploaded];
 
@@ -1311,17 +1359,28 @@ router.post('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
 }));
 
 router.get('/admin/pesanan/tambah', requireSuperadmin(async (req, res, { query }) => {
-  const [products, customers] = await Promise.all([
+  // Only the one account that was linked to (from the customer page), if any.
+  // The picker searches the server as you type, so the page no longer carries
+  // the customer table with it — that list only ever grows.
+  const wanted = Number(query.get('pelanggan')) || 0;
+  const [products, picked] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
-    loyalty.listCustomersWithLoyalty({ limit: 500, sort: 'nama' }),
+    wanted ? loyalty.getCustomerBasic(wanted) : null,
   ]);
-  const picked = customers.find((c) => String(c.id) === String(query.get('pelanggan') || ''));
   sendHtml(
     res,
     adminViews.renderPesananTambah({
       admin: req.admin,
       products,
-      customers,
+      picked: picked
+        ? {
+            id: Number(picked.id),
+            name: picked.name,
+            wa: formatWhatsapp(picked.whatsapp),
+            digits: String(picked.whatsapp || '').replace(/\D/g, ''),
+            address: picked.address || '',
+          }
+        : null,
       values: picked
         ? { customerId: picked.id, customerName: picked.name, whatsapp: formatWhatsapp(picked.whatsapp) }
         : {},
@@ -1331,10 +1390,7 @@ router.get('/admin/pesanan/tambah', requireSuperadmin(async (req, res, { query }
 
 router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
   const { fields } = await parseBody(req);
-  const [products, customers] = await Promise.all([
-    queries.listProducts({ onlyActive: true }),
-    loyalty.listCustomersWithLoyalty({ limit: 500, sort: 'nama' }),
-  ]);
+  const products = await queries.listProducts({ onlyActive: true });
 
   const qty = {};
   for (const p of products) {
@@ -1354,10 +1410,24 @@ router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
     useReward: Boolean(fields.useReward),
     qty,
   };
+  // The picked account, looked up rather than taken on trust. It has to be
+  // fetched anyway to redraw the picker after an error, and checking that it
+  // exists is what keeps a stale or hand-typed id from reaching create_order.
+  const pickedCustomer = customerId ? await loyalty.getCustomerBasic(Number(customerId)) : null;
+  const picked = pickedCustomer
+    ? {
+        id: Number(pickedCustomer.id),
+        name: pickedCustomer.name,
+        wa: formatWhatsapp(pickedCustomer.whatsapp),
+        digits: String(pickedCustomer.whatsapp || '').replace(/\D/g, ''),
+        address: pickedCustomer.address || '',
+      }
+    : null;
   const rerender = (errors) =>
-    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, customers, errors, values }));
+    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, picked, errors, values }));
 
   const errors = [];
+  if (customerId && !pickedCustomer) errors.push('Akun pelanggan yang dipilih tidak ditemukan.');
   if (!values.customerName) errors.push('Nama pemesan wajib diisi.');
   const normalized = normalizeWhatsapp(values.whatsapp);
   if (!normalized) errors.push('Nomor WhatsApp tidak valid.');
@@ -1854,6 +1924,28 @@ router.get('/admin/pelanggan/unduh', requireSuperadmin(async (req, res) => {
   res.end('﻿' + lines.join('\r\n'));
 }));
 
+// Type-ahead for the manual-order account picker.
+//
+// Registered before /admin/pelanggan/:id — the router takes the first match,
+// and "cari" would otherwise be read as a customer id.
+//
+// This exists so the manual-order page doesn't have to ship the whole customer
+// table to the browser. It searches; it never lists everybody.
+router.get('/admin/pelanggan/cari', requireSuperadmin(async (req, res, { query }) => {
+  const q = String(query.get('q') || '').trim().slice(0, 80);
+  if (!q) return sendJson(res, { customers: [] });
+  const rows = await loyalty.searchCustomersForPicker(q, 20);
+  sendJson(res, {
+    customers: rows.map((c) => ({
+      id: Number(c.id),
+      name: c.name,
+      wa: formatWhatsapp(c.whatsapp),
+      digits: String(c.whatsapp || '').replace(/\D/g, ''),
+      address: c.address || '',
+    })),
+  });
+}));
+
 router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
@@ -2334,6 +2426,59 @@ async function uploadGalleryFiles(list) {
     urls.push(await saveProductImage(file));
   }
   return urls;
+}
+
+// Videos arrive as URLs rather than bytes, because the browser uploaded them
+// directly. A URL posted by a page is not evidence of anything, so each one
+// has to earn its place in the gallery three times over:
+//
+//   1. it is shaped like a product video of ours (host, prefix, filename),
+//   2. that pathname really exists in OUR public store — the token scopes the
+//      lookup, so a blob in someone else's store can't pass,
+//   3. the store's own metadata says it is a video within the size limit —
+//      measured, a presigned URL enforces neither the type nor the ceiling, so
+//      this is where both actually bite,
+//   4. the bytes at the front of it are a real video container, whatever the
+//      upload claimed the type was.
+//
+// Only an admin can reach these routes at all; this is the layer that stops a
+// stale, forged or mistyped address from being written onto a product.
+const MAX_NEW_VIDEOS = 6;
+
+async function acceptVideoUrls(list) {
+  const raw = (list || []).map((v) => String(v || '').trim()).filter(Boolean);
+  if (!raw.length) return [];
+  if (raw.length > MAX_NEW_VIDEOS) {
+    const err = new Error('too many videos');
+    err.userMessage = `Maksimal ${MAX_NEW_VIDEOS} video sekali simpan.`;
+    throw err;
+  }
+  const out = [];
+  for (const url of raw) {
+    if (out.includes(url)) continue;
+    const reject = (message) => {
+      const err = new Error('bad video url');
+      err.userMessage = message;
+      throw err;
+    };
+    if (!media.isProductVideoUrl(url)) reject('Alamat video tidak dikenal, jadi videonya tidak disimpan.');
+
+    const info = await productBlobInfo(media.blobPathname(url));
+    if (!info.exists) reject('Video tidak ditemukan di penyimpanan. Coba unggah ulang.');
+    if (info.size > media.MAX_VIDEO_BYTES) {
+      const mb = Math.round(media.MAX_VIDEO_BYTES / 1024 / 1024);
+      reject(`Video terlalu besar. Maksimal ${mb}MB.`);
+    }
+    // In practice the store types a blob from its pathname, and we mint every
+    // pathname, so this is belt and braces rather than the real guard. The
+    // real guard is the byte sniff on the next line.
+    if (info.contentType && !media.PRODUCT_VIDEO_TYPES[info.contentType])
+      reject('Berkas yang terunggah bukan video. Coba unggah ulang.');
+    if (!(await media.looksLikeVideo(url)))
+      reject('Berkas yang terunggah bukan video yang bisa diputar. Coba unggah ulang.');
+    out.push(url);
+  }
+  return out;
 }
 
 // A wholesale tier only counts when both halves are filled in and the
