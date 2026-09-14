@@ -82,7 +82,14 @@ const SHARED_STYLE = `
      a filter bar that puts "Dari tanggal" next to "Kelompokkan" ended up with
      one tall box and one short one. Checkboxes and radios keep their own fixed
      size and are excluded. */
-  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select{min-height:46px;}
+  /* Pinned, not just a floor. At phone widths the admin rules raise field
+     font-size to 16px (which is what stops iOS zooming the page on focus), and
+     that grew every padding-driven text and number field to 47px while the
+     date/time fields — pinned below — stayed at 46px. A floor cannot hold a row
+     level once the content inside it grows, so the height is fixed here the
+     same way it is for buttons. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select{
+    height:46px;min-height:46px;box-sizing:border-box;}
   /* Fixed-size round things (avatars, steppers, toggles, step numbers) are
      flex children with an explicit width. Without this a narrow phone squashes
      them to a sliver — which is why icons looked like they'd gone missing
@@ -439,6 +446,17 @@ const SHARED_STYLE = `
   .admin-shell{display:flex;align-items:stretch;flex-wrap:wrap;min-height:100vh;}
   .admin-sidebar{flex:0 0 240px;background:var(--sidebar);padding:28px 20px;display:flex;flex-direction:column;}
   .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
+  /* A page whose content is a column of self-contained cards used to cap its
+     <main> to keep paragraphs a readable width, which left a wide empty band
+     down the right of a desktop screen. The cards now flow into as many
+     columns as the width allows instead: the page spans the full width, and
+     each card stays a readable measure. Collapses to one column on its own
+     when the room for a second drops below the minimum. */
+  /* min(440px, 100%), never a bare 440px: a bare minimum is still enforced on
+     a screen narrower than itself, so the cards would push a phone sideways. */
+  .span-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(min(440px, 100%), 1fr));gap:20px;align-items:start;}
+  .span-grid > .card{margin-bottom:0 !important;}
+  .span-grid > .span-full{grid-column:1 / -1;justify-self:start;}
   /* Mobile-only bar carrying the brand and the hamburger. Hidden on desktop,
      where the full rail is always visible. */
   /* Fixed height (not padding-driven) so the drawer below can be positioned
