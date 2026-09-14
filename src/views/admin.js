@@ -1811,10 +1811,16 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
               admin.role === 'superadmin' ? '<option value="superadmin">Superadmin</option>' : ''
             }
           </select>
-          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Admin baru dibuat tanpa izin apa pun — kamu akan langsung diantar ke halaman izinnya.</div>
         </div>
         <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;white-space:nowrap;">Tambah Admin</button>
       </form>
+      <!-- The hint lives under the row, not inside one of its boxes. The row is
+           bottom-aligned, so a box with an extra line under its control ends up
+           with its control sitting a line higher than the others — which is
+           exactly what made these three boxes look out of line. -->
+      <div style="font-size:11.5px;color:var(--text-muted);margin-top:10px;line-height:1.6;">
+        Admin baru dibuat tanpa izin apa pun — kamu akan langsung diantar ke halaman izinnya.
+      </div>
     </div>
 
     ${admTable({

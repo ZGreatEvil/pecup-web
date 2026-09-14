@@ -95,7 +95,13 @@ const SHARED_STYLE = `
      picker. Draw our own icon on every platform and hide the native indicator
      (kept clickable, just invisible) so there's never two of them. */
   input[type="date"], input[type="month"], input[type="time"]{
-    appearance:none;-webkit-appearance:none;min-height:46px;
+    appearance:none;-webkit-appearance:none;
+    /* A date field carries its own internal editor box, so min-height alone
+       still left it 54px standing next to a 46px text field — visibly taller
+       in every filter bar and form row it appeared in. Pinning the height and
+       zeroing the vertical padding makes it match the others exactly. */
+    height:46px;min-height:46px;box-sizing:border-box;
+    padding-top:0;padding-bottom:0;
     padding-right:44px !important;cursor:pointer;background-color:var(--surface);
     background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23555f6d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='16' rx='2.5'/%3E%3Cpath d='M3 9.5h18M8 2.5v4M16 2.5v4'/%3E%3C/svg%3E");
     background-repeat:no-repeat;background-position:right 13px center;background-size:18px 18px;
