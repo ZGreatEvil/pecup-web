@@ -41,6 +41,21 @@ alter table products add column if not exists images text[] not null default '{}
 alter table products add column if not exists wholesale_min_qty integer not null default 0;
 alter table products add column if not exists wholesale_price integer;
 
+-- Combinations ("mix"). Which products can have their contents picked, and
+-- which products are offered as those choices, used to be guessed from the
+-- category text ('Mix Buah' / 'Buah Tunggal'). That meant a new fruit only
+-- showed up in the picker if it was typed into exactly the right category, and
+-- a second combinable product could not exist at all. Both are now plain
+-- switches on the product itself, so the choice list is simply the catalogue:
+-- add a buah potong, tick "pilihan isi", and it appears everywhere at once.
+--   combo_enabled — this product's contents are chosen by the buyer
+--   combo_min/max — how many choices one cup takes
+--   combo_option  — this product is offered as one of those choices
+alter table products add column if not exists combo_enabled boolean not null default false;
+alter table products add column if not exists combo_min integer not null default 2;
+alter table products add column if not exists combo_max integer not null default 3;
+alter table products add column if not exists combo_option boolean not null default false;
+
 create table if not exists orders (
   id bigint generated always as identity primary key,
   order_number text not null default '',
@@ -239,6 +254,18 @@ insert into settings (key, value) values
   ('tiers_enabled', '1'),
   ('tiers', '[]')
 on conflict (key) do nothing;
+
+-- Carry the old category-based mix behaviour over to the switches above, once.
+-- The marker matters: without it, every re-run of this file would tick the
+-- boxes again and undo an admin who deliberately turned one off.
+do $$
+begin
+  if not exists (select 1 from settings where key = 'combo_seeded') then
+    update products set combo_enabled = true where category = 'Mix Buah';
+    update products set combo_option = true where category = 'Buah Tunggal';
+    insert into settings (key, value) values ('combo_seeded', '1') on conflict (key) do nothing;
+  end if;
+end $$;
 
 -- Orders placed while signed in are linked to the account, which is what
 -- the loyalty stamps are counted from. Guest checkout leaves this null.
@@ -878,7 +905,7 @@ select * from (values
   ('Pepaya California', 'Pepaya california matang pohon, tekstur lembut.', 'Buah Tunggal', '300 gr', 14000, 22, null::text, true),
   ('Melon Golden', 'Melon golden segar, manis dan renyah.', 'Buah Tunggal', '250 gr', 19000, 18, null::text, true),
   ('Jambu Biji', 'Jambu biji merah segar, dipotong dadu, renyah dan manis.', 'Buah Tunggal', '250 gr', 15000, 20, null::text, true),
-  ('Mix Buah Pilihan Sendiri', 'Pilih sendiri 2 atau 3 buah favoritmu dari 6 pilihan buah segar kami.', 'Mix Buah', '300 gr', 20000, 20, null::text, true),
+  ('Mix Buah Pilihan Sendiri', 'Pilih sendiri buah favoritmu dari pilihan buah segar kami.', 'Mix Buah', '300 gr', 20000, 20, null::text, true),
   ('Salad Buah Campur', 'Campuran mangga, semangka, melon, nanas, dan anggur.', 'Salad Buah', '350 gr', 25000, 15, null::text, true),
   ('Rujak Buah Bumbu Kacang', 'Campuran buah segar dengan bumbu rujak kacang khas.', 'Rujak', '350 gr', 22000, 12, null::text, true),
   ('Jus Buah Mix Segar', 'Buah potong campur cocok untuk jus, tanpa gula tambahan.', 'Salad Buah', '400 gr', 28000, 10, null::text, true)

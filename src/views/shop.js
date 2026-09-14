@@ -1,6 +1,15 @@
 const { page, customerHeader, customerFooter, backButton, emptyState } = require('./layout');
 const { productThumb, productPhotos } = require('./productIcon');
-const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID, orderStatus } = require('../utils');
+const {
+  formatRupiah,
+  escapeHtml,
+  escapeAttr,
+  toDateKey,
+  formatDateID,
+  orderStatus,
+  comboRange,
+  comboRangeText,
+} = require('../utils');
 const { discountLines, taxLine, freeCupValue } = require('../orderMoney');
 
 const DEFAULT_PRODUCT_DESCRIPTION = 'Buah potong segar, dipotong higienis dan dikemas rapi dalam cup.';
@@ -140,10 +149,10 @@ function renderBeranda({
   const cards = products.length
     ? products
         .map((p) => {
-          const isMix = p.category === 'Mix Buah';
+          const isMix = Boolean(p.combo_enabled);
           const inStock = p.stock > 0;
-          // A mix is configured on its own page (which 2-3 fruits), so it
-          // can't be stepped up and down from the card.
+          // A cup whose contents are chosen is configured on its own page, so
+          // it can't be stepped up and down from the card.
           const action = !inStock
             ? `<button class="add-btn" type="button" disabled style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;opacity:0.5;cursor:not-allowed;" title="Stok habis">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -303,7 +312,7 @@ function renderBeranda({
   return page({ title: 'Pecup — Buah Potong Segar', bodyHtml: body });
 }
 
-function renderProdukDetail({ product, related, cartCount, singleFruits = [], customer = null }) {
+function renderProdukDetail({ product, related, cartCount, comboOptions = [], customer = null }) {
   const relatedCards = related
     .map(
       (p) => `
@@ -316,15 +325,20 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
     .join('');
 
   const inStock = product.stock > 0;
-  const isMix = product.category === 'Mix Buah' && singleFruits.length > 0;
+  // Whether this cup's contents are chosen is a switch on the product, not a
+  // guess from its category — and with nothing ticked as a choice there is
+  // nothing to pick from, so it falls back to an ordinary add-to-cart.
+  const isMix = Boolean(product.combo_enabled) && comboOptions.length > 0;
+  const { min: comboMin, max: comboMax } = comboRange(product);
+  const rangeText = comboRangeText(product);
 
   const mixPicker = isMix
     ? `
       <div class="card" style="padding:20px;">
         <h3 style="font-size:15px;font-weight:800;margin-bottom:4px;">Pilih Buahmu</h3>
-        <p id="mixCounter" style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Pilih 2 atau 3 buah — 0 dipilih</p>
+        <p id="mixCounter" style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">Pilih ${escapeHtml(rangeText)} — 0 dipilih</p>
         <div style="display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:10px;">
-          ${singleFruits
+          ${comboOptions
             .map(
               (f) => `
           <label style="display:flex;align-items:center;gap:8px;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13.5px;font-weight:600;cursor:pointer;">
@@ -359,12 +373,18 @@ function renderProdukDetail({ product, related, cartCount, singleFruits = [], cu
         var counter = document.getElementById('mixCounter');
         var hidden = document.getElementById('fruitIdsInput');
         var btn = document.getElementById('addToCartBtn');
+        // How many choices this cup takes comes from the product itself, so
+        // the counter, the cap and the button agree with what the server will
+        // accept. Both are whole numbers, never text from anyone.
+        var min = ${comboMin};
+        var max = ${comboMax};
+        var label = ${JSON.stringify(rangeText)};
         function update(){
           var checked = boxes.filter(function(b){ return b.checked; });
-          boxes.forEach(function(b){ b.disabled = !b.checked && checked.length >= 3; });
-          counter.textContent = 'Pilih 2 atau 3 buah — ' + checked.length + ' dipilih';
+          boxes.forEach(function(b){ b.disabled = !b.checked && checked.length >= max; });
+          counter.textContent = 'Pilih ' + label + ' — ' + checked.length + ' dipilih';
           hidden.value = checked.map(function(b){ return b.value; }).join(',');
-          btn.disabled = checked.length < 2 || checked.length > 3;
+          btn.disabled = checked.length < min || checked.length > max;
         }
         boxes.forEach(function(b){ b.addEventListener('change', update); });
         update();

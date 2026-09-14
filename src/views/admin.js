@@ -14,6 +14,7 @@ const {
   orderStatus,
   toDateKey,
   ORDER_STATUSES,
+  comboRangeText,
 } = require('../utils');
 const { tierStyle: tierStyleFor } = require('../loyalty');
 const { discountLines, taxLine, freeCupValue } = require('../orderMoney');
@@ -152,6 +153,18 @@ function stockCell(p) {
         </div>`;
 }
 
+// Small markers in the product table so the two combination switches are
+// visible without opening every product: which cups are built from choices,
+// and which products are offered as one of those choices.
+function comboTags(p) {
+  const tag = (text, bg, color) =>
+    `<span style="display:inline-block;margin-left:7px;padding:2px 8px;border-radius:99px;background:${bg};color:${color};font-size:10.5px;font-weight:800;vertical-align:middle;white-space:nowrap;">${text}</span>`;
+  return (
+    (p.combo_enabled ? tag('KOMBINASI', 'var(--green-soft)', '#3f7a42') : '') +
+    (p.combo_option ? tag('PILIHAN ISI', 'var(--orange-soft)', '#7a4a1f') : '')
+  );
+}
+
 function renderProdukList({ products, stats, flash, admin, view = {}, categories = [], totalCount = 0 }) {
   const rows = products.length
     ? products
@@ -162,7 +175,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
                 label: '',
                 html: `<div class="adm-lead">
           <div class="adm-thumb">${productThumb(p, { size: 40, radius: 12 })}</div>
-          <span class="adm-lead-name">${escapeHtml(p.name)}</span>
+          <span class="adm-lead-name">${escapeHtml(p.name)}${comboTags(p)}</span>
         </div>`,
               },
               {
@@ -532,6 +545,10 @@ function renderProdukForm({
   // means the packaging section isn't drawn at all.
   inventoryItems = [],
   materials = [],
+  // Every product currently ticked as "pilihan isi" — shown here so the admin
+  // can see exactly which choices a combination cup will offer, and why there
+  // are that many of them.
+  comboOptions = [],
 }) {
   const isEdit = Boolean(product && product.id);
   const materialCostPerCup = materials.reduce(
@@ -550,7 +567,19 @@ function renderProdukForm({
     is_recommended: 0,
     wholesale_min_qty: '',
     wholesale_price: '',
+    combo_enabled: 0,
+    combo_option: 0,
+    combo_min: 2,
+    combo_max: 3,
   };
+  // Bouncing the form hands back the posted fields, where a checkbox that was
+  // ticked arrives as "1" and the numbers as text — so read both shapes.
+  const comboOn = Boolean(Number(p.combo_enabled) || p.combo_enabled === true || p.comboEnabled);
+  const comboIsOption = Boolean(Number(p.combo_option) || p.combo_option === true || p.comboOption);
+  const comboMinValue = Number(p.combo_min ?? p.comboMin) || 2;
+  const comboMaxValue = Number(p.combo_max ?? p.comboMax) || 3;
+  // A product can't be a choice inside itself, so it is never listed here.
+  const otherOptions = comboOptions.filter((o) => !isEdit || Number(o.id) !== Number(p.id));
   const existingMedia = productMedia(p);
   const videoAccept = Object.keys(PRODUCT_VIDEO_TYPES).join(',');
   const maxVideoMb = Math.round(MAX_VIDEO_BYTES / 1024 / 1024);
@@ -655,6 +684,68 @@ function renderProdukForm({
                   p.wholesale_price === null || p.wholesale_price === undefined ? '' : p.wholesale_price
                 )}" placeholder="Contoh: 15000">
               </div>
+            </div>
+          </div>
+
+          <!-- Combinations. Two separate switches, because they answer two
+               different questions: is THIS cup built from choices, and is this
+               product offered as one of those choices. Nothing here is tied to
+               the category name any more, so any product can be either, both,
+               or neither — and the choice list is simply the catalogue. -->
+          <div style="background:var(--green-soft);border-radius:12px;padding:16px 18px;margin-bottom:20px;">
+            <div style="font-size:14px;font-weight:800;color:var(--green-dark);margin-bottom:4px;">Kombinasi Isi (opsional)</div>
+            <p style="font-size:12.5px;color:var(--green-dark);line-height:1.6;margin-bottom:14px;">
+              Untuk produk seperti <strong>Mix Buah</strong> — pembeli (atau admin, saat catat manual) memilih sendiri isi tiap cup.
+            </p>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:var(--surface);border-radius:11px;padding:14px 16px;">
+              <div style="flex:1 1 220px;min-width:0;">
+                <div style="font-size:13.5px;font-weight:700;">Isinya dipilih pembeli</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:3px;line-height:1.6;">
+                  Produk ini jadi produk kombinasi: di halaman produk muncul daftar pilihan isi, dan di catat manual tiap cup bisa beda isinya.
+                </div>
+              </div>
+              <label style="margin:0;flex:0 0 auto;">
+                <input type="checkbox" name="comboEnabled" value="1" ${comboOn ? 'checked' : ''} style="width:20px;height:20px;">
+              </label>
+            </div>
+
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;">
+              <div class="field" style="flex:1 1 150px;margin-bottom:0;">
+                <label style="color:var(--green-dark);">Minimal Pilihan / cup</label>
+                <input type="number" name="comboMin" min="1" max="20" value="${escapeAttr(comboMinValue)}">
+              </div>
+              <div class="field" style="flex:1 1 150px;margin-bottom:0;">
+                <label style="color:var(--green-dark);">Maksimal Pilihan / cup</label>
+                <input type="number" name="comboMax" min="1" max="20" value="${escapeAttr(comboMaxValue)}">
+              </div>
+            </div>
+            <div style="font-size:11.5px;color:var(--green-dark);margin-top:8px;line-height:1.6;">
+              Contoh: minimal 2, maksimal 3 &rarr; pembeli harus pilih 2 atau 3 buah per cup.
+            </div>
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:var(--surface);border-radius:11px;padding:14px 16px;margin-top:14px;">
+              <div style="flex:1 1 220px;min-width:0;">
+                <div style="font-size:13.5px;font-weight:700;">Jadikan pilihan isi</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:3px;line-height:1.6;">
+                  Produk ini ikut muncul sebagai pilihan di semua produk kombinasi. Mau tambah varian buah potong baru?
+                  Buat produknya, lalu centang ini — langsung ikut muncul.
+                  <br>Kalau varian ini tidak dijual satuan, cukup matikan <strong>Tampilkan di Toko</strong> di bawah; dia tetap jadi pilihan isi.
+                </div>
+              </div>
+              <label style="margin:0;flex:0 0 auto;">
+                <input type="checkbox" name="comboOption" value="1" ${comboIsOption ? 'checked' : ''} style="width:20px;height:20px;">
+              </label>
+            </div>
+
+            <div style="font-size:11.5px;color:var(--green-dark);margin-top:10px;line-height:1.7;">
+              ${
+                otherOptions.length
+                  ? `Pilihan isi yang sudah aktif (${otherOptions.length}): ${otherOptions
+                      .map((o) => escapeHtml(o.name))
+                      .join(', ')}.`
+                  : 'Belum ada produk yang dicentang sebagai pilihan isi — produk kombinasi tidak akan punya pilihan apa pun sampai ada.'
+              }
             </div>
           </div>
           ${
@@ -3626,8 +3717,8 @@ function renderPesananTambah({
   todayKey = '',
   openDates = [],
   deliveryMode = 'kalender',
-  // Single fruits a Mix Buah cup can be built from, and any combinations the
-  // form is being redrawn with after an error.
+  // Everything ticked as "pilihan isi" in the catalogue, and any combinations
+  // the form is being redrawn with after an error.
   fruitOptions = [],
   mixLines = {},
 }) {
@@ -3635,10 +3726,14 @@ function renderPesananTambah({
   // would pre-fill the wrong day.
   const today = toDateKey(new Date());
   const qty = values.qty || {};
-  // A "Mix Buah" cup is built from single fruits, and every cup can be a
-  // different build — eight cups can be eight combinations. So those products
-  // get a list of combinations instead of one quantity box.
-  const isMix = (p) => p.category === 'Mix Buah' && fruitOptions.length > 0;
+  // A combinable cup is built from the choices ticked in the catalogue, and
+  // every cup can be a different build — eight cups can be eight combinations.
+  // So those products get a list of combinations instead of one quantity box.
+  const isMix = (p) => Boolean(p.combo_enabled) && fruitOptions.length > 0;
+  // A product set up as combinable while nothing is ticked as a choice would
+  // silently fall back to a plain quantity box, which looks like the feature
+  // is broken. Say what's missing instead.
+  const missingOptions = !fruitOptions.length && products.some((p) => p.combo_enabled);
   const fruitCheckboxes = (productId, index, chosen) =>
     fruitOptions
       .map(
@@ -3678,6 +3773,7 @@ function renderPesananTambah({
             <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
             <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.6;">
               Tiap cup boleh beda isinya. Pesan 8 cup dengan 8 kombinasi? Tambah 8 baris di bawah.
+              <br>Di website pembeli memilih ${escapeHtml(comboRangeText(p))} per cup — di sini bebas, sesuai pesanan aslinya.
             </div>
           </div>
           <div style="font-size:12.5px;font-weight:700;color:var(--green-dark);white-space:nowrap;">
@@ -3686,6 +3782,10 @@ function renderPesananTambah({
         </div>
         <div data-mix-lines>${lines.map((line, i) => mixRow(p, i, line)).join('')}</div>
         <button type="button" data-mix-add style="margin-top:10px;background:none;border:1.5px dashed var(--border);border-radius:10px;padding:9px 14px;font-size:12.5px;font-weight:700;color:var(--green-dark);cursor:pointer;">+ Tambah kombinasi</button>
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:8px;line-height:1.6;">
+          ${fruitOptions.length} pilihan isi tersedia. Mau nambah varian buah potong?
+          Buat produknya di <a href="/admin/produk">Produk</a> lalu centang &ldquo;Jadikan pilihan isi&rdquo; — langsung muncul di sini.
+        </div>
       </div>`;
       }
       return `
@@ -3803,6 +3903,15 @@ function renderPesananTambah({
         <div style="padding:16px 18px;">
           <h2 style="font-size:16px;font-weight:800;">Isi Pesanan</h2>
           <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">Isi jumlah cup untuk produk yang dibeli. Kosongkan yang tidak dibeli.</p>
+          ${
+            missingOptions
+              ? `<div style="margin-top:12px;background:var(--orange-soft);border-radius:10px;padding:12px 14px;font-size:12px;color:#7a4a1f;line-height:1.6;">
+                   Ada produk kombinasi, tapi belum ada produk yang dicentang sebagai <strong>pilihan isi</strong>,
+                   jadi isinya belum bisa dipilih di sini. Buka <a href="/admin/produk" style="color:#7a4a1f;font-weight:700;">Produk</a>,
+                   edit buah potongnya, lalu centang &ldquo;Jadikan pilihan isi&rdquo;.
+                 </div>`
+              : ''
+          }
         </div>
         ${rows}
       </div>

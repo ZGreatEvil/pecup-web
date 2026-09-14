@@ -46,6 +46,8 @@ const {
   formatWhatsapp,
   ORDER_STATUSES,
   SHOP_WHATSAPP_FALLBACK,
+  comboRange,
+  comboRangeText,
 } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
@@ -207,14 +209,16 @@ router.get('/produk/:id', async (req, res) => {
   if (!product || !product.active) return notFound(res);
   const all = await queries.listProducts({ onlyActive: true });
   const related = all.filter((p) => p.id !== product.id).slice(0, 4);
-  const singleFruits = all.filter((p) => p.category === 'Buah Tunggal');
+  // Only a product whose contents are chosen needs the choice list, so the
+  // extra query is paid only on those pages.
+  const comboOptions = product.combo_enabled ? await queries.listComboOptions() : [];
   sendHtml(
     res,
     shopViews.renderProdukDetail({
       product,
       related,
       cartCount: cartLib.cartCount(req.cart),
-      singleFruits,
+      comboOptions,
       customer: req.customer,
     })
   );
@@ -243,22 +247,23 @@ router.post('/keranjang/tambah', async (req, res) => {
   }
 
   let fruits;
-  if (product.category === 'Mix Buah' && fields.fruitIds) {
-    const requestedIds = fields.fruitIds
+  // A product whose contents are chosen can only go into the cart WITH a
+  // choice — an empty composition is refused rather than quietly added, so a
+  // hand-made request can't slip an unbuildable cup past the picker.
+  if (product.combo_enabled) {
+    const requestedIds = String(fields.fruitIds || '')
       .split(',')
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n) && n > 0);
-    const singles = await queries.listProducts({ onlyActive: true });
     // Product ids come back from the Neon driver as strings (bigint
     // columns), so normalize to Number before comparing against the
     // parsed request ids — otherwise the Set lookup never matches.
-    const validIds = new Set(singles.filter((p) => p.category === 'Buah Tunggal').map((p) => Number(p.id)));
+    const validIds = new Set((await queries.listComboOptions()).map((p) => Number(p.id)));
     const uniqueValid = Array.from(new Set(requestedIds)).filter((id) => validIds.has(id));
-    // Only accept a proper 2-or-3-fruit selection; otherwise skip the mix
-    // composition rather than silently adding an ill-formed cart line.
-    if (uniqueValid.length === 2 || uniqueValid.length === 3) fruits = uniqueValid;
+    const { min, max } = comboRange(product);
+    if (uniqueValid.length >= min && uniqueValid.length <= max) fruits = uniqueValid;
     else {
-      if (wantsJson) return sendJson(res, { ok: false, error: 'Pilih 2 atau 3 buah.' }, 400);
+      if (wantsJson) return sendJson(res, { ok: false, error: `Pilih ${comboRangeText(product)}.` }, 400);
       redirect(res, `/produk/${productId}`);
       return;
     }
@@ -1138,13 +1143,24 @@ router.post('/admin/media/video/presign', requirePermission('produk.kelola', asy
 }));
 
 router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
-  const [categories, inventoryItems] = await Promise.all([
+  const [categories, inventoryItems, comboOptions] = await Promise.all([
     queries.listCategories(),
     // Only fetched for an admin who may manage the stockroom — for anyone else
     // the packaging section is not drawn, and nothing they post can change it.
     req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
+    queries.listComboOptions(),
   ]);
-  sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin, inventoryItems }));
+  sendHtml(
+    res,
+    adminViews.renderProdukForm({
+      product: null,
+      error: null,
+      categories,
+      admin: req.admin,
+      inventoryItems,
+      comboOptions,
+    })
+  );
 }));
 
 router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
@@ -1162,6 +1178,7 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
         categories: await queries.listCategories(),
         admin: req.admin,
         pendingVideos,
+        comboOptions: await queries.listComboOptions(),
       })
     );
 
@@ -1191,6 +1208,7 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
     ...wholesaleFields(fields),
+    ...comboFields(fields),
   });
   const newMaterials = materialsFromForm(req, fieldLists, fields);
   if (newMaterials) await inventory.setMaterials(newProductId, newMaterials);
@@ -1210,14 +1228,23 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
 router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
   if (!product) return notFound(res);
-  const [categories, inventoryItems, materials] = await Promise.all([
+  const [categories, inventoryItems, materials, comboOptions] = await Promise.all([
     queries.listCategories(),
     req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
     inventory.materialsFor(product.id),
+    queries.listComboOptions(),
   ]);
   sendHtml(
     res,
-    adminViews.renderProdukForm({ product, error: null, categories, admin: req.admin, inventoryItems, materials })
+    adminViews.renderProdukForm({
+      product,
+      error: null,
+      categories,
+      admin: req.admin,
+      inventoryItems,
+      materials,
+      comboOptions,
+    })
   );
 }));
 
@@ -1237,6 +1264,7 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
         categories: await queries.listCategories(),
         admin: req.admin,
         pendingVideos,
+        comboOptions: await queries.listComboOptions(),
       })
     );
 
@@ -1278,6 +1306,7 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
     ...wholesaleFields(fields),
+    ...comboFields(fields, existing),
   };
   await queries.updateProduct(id, next);
   const wantedMaterials = materialsFromForm(req, fieldLists, fields);
@@ -1305,6 +1334,12 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
         get: (p) => (p.wholesale_price ?? p.wholesalePrice) || 0,
         format: (v) => (Number(v) > 0 ? formatRupiah(v) : '(tidak ada)'),
       },
+      { label: 'isi bisa dipilih', get: (p) => (p.combo_enabled ?? p.comboEnabled ? 'ya' : 'tidak') },
+      { label: 'jadi pilihan isi', get: (p) => (p.combo_option ?? p.comboOption ? 'ya' : 'tidak') },
+      {
+        label: 'jumlah pilihan per cup',
+        get: (p) => `${Number(p.combo_min ?? p.comboMin) || 1}–${Number(p.combo_max ?? p.comboMax) || 1}`,
+      },
       { label: 'jumlah foto', get: (p) => countKind(productMedia(p), false) },
       { label: 'jumlah video', get: (p) => countKind(productMedia(p), true) },
       { label: 'deskripsi', get: (p) => ((p.description || '').trim() ? 'ada' : 'kosong') },
@@ -1317,6 +1352,11 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
 
 router.post('/admin/produk/:id/hapus', requirePermission('produk.kelola', async (req, res) => {
   const existing = await queries.getProduct(Number(req.params.id));
+  // Asked while the product still exists: once the row is gone, the order lines
+  // that contain it keep the name and price they were charged at but no longer
+  // point at anything, and nobody could tell afterwards that cups of it were
+  // still owed to someone.
+  const openOrders = existing ? await queries.openOrdersWithProduct(Number(req.params.id)) : 0;
   await queries.deleteProduct(Number(req.params.id));
   // A deletion is the one entry nobody can go back and check against the
   // product itself, so it records what was actually lost.
@@ -1325,7 +1365,8 @@ router.post('/admin/produk/:id/hapus', requirePermission('produk.kelola', async 
     'product.delete',
     existing
       ? `${existing.name} — ${formatRupiah(Number(existing.price))}, stok ${Number(existing.stock)}, ` +
-        `kategori ${existing.category}, ${productMedia(existing).length} media`
+        `kategori ${existing.category}, ${productMedia(existing).length} media` +
+        (openOrders ? `, masih ada ${openOrders} pesanan berjalan yang memuat produk ini` : '')
       : `#${req.params.id} (produk tidak ditemukan)`
   );
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk telah dihapus.'));
@@ -1547,10 +1588,13 @@ router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (r
   // The picker searches the server as you type, so the page no longer carries
   // the customer table with it — that list only ever grows.
   const wanted = Number(query.get('pelanggan')) || 0;
-  const [products, picked, shop] = await Promise.all([
+  const [products, picked, shop, comboOptions] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     wanted ? loyalty.getCustomerBasic(wanted) : null,
     settings.shopConfig(),
+    // The choice list is whatever is ticked as "pilihan isi" in the catalogue
+    // right now — add a buah potong there and it appears here immediately.
+    queries.listComboOptions(),
   ]);
   sendHtml(
     res,
@@ -1561,7 +1605,7 @@ router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (r
       todayKey: toDateKey(new Date()),
       openDates: settings.openDeliveryDates(shop),
       deliveryMode: shop.deliveryMode,
-      fruitOptions: products.filter((p) => p.category === 'Buah Tunggal'),
+      fruitOptions: comboOptions,
       picked: picked
         ? {
             id: Number(picked.id),
@@ -1582,9 +1626,10 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
   // fieldLists as well as fields: a mix product posts one quantity and one
   // checkbox group per combination, all sharing a name.
   const { fields, fieldLists } = await parseBody(req);
-  const [products, shop] = await Promise.all([
+  const [products, shop, comboOptions] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     settings.shopConfig(),
+    queries.listComboOptions(),
   ]);
   // The same PPN the website would charge, read from the settings rather than
   // the form, so a sale typed in here and one taken online are priced alike.
@@ -1596,16 +1641,14 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
     if (n > 0) qty[p.id] = String(n);
   }
 
-  // "Mix Buah" cups are built per cup, so one product can appear as several
+  // A combinable cup is built per cup, so one product can appear as several
   // lines with different fruit in each — eight cups can be eight combinations.
   // Each row posts its own quantity plus a checkbox group named with the row's
   // index, which is what keeps one combination from bleeding into the next.
-  const fruitById = new Map(
-    products.filter((p) => p.category === 'Buah Tunggal').map((p) => [Number(p.id), p])
-  );
+  const fruitById = new Map(comboOptions.map((p) => [Number(p.id), p]));
   const mixLines = {};
   for (const p of products) {
-    if (p.category !== 'Mix Buah') continue;
+    if (!p.combo_enabled) continue;
     const quantities = fieldLists[`mixQty_${p.id}`] || [];
     const lines = [];
     for (let i = 0; i < quantities.length; i += 1) {
@@ -1669,7 +1712,7 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
         todayKey: toDateKey(new Date()),
         openDates: settings.openDeliveryDates(shop),
         deliveryMode: shop.deliveryMode,
-        fruitOptions: products.filter((p) => p.category === 'Buah Tunggal'),
+        fruitOptions: comboOptions,
         mixLines,
       })
     );
@@ -3376,6 +3419,28 @@ function wholesaleFields(fields) {
   return valid
     ? { wholesaleMinQty: Math.round(minQty), wholesalePrice: Math.round(price) }
     : { wholesaleMinQty: 0, wholesalePrice: null };
+}
+
+// The two combination switches on the product form, and how many choices one
+// cup of it takes. Read defensively: a combination whose maximum is below its
+// minimum could never be completed, so the pair is sorted rather than trusted,
+// and both ends are clamped to something a cup could plausibly hold.
+function comboFields(fields, existing = null) {
+  // A post that doesn't carry the range at all — an older page left open, or a
+  // partial form — must not silently collapse "2 atau 3 buah" into "1 buah".
+  // Absent means "unchanged", so the product keeps what it already had.
+  const fallbackMin = Number(existing && existing.combo_min) || 2;
+  const fallbackMax = Number(existing && existing.combo_max) || 3;
+  const givenMin = String(fields.comboMin === undefined ? '' : fields.comboMin).trim() !== '';
+  const givenMax = String(fields.comboMax === undefined ? '' : fields.comboMax).trim() !== '';
+  const min = Math.min(Math.max(1, Math.round(givenMin ? Number(fields.comboMin) || 1 : fallbackMin)), 20);
+  const max = Math.min(Math.max(min, Math.round(givenMax ? Number(fields.comboMax) || min : fallbackMax)), 20);
+  return {
+    comboEnabled: Boolean(fields.comboEnabled),
+    comboOption: Boolean(fields.comboOption),
+    comboMin: min,
+    comboMax: max,
+  };
 }
 
 function validateProductFields(fields) {

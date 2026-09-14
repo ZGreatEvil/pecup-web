@@ -146,8 +146,31 @@ function slugify(name) {
 const SHOP_WHATSAPP_FALLBACK = '6281245684104';
 const SHOP_INSTAGRAM = 'pecupchu';
 
+// How many choices one cup of a combinable product takes. Read off the row
+// rather than assumed, and bounded here so every caller — the shop picker, the
+// add-to-cart check, manual order entry — agrees on the same numbers even if a
+// row was written before these columns existed.
+function comboRange(product) {
+  const p = product || {};
+  const min = Math.min(Math.max(1, Math.round(Number(p.combo_min) || 1)), 20);
+  const max = Math.min(Math.max(min, Math.round(Number(p.combo_max) || min)), 20);
+  return { min, max };
+}
+
+// "2 atau 3 buah", "3 buah", "2–5 buah" — the same phrase wherever the rule is
+// explained, so the picker, the error message and the admin form never
+// disagree about what the shopper is being asked for.
+function comboRangeText(product) {
+  const { min, max } = comboRange(product);
+  if (min === max) return `${min} buah`;
+  if (max === min + 1) return `${min} atau ${max} buah`;
+  return `${min}–${max} buah`;
+}
+
 module.exports = {
   SHOP_WHATSAPP_FALLBACK,
+  comboRange,
+  comboRangeText,
   SHOP_INSTAGRAM,
   formatRupiah,
   escapeHtml,

@@ -42,8 +42,9 @@ async function listCategories() {
 
 async function createProduct(data) {
   const rows = await db.query(
-    `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended, images, wholesale_min_qty, wholesale_price)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13)
+    `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended, images, wholesale_min_qty, wholesale_price,
+                           combo_enabled, combo_min, combo_max, combo_option)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13, $14, $15, $16, $17)
      returning id`,
     [
       data.name,
@@ -59,6 +60,10 @@ async function createProduct(data) {
       data.images || [],
       Number(data.wholesaleMinQty) || 0,
       data.wholesalePrice === null || data.wholesalePrice === undefined ? null : Number(data.wholesalePrice),
+      Boolean(data.comboEnabled),
+      Number(data.comboMin) || 1,
+      Number(data.comboMax) || 3,
+      Boolean(data.comboOption),
     ]
   );
   return Number(rows[0].id);
@@ -75,8 +80,9 @@ async function updateProduct(id, data) {
   await db.query(
     `update products set name = $1, description = $2, category = $3, weight = $4,
             price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9,
-            images = $10::text[], image = $11, wholesale_min_qty = $12, wholesale_price = $13
-     where id = $14`,
+            images = $10::text[], image = $11, wholesale_min_qty = $12, wholesale_price = $13,
+            combo_enabled = $14, combo_min = $15, combo_max = $16, combo_option = $17
+     where id = $18`,
     [
       data.name,
       data.description,
@@ -91,9 +97,26 @@ async function updateProduct(id, data) {
       primary,
       Number(data.wholesaleMinQty) || 0,
       data.wholesalePrice === null || data.wholesalePrice === undefined ? null : Number(data.wholesalePrice),
+      Boolean(data.comboEnabled),
+      Number(data.comboMin) || 1,
+      Number(data.comboMax) || 3,
+      Boolean(data.comboOption),
       id,
     ]
   );
+}
+
+// Everything currently offered as a choice inside a combinable product. This
+// is the catalogue itself, not a separate list that could drift out of step:
+// tick "pilihan isi" on a product and it shows up here, in the shop picker and
+// in manual order entry at the same moment.
+//
+// `active` is deliberately NOT part of the test. Taking a cup off the menu and
+// offering that fruit inside a mix are different decisions — a shop can sell a
+// variant only as part of a mix, and can pull a fruit from the mix while still
+// selling it on its own. The two switches on the product form say so plainly.
+async function listComboOptions() {
+  return db.query('select * from products where combo_option = true order by name');
 }
 
 async function setProductStock(id, stock) {
@@ -104,6 +127,21 @@ async function setProductStock(id, stock) {
 
 async function deleteProduct(id) {
   await db.query('delete from products where id = $1', [id]);
+}
+
+// Orders still waiting to go out that contain this product. Deleting a product
+// deliberately leaves the orders already placed alone — each line keeps the
+// name and the price that were actually charged — but the lines stop pointing
+// at anything, so whoever deletes it should be told that someone is still
+// waiting on cups of it. Asked before the row goes; afterwards it can't be.
+async function openOrdersWithProduct(id) {
+  const rows = await db.query(
+    `select count(distinct o.id)::int as n
+       from order_items oi join orders o on o.id = oi.order_id
+      where oi.product_id = $1 and o.status in ('menunggu', 'diproses')`,
+    [id]
+  );
+  return rows.length ? Number(rows[0].n) : 0;
 }
 
 async function toggleProductActive(id) {
@@ -661,9 +699,11 @@ module.exports = {
   getProduct,
   getProductsByIds,
   listCategories,
+  listComboOptions,
   createProduct,
   updateProduct,
   deleteProduct,
+  openOrdersWithProduct,
   setProductStock,
   toggleProductActive,
   productStats,
