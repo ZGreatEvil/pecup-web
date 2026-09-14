@@ -128,6 +128,15 @@ function sortHeader(label, key, view) {
 }
 
 function stockCell(p) {
+  // Nothing to count, and nothing to step up or down — showing a number here
+  // would invite someone to "top it up" forever for no reason.
+  if (p.unlimited_stock) {
+    return `
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:16px;font-weight:800;color:var(--green-dark);line-height:1;">&infin;</span>
+          <span style="font-size:10.5px;font-weight:800;color:#3f7a42;background:var(--green-soft);padding:3px 8px;border-radius:99px;white-space:nowrap;">TANPA BATAS</span>
+        </div>`;
+  }
   const stock = Number(p.stock);
   const soldOut = stock <= 0;
   const low = stock > 0 && stock <= 5;
@@ -549,6 +558,10 @@ function renderProdukForm({
   // can see exactly which choices a combination cup will offer, and why there
   // are that many of them.
   comboOptions = [],
+  // The catalogue, for ticking which products may go inside THIS one, and the
+  // ids currently ticked for it.
+  allProducts = [],
+  comboChoices = [],
 }) {
   const isEdit = Boolean(product && product.id);
   const materialCostPerCup = materials.reduce(
@@ -571,6 +584,7 @@ function renderProdukForm({
     combo_option: 0,
     combo_min: 2,
     combo_max: 3,
+    unlimited_stock: 0,
   };
   // Bouncing the form hands back the posted fields, where a checkbox that was
   // ticked arrives as "1" and the numbers as text — so read both shapes.
@@ -667,7 +681,20 @@ function renderProdukForm({
           <div class="field"><label>Deskripsi Produk</label><textarea name="description" rows="4" placeholder="Ceritakan kesegaran &amp; keunggulan produk ini...">${escapeHtml(p.description)}</textarea></div>
           <div style="display:flex;gap:16px;flex-wrap:wrap;">
             <div class="field" style="flex:1 1 180px;"><label>Harga (Rp) <span class="req">*</span></label><input type="number" name="price" required min="0" value="${escapeAttr(p.price)}" placeholder="Contoh: 18000"></div>
-            <div class="field" style="flex:1 1 180px;"><label>Stok Tersedia <span class="req">*</span></label><input type="number" name="stock" required min="0" value="${escapeAttr(p.stock)}" placeholder="Contoh: 24"></div>
+            <div class="field" style="flex:1 1 180px;">
+              <label>Stok Tersedia <span class="req">*</span></label>
+              <input type="number" name="stock" required min="0" value="${escapeAttr(p.stock)}" placeholder="Contoh: 24">
+              <label style="display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:12.5px;font-weight:600;cursor:pointer;">
+                <input type="checkbox" name="unlimitedStock" value="1" ${
+                  Number(p.unlimited_stock) || p.unlimited_stock === true || p.unlimitedStock ? 'checked' : ''
+                } style="width:17px;height:17px;flex-shrink:0;">
+                Stok tanpa batas (selalu tersedia)
+              </label>
+              <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
+                Untuk produk yang dibuat dadakan dari buah curah — stoknya tidak pernah dihitung,
+                tidak pernah habis, dan angka di atas diabaikan.
+              </div>
+            </div>
           </div>
 
           <div style="background:var(--orange-soft);border-radius:12px;padding:16px 18px;margin-bottom:20px;">
@@ -724,13 +751,52 @@ function renderProdukForm({
               Contoh: minimal 2, maksimal 3 &rarr; pembeli harus pilih 2 atau 3 buah per cup.
             </div>
 
+            <!-- Per-product choices: tick exactly what may go inside THIS cup.
+                 Two combo products can therefore offer two different lists. -->
+            <div style="margin-top:16px;background:var(--surface);border-radius:11px;padding:14px 16px;">
+              <div style="font-size:13.5px;font-weight:700;margin-bottom:4px;">Isi yang boleh dipilih untuk produk ini</div>
+              <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin:0 0 12px;">
+                Centang produk mana saja yang boleh jadi isi cup ini — bebas, tidak harus buah potong.
+                ${
+                  comboChoices.length
+                    ? 'Yang tidak dicentang tidak akan muncul sebagai pilihan.'
+                    : 'Belum ada yang dicentang, jadi untuk sekarang dipakai semua produk yang ditandai <strong>&ldquo;Jadikan pilihan isi&rdquo;</strong> di bawah.'
+                }
+              </p>
+              ${
+                allProducts.filter((o) => !isEdit || Number(o.id) !== Number(p.id)).length
+                  ? `<div style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow:auto;">
+                  ${allProducts
+                    .filter((o) => !isEdit || Number(o.id) !== Number(p.id))
+                    .map((o) => {
+                      const available = Boolean(o.active) && Number(o.stock) > 0;
+                      return `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:12.5px;font-weight:600;background:var(--surface-2);border:1.5px solid var(--border);border-radius:9px;padding:7px 11px;cursor:pointer;white-space:nowrap;${
+                        available ? '' : 'opacity:0.55;'
+                      }">
+                      <input type="checkbox" name="comboChoice" value="${escapeAttr(o.id)}" ${
+                        comboChoices.includes(Number(o.id)) ? 'checked' : ''
+                      } style="width:15px;height:15px;">
+                      ${escapeHtml(o.name)}${available ? '' : ' <span style="font-weight:500;">(tidak tersedia)</span>'}
+                    </label>`;
+                    })
+                    .join('')}
+                </div>`
+                  : '<div style="font-size:12px;color:var(--text-muted);">Belum ada produk lain untuk dijadikan pilihan isi.</div>'
+              }
+              <div style="font-size:11.5px;color:var(--text-muted);margin-top:10px;line-height:1.6;">
+                Produk yang sedang <strong>tidak dijual</strong> atau <strong>stoknya habis</strong> tetap boleh dicentang,
+                tapi tidak akan ditawarkan ke pembeli sampai tersedia lagi.
+              </div>
+            </div>
+
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:var(--surface);border-radius:11px;padding:14px 16px;margin-top:14px;">
               <div style="flex:1 1 220px;min-width:0;">
                 <div style="font-size:13.5px;font-weight:700;">Jadikan pilihan isi</div>
                 <div style="font-size:12px;color:var(--text-muted);margin-top:3px;line-height:1.6;">
                   Produk ini ikut muncul sebagai pilihan di semua produk kombinasi. Mau tambah varian buah potong baru?
                   Buat produknya, lalu centang ini — langsung ikut muncul.
-                  <br>Kalau varian ini tidak dijual satuan, cukup matikan <strong>Tampilkan di Toko</strong> di bawah; dia tetap jadi pilihan isi.
+                  <br>Syaratnya produknya memang dijual satuan: kalau <strong>Tampilkan di Toko</strong> dimatikan atau
+                  <strong>stoknya habis</strong>, dia otomatis hilang dari pilihan isi sampai tersedia lagi.
                 </div>
               </div>
               <label style="margin:0;flex:0 0 auto;">
@@ -1836,6 +1902,10 @@ function renderPelangganList({
   view = {},
   flash = '',
   error = '',
+  // With the loyalty programme off there is no tier, no stamp card and no
+  // expiry date to show, so those three columns come out of the table rather
+  // than standing there empty.
+  loyaltyOn = true,
 }) {
   const rows = customers.length
     ? customers
@@ -1854,20 +1924,24 @@ function renderPelangganList({
           </div>
         </div>`,
               },
-              {
-                label: 'Tier',
-                html: `<div style="text-align:right;">
+              ...(loyaltyOn
+                ? [
+                    {
+                      label: 'Tier',
+                      html: `<div style="text-align:right;">
           ${tierPill(c, tiersEnabled)}
           <div class="tnum" style="font-size:11.5px;color:var(--text-muted);margin-top:4px;">${c.claims}&times; klaim gratis</div>
         </div>`,
-              },
-              { label: 'Stempel', html: stampMeter(c) },
-              {
-                label: 'Kedaluwarsa',
-                html: `<span style="font-size:12px;color:var(--text-muted);text-align:right;">${
-                  c.expiresLabel ? `<strong style="color:var(--text);">${escapeHtml(c.expiresLabel)}</strong>` : '&mdash;'
-                }</span>`,
-              },
+                    },
+                    { label: 'Stempel', html: stampMeter(c) },
+                    {
+                      label: 'Kedaluwarsa',
+                      html: `<span style="font-size:12px;color:var(--text-muted);text-align:right;">${
+                        c.expiresLabel ? `<strong style="color:var(--text);">${escapeHtml(c.expiresLabel)}</strong>` : '&mdash;'
+                      }</span>`,
+                    },
+                  ]
+                : []),
               {
                 label: '',
                 html: `<span class="lihat-btn" style="padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;width:fit-content;display:inline-block;">Detail &rsaquo;</span>`,
@@ -1959,9 +2033,9 @@ function renderPelangganList({
     </p>
 
     ${admTable({
-      cols: '2fr 1.2fr 1.4fr 1fr 0.8fr',
-      minWidth: 780,
-      head: ['PELANGGAN', 'TIER', 'KARTU STEMPEL', 'KEDALUWARSA', ''],
+      cols: loyaltyOn ? '2fr 1.2fr 1.4fr 1fr 0.8fr' : '3fr 0.8fr',
+      minWidth: loyaltyOn ? 780 : 420,
+      head: loyaltyOn ? ['PELANGGAN', 'TIER', 'KARTU STEMPEL', 'KEDALUWARSA', ''] : ['PELANGGAN', ''],
       rows,
       empty: search
         ? `Tidak ada pelanggan yang cocok dengan &ldquo;<strong>${escapeHtml(search)}</strong>&rdquo;.`
@@ -1997,6 +2071,9 @@ function renderPelangganDetail({
   canEdit,
   canStamp = canEdit,
   tiersEnabled,
+  // With the loyalty programme off there is no card, no claim and no tier to
+  // show here — only the customer's details and their order history.
+  loyaltyOn = true,
   flash = '',
   error = '',
   pagination = null,
@@ -2107,8 +2184,12 @@ function renderPelangganDetail({
         <div class="card" style="padding:22px;">
           <h3 style="font-size:15px;font-weight:800;margin-bottom:16px;">Ringkasan</h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:10px;">
-            ${miniStat('Stempel aktif', `${loyalty.stamps}<span style="font-size:13px;color:var(--text-muted);font-weight:600;"> / ${loyalty.perReward}</span>`, loyalty.expiresLabel ? `Hangus ${escapeHtml(loyalty.expiresLabel)}` : '')}
-            ${miniStat('Klaim cup gratis', loyalty.claims)}
+            ${
+              loyaltyOn
+                ? `${miniStat('Stempel aktif', `${loyalty.stamps}<span style="font-size:13px;color:var(--text-muted);font-weight:600;"> / ${loyalty.perReward}</span>`, loyalty.expiresLabel ? `Hangus ${escapeHtml(loyalty.expiresLabel)}` : '')}
+            ${miniStat('Klaim cup gratis', loyalty.claims)}`
+                : ''
+            }
             ${miniStat('Pesanan selesai', lifetime.orders)}
             ${miniStat('Total belanja', formatRupiah(lifetime.spent))}
           </div>
@@ -2172,7 +2253,10 @@ function renderPelangganDetail({
             : ''
         }
 
-        <div class="card" style="padding:22px;">
+        ${
+          !loyaltyOn
+            ? ''
+            : `<div class="card" style="padding:22px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
             <h3 style="font-size:15px;font-weight:800;">Kartu Stempel</h3>
             ${
@@ -2202,7 +2286,8 @@ function renderPelangganDetail({
           }
           <h4 style="font-size:13px;font-weight:800;color:var(--text-muted);letter-spacing:0.3px;margin:20px 0 6px;">RIWAYAT STEMPEL</h4>
           ${stampRows}
-        </div>
+        </div>`
+        }
       </div>
 
       <div style="flex:1 1 400px;min-width:0;">
@@ -3052,6 +3137,28 @@ function renderPengaturan({
         }
       </div>
 
+      <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1 1 300px;">
+            <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Program Stempel &amp; Keanggotaan</h2>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin:0;">
+              Kalau dimatikan, toko jalan seperti toko online biasa: <strong>tidak ada</strong> kartu stempel,
+              cup gratis, diskon member, cup ulang tahun, maupun halaman keuntungan member — baik di sisi
+              pembeli maupun di menu admin. Stempel yang sudah terkumpul <strong>tidak dihapus</strong>:
+              kalau dinyalakan lagi, kartu semua pelanggan kembali persis seperti semula.
+            </p>
+          </div>
+          <label style="display:flex;align-items:center;gap:10px;margin:0;font-size:14px;font-weight:700;white-space:nowrap;">
+            <input type="checkbox" name="loyaltyEnabled" value="1" ${shop.loyaltyEnabled ? 'checked' : ''} style="width:20px;height:20px;">
+            Program aktif
+          </label>
+        </div>
+        <div style="margin-top:16px;font-size:12.5px;color:var(--text-muted);">
+          Status sekarang: <strong>${shop.loyaltyEnabled ? 'program stempel aktif' : 'tidak ada program stempel'}</strong>.
+          ${shop.loyaltyEnabled ? 'Aturan stempel dan tier diatur di <a href="/admin/loyalitas">Program Stempel</a>.' : ''}
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:24px;">
         <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Jam Operasional</h2>
         <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">
@@ -3717,9 +3824,15 @@ function renderPesananTambah({
   todayKey = '',
   openDates = [],
   deliveryMode = 'kalender',
+  // Whether the loyalty programme is running at all. Defaults to on so a
+  // caller that hasn't been told yet behaves as the shop always has.
+  loyaltyOn = true,
   // Everything ticked as "pilihan isi" in the catalogue, and any combinations
   // the form is being redrawn with after an error.
   fruitOptions = [],
+  // Per-product choice lists, keyed by product id. A combo product with its own
+  // ticked list uses that; anything else falls back to fruitOptions above.
+  fruitOptionsByProduct = {},
   mixLines = {},
 }) {
   // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
@@ -3729,16 +3842,22 @@ function renderPesananTambah({
   // A combinable cup is built from the choices ticked in the catalogue, and
   // every cup can be a different build — eight cups can be eight combinations.
   // So those products get a list of combinations instead of one quantity box.
-  const isMix = (p) => Boolean(p.combo_enabled) && fruitOptions.length > 0;
+  // What may go inside THIS cup: its own ticked list when it has one, the
+  // shop-wide "pilihan isi" pool when it doesn't.
+  const optionsFor = (product) => {
+    const own = fruitOptionsByProduct[String(product.id)];
+    return own && own.length ? own : fruitOptions;
+  };
+  const isMix = (p) => Boolean(p.combo_enabled) && optionsFor(p).length > 0;
   // A product set up as combinable while nothing is ticked as a choice would
   // silently fall back to a plain quantity box, which looks like the feature
   // is broken. Say what's missing instead.
-  const missingOptions = !fruitOptions.length && products.some((p) => p.combo_enabled);
-  const fruitCheckboxes = (productId, index, chosen) =>
-    fruitOptions
+  const missingOptions = products.some((p) => p.combo_enabled && optionsFor(p).length === 0);
+  const fruitCheckboxes = (product, index, chosen) =>
+    optionsFor(product)
       .map(
         (f) => `<label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-size:12.5px;font-weight:600;background:var(--surface);border:1.5px solid var(--border);border-radius:9px;padding:6px 10px;cursor:pointer;white-space:nowrap;">
-          <input type="checkbox" name="mixBuah_${productId}_${index}" value="${escapeAttr(f.id)}" ${
+          <input type="checkbox" name="mixBuah_${product.id}_${index}" value="${escapeAttr(f.id)}" ${
           chosen.includes(Number(f.id)) ? 'checked' : ''
         } style="width:15px;height:15px;">
           ${escapeHtml(f.name)}
@@ -3752,13 +3871,13 @@ function renderPesananTambah({
             <span style="font-size:12px;font-weight:800;color:var(--text-muted);">KOMBINASI <span data-mix-number>${index + 1}</span></span>
             <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px;">
               <span style="color:var(--text-muted);">Jumlah cup</span>
-              <input type="number" name="mixQty_${p.id}" min="0" max="${p.stock}" value="${escapeAttr(
+              <input type="number" name="mixQty_${p.id}" min="0" max="${p.unlimited_stock ? 9999 : p.stock}" value="${escapeAttr(
     line ? line.qty : 1
   )}" inputmode="numeric" style="width:70px;padding:6px 8px;font-size:12.5px;text-align:center;border-radius:8px;">
             </label>
             <button type="button" data-mix-remove style="margin-left:auto;background:none;border:none;color:#c94f4f;font-size:12px;font-weight:700;cursor:pointer;">Hapus</button>
           </div>
-          <div style="display:flex;gap:7px;flex-wrap:wrap;">${fruitCheckboxes(p.id, index, line ? line.fruits : [])}</div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">${fruitCheckboxes(p, index, line ? line.fruits : [])}</div>
         </div>`;
 
   const rows = products
@@ -3766,11 +3885,13 @@ function renderPesananTambah({
       if (isMix(p)) {
         const lines = mixLines[p.id] && mixLines[p.id].length ? mixLines[p.id] : [null];
         return `
-      <div style="padding:14px 16px;border-top:1px solid var(--border);" data-mix-product="${p.id}" data-mix-max="${p.stock}">
+      <div style="padding:14px 16px;border-top:1px solid var(--border);" data-mix-product="${p.id}" data-mix-max="${p.unlimited_stock ? 9999 : p.stock}">
         <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
           <div style="flex:1 1 190px;min-width:0;">
             <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · ${
+      p.unlimited_stock ? 'stok tanpa batas' : `stok ${p.stock}`
+    }</div>
             <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.6;">
               Tiap cup boleh beda isinya. Pesan 8 cup dengan 8 kombinasi? Tambah 8 baris di bawah.
               <br>Di website pembeli memilih ${escapeHtml(comboRangeText(p))} per cup — di sini bebas, sesuai pesanan aslinya.
@@ -3783,7 +3904,7 @@ function renderPesananTambah({
         <div data-mix-lines>${lines.map((line, i) => mixRow(p, i, line)).join('')}</div>
         <button type="button" data-mix-add style="margin-top:10px;background:none;border:1.5px dashed var(--border);border-radius:10px;padding:9px 14px;font-size:12.5px;font-weight:700;color:var(--green-dark);cursor:pointer;">+ Tambah kombinasi</button>
         <div style="font-size:11.5px;color:var(--text-muted);margin-top:8px;line-height:1.6;">
-          ${fruitOptions.length} pilihan isi tersedia. Mau nambah varian buah potong?
+          ${optionsFor(p).length} pilihan isi tersedia untuk produk ini. Mau nambah varian buah potong?
           Buat produknya di <a href="/admin/produk">Produk</a> lalu centang &ldquo;Jadikan pilihan isi&rdquo; — langsung muncul di sini.
         </div>
       </div>`;
@@ -3794,11 +3915,11 @@ function renderPesananTambah({
           <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
         </div>
-        <div class="qty-pick" data-max="${p.stock}">
+        <div class="qty-pick" data-max="${p.unlimited_stock ? 9999 : p.stock}">
           <label style="margin:0;font-size:12px;color:var(--text-muted);">Jumlah</label>
           <button type="button" class="step-btn qty-step" data-delta="-1"
                   aria-label="Kurangi jumlah ${escapeAttr(p.name)}">&minus;</button>
-          <input type="number" name="qty_${p.id}" min="0" max="${p.stock}" value="${escapeAttr(qty[p.id] || '')}"
+          <input type="number" name="qty_${p.id}" min="0" max="${p.unlimited_stock ? 9999 : p.stock}" value="${escapeAttr(qty[p.id] || '')}"
                  inputmode="numeric" placeholder="0" aria-label="Jumlah ${escapeAttr(p.name)}">
           <button type="button" class="step-btn qty-step" data-delta="1"
                   aria-label="Tambah jumlah ${escapeAttr(p.name)}">+</button>
@@ -3963,10 +4084,16 @@ function renderPesananTambah({
             </label>
           </div>
         </div>
-        <label style="display:flex;align-items:flex-start;gap:10px;margin:4px 0 0;font-size:13.5px;font-weight:600;cursor:pointer;">
+        ${
+          // No stamp card means no free cup to spend, so the option isn't
+          // offered. The route ignores the field either way.
+          loyaltyOn
+            ? `<label style="display:flex;align-items:flex-start;gap:10px;margin:4px 0 0;font-size:13.5px;font-weight:600;cursor:pointer;">
           <input type="checkbox" name="useReward" value="1" ${values.useReward ? 'checked' : ''} style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
           <span>Pakai 1 cup gratis dari kartu stempel pelanggan (kalau kartunya memang penuh)</span>
-        </label>
+        </label>`
+            : ''
+        }
 
         <!-- The hidden 0 comes first on purpose: an unticked checkbox posts
              nothing at all, so without it "don't register them" would be
@@ -3978,7 +4105,9 @@ function renderPesananTambah({
           <span>
             Daftarkan pembeli ini sebagai pelanggan
             <span style="display:block;font-size:12px;font-weight:500;color:var(--green-dark);line-height:1.6;margin-top:3px;">
-              Tanpa ini pesanannya tercatat sebagai pembeli lepas — <strong>stempelnya tidak masuk</strong>.
+              Tanpa ini pesanannya tercatat sebagai pembeli lepas${
+                loyaltyOn ? ' — <strong>stempelnya tidak masuk</strong>' : ' dan tidak punya riwayat pesanan'
+              }.
               Kalau nomornya sudah punya akun, pesanan ini otomatis ditautkan ke akun itu, bukan bikin baru.
               Akun baru dibuat tanpa password yang bisa dipakai — kalau pelanggan mau masuk sendiri,
               dia pakai menu &ldquo;Lupa Password&rdquo; dan kamu yang menyetujui kodenya.

@@ -211,7 +211,11 @@ router.get('/produk/:id', async (req, res) => {
   const related = all.filter((p) => p.id !== product.id).slice(0, 4);
   // Only a product whose contents are chosen needs the choice list, so the
   // extra query is paid only on those pages.
-  const comboOptions = product.combo_enabled ? await queries.listComboOptions() : [];
+  // This product's own ticked list when it has one, the shop-wide pool when it
+  // doesn't — and either way only what is actually on sale right now.
+  const comboOptions = product.combo_enabled
+    ? await queries.listComboOptions({ forProductId: product.id })
+    : [];
   sendHtml(
     res,
     shopViews.renderProdukDetail({
@@ -220,6 +224,7 @@ router.get('/produk/:id', async (req, res) => {
       cartCount: cartLib.cartCount(req.cart),
       comboOptions,
       customer: req.customer,
+      loyaltyOn: req.loyaltyOn,
     })
   );
 });
@@ -258,7 +263,9 @@ router.post('/keranjang/tambah', async (req, res) => {
     // Product ids come back from the Neon driver as strings (bigint
     // columns), so normalize to Number before comparing against the
     // parsed request ids — otherwise the Set lookup never matches.
-    const validIds = new Set((await queries.listComboOptions()).map((p) => Number(p.id)));
+    const validIds = new Set(
+      (await queries.listComboOptions({ forProductId: product.id })).map((p) => Number(p.id))
+    );
     const uniqueValid = Array.from(new Set(requestedIds)).filter((id) => validIds.has(id));
     const { min, max } = comboRange(product);
     if (uniqueValid.length >= min && uniqueValid.length <= max) fruits = uniqueValid;
@@ -307,7 +314,9 @@ router.post('/keranjang/set-qty', async (req, res) => {
   const product = products.get(productId);
   if (!product) return sendJson(res, { ok: false, error: 'Produk tidak ditemukan.' }, 404);
 
-  const qty = Math.min(requestedQty, Math.max(Number(product.stock) || 0, 0));
+  const qty = product.unlimited_stock
+    ? requestedQty
+    : Math.min(requestedQty, Math.max(Number(product.stock) || 0, 0));
   if (qty <= 0) cartLib.removeFromCart(req.cart, key);
   else if (req.cart[key]) cartLib.setCartQty(req.cart, key, qty);
   else cartLib.addToCart(req.cart, productId, qty);
@@ -320,7 +329,7 @@ router.post('/keranjang/set-qty', async (req, res) => {
     key,
     qty,
     // Only whether the cap was hit — never the stock level itself.
-    atMax: qty > 0 && qty >= Math.max(Number(product.stock) || 0, 0),
+    atMax: !product.unlimited_stock && qty > 0 && qty >= Math.max(Number(product.stock) || 0, 0),
     cartCount: cartLib.cartCount(req.cart),
     lineSubtotal: formatRupiah(line ? line.subtotal : 0),
     subtotal: formatRupiah(subtotal),
@@ -365,7 +374,11 @@ router.get('/masuk', async (req, res, { query }) => {
   if (req.customer) return redirect(res, '/akun');
   sendHtml(
     res,
-    accountViews.renderMasuk({ cartCount: cartLib.cartCount(req.cart), next: query.get('next') || '' })
+    accountViews.renderMasuk({
+      cartCount: cartLib.cartCount(req.cart),
+      next: query.get('next') || '',
+      loyaltyOn: req.loyaltyOn,
+    })
   );
 });
 
@@ -384,6 +397,7 @@ router.post('/masuk', async (req, res) => {
         errors: ['Nomor WhatsApp atau password salah.'],
         values: { whatsapp },
         next: fields.next || '',
+        loyaltyOn: req.loyaltyOn,
       })
     );
   }
@@ -419,6 +433,7 @@ router.get('/lupa-sandi', async (req, res) => {
       cartCount: cartLib.cartCount(req.cart),
       waLink: resetWaLink(shop, 'Halo admin Pecup, saya lupa password akun saya. Mohon dibantu reset ya.'),
       shopWhatsapp: shop.whatsapp || '',
+      loyaltyOn: req.loyaltyOn,
     })
   );
 });
@@ -436,6 +451,7 @@ router.post('/lupa-sandi', async (req, res) => {
         errors: [result.error],
         values: { whatsapp },
         shopWhatsapp: (await settings.shopConfig()).whatsapp || '',
+        loyaltyOn: req.loyaltyOn,
       })
     );
   }
@@ -448,6 +464,7 @@ router.post('/lupa-sandi', async (req, res) => {
     accountViews.renderLupaSandi({
       cartCount: cartLib.cartCount(req.cart),
       sent: true,
+      loyaltyOn: req.loyaltyOn,
       waLink: resetWaLink(
         shop,
         `Halo admin Pecup, saya lupa password akun saya (nomor ${whatsapp}). Mohon dibantu reset ya.`
@@ -466,6 +483,7 @@ router.get('/lupa-sandi/kode', async (req, res) => {
       cartCount: cartLib.cartCount(req.cart),
       waLink: resetWaLink(shop, 'Halo admin Pecup, saya sudah minta reset password tapi belum menerima kodenya.'),
       shopWhatsapp: shop.whatsapp || '',
+      loyaltyOn: req.loyaltyOn,
     })
   );
 });
@@ -484,6 +502,7 @@ router.post('/lupa-sandi/kode', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         errors: ['Password baru minimal 6 karakter.'],
         values,
+        loyaltyOn: req.loyaltyOn,
       })
     );
   }
@@ -498,21 +517,33 @@ router.post('/lupa-sandi/kode', async (req, res) => {
   if (!result.ok) {
     return sendHtml(
       res,
-      accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart), errors: [result.error], values })
+      accountViews.renderResetSandi({
+        cartCount: cartLib.cartCount(req.cart),
+        errors: [result.error],
+        values,
+        loyaltyOn: req.loyaltyOn,
+      })
     );
   }
-  sendHtml(res, accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart), done: true }));
+  sendHtml(
+    res,
+    accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart), done: true, loyaltyOn: req.loyaltyOn })
+  );
 });
 
 router.get('/daftar', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
-  sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart) }));
+  sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart), loyaltyOn: req.loyaltyOn }));
 });
 
 // What every tier is worth, for a shopper deciding whether to come back.
 // Deliberately open to visitors who aren't signed in — they're the ones it has
 // to convince — and personalised with "you are here" for those who are.
 router.get('/keanggotaan', async (req, res) => {
+  // The page exists only while the programme does. Left reachable with the
+  // programme off it would advertise perks nothing can deliver — so it goes,
+  // along with the footer link that points at it.
+  if (!(await settings.loyaltyEnabled())) return notFound(res);
   const [config, perReward, loyaltyStatus] = await Promise.all([
     loyalty.getTierConfig(),
     settings.stampsPerReward(),
@@ -558,6 +589,7 @@ router.post('/daftar', async (req, res) => {
         customer: req.customer,
         errors,
         values: { name, whatsapp, address, birthday: (fields.birthday || '').trim() },
+        loyaltyOn: req.loyaltyOn,
       })
     );
   }
@@ -643,6 +675,7 @@ router.get('/akun/pesanan', requireCustomer(async (req, res, { customer, query }
       pagination: result,
       cartCount: cartLib.cartCount(req.cart),
       view,
+      loyaltyOn: req.loyaltyOn,
     })
   );
 }));
@@ -728,6 +761,7 @@ router.get('/checkout', async (req, res, { query }) => {
       membership,
       shop,
       voucher: totals.voucherWithoutReward,
+      loyaltyOn: req.loyaltyOn,
       totals,
       deliveryFee,
       taxPercent,
@@ -762,6 +796,7 @@ router.post('/checkout', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         customer: req.customer,
         errors: ['Berkas terlalu besar atau gagal diunggah. Coba lagi dengan file yang lebih kecil (maks. 4MB).'],
+        loyaltyOn: req.loyaltyOn,
       }),
       413
     );
@@ -831,7 +866,7 @@ router.post('/checkout', async (req, res) => {
   }
 
   for (const it of items) {
-    if (it.qty > it.product.stock) {
+    if (!it.product.unlimited_stock && it.qty > it.product.stock) {
       // Deliberately no number: shoppers don't get to see stock levels.
       errors.push(`Stok ${it.product.name} tidak mencukupi. Kurangi jumlahnya lalu coba lagi.`);
     }
@@ -857,6 +892,7 @@ router.post('/checkout', async (req, res) => {
         openDates: settings.openDeliveryDates(shop),
         closedNote: closedDatesNote(shop),
         errors,
+        loyaltyOn: req.loyaltyOn,
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
@@ -921,6 +957,7 @@ router.post('/checkout', async (req, res) => {
         openDates: settings.openDeliveryDates(shop),
         closedNote: closedDatesNote(shop),
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
+        loyaltyOn: req.loyaltyOn,
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
@@ -961,7 +998,16 @@ router.get('/pesanan-berhasil/:id', async (req, res) => {
     if (!isOwner && !req.isAdmin) return notFound(res);
   }
   const items = await queries.getOrderItems(order.id);
-  sendHtml(res, shopViews.renderSukses({ order, items, emailOk: Boolean(order.email_sent), customer: req.customer }));
+  sendHtml(
+    res,
+    shopViews.renderSukses({
+      order,
+      items,
+      emailOk: Boolean(order.email_sent),
+      customer: req.customer,
+      loyaltyOn: req.loyaltyOn,
+    })
+  );
 });
 
 // ---------------------------------------------------------------------
@@ -1143,12 +1189,14 @@ router.post('/admin/media/video/presign', requirePermission('produk.kelola', asy
 }));
 
 router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
-  const [categories, inventoryItems, comboOptions] = await Promise.all([
+  const [categories, inventoryItems, comboOptions, allProducts] = await Promise.all([
     queries.listCategories(),
     // Only fetched for an admin who may manage the stockroom — for anyone else
     // the packaging section is not drawn, and nothing they post can change it.
     req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
-    queries.listComboOptions(),
+    // Everything ticked, available or not, so the summary line is honest.
+    queries.listComboOptions({ includeUnavailable: true }),
+    queries.listProducts(),
   ]);
   sendHtml(
     res,
@@ -1159,6 +1207,8 @@ router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req
       admin: req.admin,
       inventoryItems,
       comboOptions,
+      allProducts,
+      comboChoices: [],
     })
   );
 }));
@@ -1178,7 +1228,9 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
         categories: await queries.listCategories(),
         admin: req.admin,
         pendingVideos,
-        comboOptions: await queries.listComboOptions(),
+        comboOptions: await queries.listComboOptions({ includeUnavailable: true }),
+        allProducts: await queries.listProducts(),
+        comboChoices: (fieldLists.comboChoice || []).map(Number),
       })
     );
 
@@ -1207,11 +1259,14 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
     active: fields.active ? 1 : 0,
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
+    unlimitedStock: Boolean(fields.unlimitedStock),
     ...wholesaleFields(fields),
     ...comboFields(fields),
   });
   const newMaterials = materialsFromForm(req, fieldLists, fields);
   if (newMaterials) await inventory.setMaterials(newProductId, newMaterials);
+  // Which products may go inside this one, if it is a combination.
+  await queries.setComboChoices(newProductId, fieldLists.comboChoice || []);
   const photoCount = images.filter((url) => !media.isVideoUrl(url)).length;
   const videoCount = images.length - photoCount;
   await logAdminAction(
@@ -1228,11 +1283,13 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
 router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
   if (!product) return notFound(res);
-  const [categories, inventoryItems, materials, comboOptions] = await Promise.all([
+  const [categories, inventoryItems, materials, comboOptions, allProducts, comboChoices] = await Promise.all([
     queries.listCategories(),
     req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
     inventory.materialsFor(product.id),
-    queries.listComboOptions(),
+    queries.listComboOptions({ includeUnavailable: true }),
+    queries.listProducts(),
+    queries.comboChoicesFor(product.id),
   ]);
   sendHtml(
     res,
@@ -1244,6 +1301,8 @@ router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (r
       inventoryItems,
       materials,
       comboOptions,
+      allProducts,
+      comboChoices,
     })
   );
 }));
@@ -1264,7 +1323,9 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
         categories: await queries.listCategories(),
         admin: req.admin,
         pendingVideos,
-        comboOptions: await queries.listComboOptions(),
+        comboOptions: await queries.listComboOptions({ includeUnavailable: true }),
+        allProducts: await queries.listProducts(),
+        comboChoices: (fieldLists.comboChoice || []).map(Number),
       })
     );
 
@@ -1305,12 +1366,14 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
     active: fields.active ? 1 : 0,
     isBestseller: fields.is_bestseller ? 1 : 0,
     isRecommended: fields.is_recommended ? 1 : 0,
+    unlimitedStock: Boolean(fields.unlimitedStock),
     ...wholesaleFields(fields),
     ...comboFields(fields, existing),
   };
   await queries.updateProduct(id, next);
   const wantedMaterials = materialsFromForm(req, fieldLists, fields);
   if (wantedMaterials) await inventory.setMaterials(id, wantedMaterials);
+  await queries.setComboChoices(id, fieldLists.comboChoice || []);
 
   // The log used to say only the product's name, which left "what did they
   // actually change?" unanswerable. Now it names the fields that moved.
@@ -1325,6 +1388,10 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
       { label: 'berat', get: (p) => p.weight },
       { label: 'harga', get: (p) => Number(p.price), format: (v) => formatRupiah(v) },
       { label: 'stok', get: (p) => Number(p.stock) },
+      {
+        label: 'stok tanpa batas',
+        get: (p) => ((p.unlimited_stock ?? p.unlimitedStock) ? 'ya' : 'tidak'),
+      },
       { label: 'tampil di toko', get: (p) => (Number(p.active) ? 'ya' : 'tidak') },
       { label: 'best seller', get: (p) => (Number(p.is_bestseller ?? p.isBestseller) ? 'ya' : 'tidak') },
       { label: 'direkomendasikan', get: (p) => (Number(p.is_recommended ?? p.isRecommended) ? 'ya' : 'tidak') },
@@ -1588,13 +1655,15 @@ router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (r
   // The picker searches the server as you type, so the page no longer carries
   // the customer table with it — that list only ever grows.
   const wanted = Number(query.get('pelanggan')) || 0;
-  const [products, picked, shop, comboOptions] = await Promise.all([
+  const [products, picked, shop, comboOptions, comboByProduct] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     wanted ? loyalty.getCustomerBasic(wanted) : null,
     settings.shopConfig(),
-    // The choice list is whatever is ticked as "pilihan isi" in the catalogue
-    // right now — add a buah potong there and it appears here immediately.
+    // The shop-wide fallback pool: whatever is ticked as "pilihan isi" right
+    // now — add a buah potong there and it appears here immediately.
     queries.listComboOptions(),
+    // And each combinable product's own ticked list, which takes precedence.
+    queries.comboOptionsByProduct(),
   ]);
   sendHtml(
     res,
@@ -1606,6 +1675,8 @@ router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (r
       openDates: settings.openDeliveryDates(shop),
       deliveryMode: shop.deliveryMode,
       fruitOptions: comboOptions,
+      fruitOptionsByProduct: comboByProduct,
+      loyaltyOn: req.loyaltyOn,
       picked: picked
         ? {
             id: Number(picked.id),
@@ -1626,10 +1697,11 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
   // fieldLists as well as fields: a mix product posts one quantity and one
   // checkbox group per combination, all sharing a name.
   const { fields, fieldLists } = await parseBody(req);
-  const [products, shop, comboOptions] = await Promise.all([
+  const [products, shop, comboOptions, comboByProduct] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     settings.shopConfig(),
     queries.listComboOptions(),
+    queries.comboOptionsByProduct(),
   ]);
   // The same PPN the website would charge, read from the settings rather than
   // the form, so a sale typed in here and one taken online are priced alike.
@@ -1645,17 +1717,27 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
   // lines with different fruit in each — eight cups can be eight combinations.
   // Each row posts its own quantity plus a checkbox group named with the row's
   // index, which is what keeps one combination from bleeding into the next.
-  const fruitById = new Map(comboOptions.map((p) => [Number(p.id), p]));
+  // Names come from every list there is, so a label can always be built; what a
+  // given cup may CONTAIN is narrower — its own ticked list when it has one.
+  const allOptions = [...comboOptions];
+  for (const list of Object.values(comboByProduct)) allOptions.push(...list);
+  const fruitById = new Map(allOptions.map((o) => [Number(o.id), o]));
+  const allowedIdsFor = (productId) => {
+    const own = comboByProduct[String(productId)];
+    const list = own && own.length ? own : comboOptions;
+    return new Set(list.map((o) => Number(o.id)));
+  };
   const mixLines = {};
   for (const p of products) {
     if (!p.combo_enabled) continue;
+    const allowed = allowedIdsFor(p.id);
     const quantities = fieldLists[`mixQty_${p.id}`] || [];
     const lines = [];
     for (let i = 0; i < quantities.length; i += 1) {
       const cups = Math.max(0, Math.round(Number(quantities[i]) || 0));
       const picked = (fieldLists[`mixBuah_${p.id}_${i}`] || [])
         .map((v) => Number(v))
-        .filter((id) => fruitById.has(id));
+        .filter((id) => allowed.has(id));
       const unique = [...new Set(picked)];
       if (cups > 0 || unique.length) lines.push({ qty: cups, fruits: unique });
     }
@@ -1713,6 +1795,8 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
         openDates: settings.openDeliveryDates(shop),
         deliveryMode: shop.deliveryMode,
         fruitOptions: comboOptions,
+        fruitOptionsByProduct: comboByProduct,
+        loyaltyOn: req.loyaltyOn,
         mixLines,
       })
     );
@@ -1765,7 +1849,7 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
   }
   for (const [productId, wanted] of wantedPerProduct) {
     const product = products.find((p) => Number(p.id) === productId);
-    if (product && wanted > Number(product.stock)) {
+    if (product && !product.unlimited_stock && wanted > Number(product.stock)) {
       errors.push(`Stok ${product.name} tidak mencukupi (diminta ${wanted}, sisa ${product.stock}).`);
     }
   }
@@ -2055,6 +2139,10 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
     // doesn't silently fall back to a different number than it had before.
     tax_enabled: fields.taxEnabled ? '1' : '0',
     tax_percent: Math.min(100, num(fields.taxPercent)),
+    // The loyalty programme's master switch. Turning it off changes nothing in
+    // the stamps table — the cards are kept exactly as they are, and come back
+    // untouched if it is switched on again.
+    loyalty_enabled: fields.loyaltyEnabled ? '1' : '0',
     // Delivery days. The weekday boxes post one value each, so they come from
     // fieldLists; the two date lists are free text and are cleaned to real
     // 'YYYY-MM-DD' keys here so nothing unparseable can reach the rules.
@@ -2103,6 +2191,11 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
       format: (v) => (String(v) === 'pilihan' ? 'daftar tanggal' : 'kalender'),
     },
     { key: 'tax_enabled', label: 'PPN', format: (v) => (String(v) === '1' ? 'aktif' : 'nonaktif') },
+    {
+      key: 'loyalty_enabled',
+      label: 'program stempel',
+      format: (v) => (String(v) === '0' ? 'dimatikan' : 'aktif'),
+    },
     { key: 'tax_percent', label: 'tarif PPN', format: (v) => `${Number(v) || 0}%` },
     { key: 'open_time', label: 'jam buka' },
     { key: 'close_time', label: 'jam tutup' },
@@ -2701,6 +2794,7 @@ router.get('/admin/pelanggan', requirePermission('pelanggan.lihat', async (req, 
       tierNames: tierConfig.tiers.map((t) => t.name),
       view,
       admin: req.admin,
+      loyaltyOn: req.loyaltyOn,
       flash: query.get('flash') || '',
       error: query.get('error') || '',
     })
@@ -2711,16 +2805,12 @@ router.get('/admin/pelanggan', requirePermission('pelanggan.lihat', async (req, 
 // first or "unduh" would be read as a customer id.
 router.get('/admin/pelanggan/unduh', requirePermission('pelanggan.unduh', async (req, res) => {
   const customers = await loyalty.listCustomersWithLoyalty({ limit: 500 });
-  const header = [
-    'Nama',
-    'WhatsApp',
-    'Bergabung',
-    'Ulang Tahun',
-    'Stempel Aktif',
-    'Klaim Cup Gratis',
-    'Tier',
-    'Stempel Hangus',
-  ];
+  // With the loyalty programme off there are no stamps, claims or tiers to
+  // export — the file would be four columns of zeroes pretending to mean
+  // something.
+  const header = req.loyaltyOn
+    ? ['Nama', 'WhatsApp', 'Bergabung', 'Ulang Tahun', 'Stempel Aktif', 'Klaim Cup Gratis', 'Tier', 'Stempel Hangus']
+    : ['Nama', 'WhatsApp', 'Bergabung', 'Ulang Tahun'];
   const lines = [header.map(csvEscape).join(',')];
   for (const c of customers) {
     lines.push(
@@ -2729,10 +2819,9 @@ router.get('/admin/pelanggan/unduh', requirePermission('pelanggan.unduh', async 
         formatWhatsapp(c.whatsapp),
         toDateOnly(c.created_at),
         c.birthday ? toDateOnly(c.birthday) : '',
-        String(c.stamps),
-        String(c.claims),
-        c.tiersEnabled ? c.tier.name : '',
-        c.expiresLabel || '',
+        ...(req.loyaltyOn
+          ? [String(c.stamps), String(c.claims), c.tiersEnabled ? c.tier.name : '', c.expiresLabel || '']
+          : []),
       ].map(csvEscape).join(',')
     );
   }
@@ -2805,6 +2894,7 @@ router.get('/admin/pelanggan/:id', requirePermission('pelanggan.lihat', async (r
       admin: req.admin,
       canEdit: req.isSuperadmin,
       tiersEnabled: tierConfig.enabled,
+      loyaltyOn: req.loyaltyOn,
       flash: query.get('flash') || '',
       error: query.get('error') || '',
       pagination: result,
@@ -3241,6 +3331,10 @@ async function customerBenefits(sessionCustomer, items, deliveryDateKey = '') {
   if (!sessionCustomer || !items.length) return { reward: EMPTY_REWARD, membership: EMPTY_MEMBERSHIP };
 
   const status = await loyalty.statusFor(sessionCustomer.customerId);
+  // The programme's master switch, asked once here. With it off there is no
+  // free cup to offer, no member percentage to take and no perk to spend, so
+  // checkout and manual order entry both price exactly like an ordinary shop.
+  if (!status.loyaltyEnabled) return { reward: EMPTY_REWARD, membership: EMPTY_MEMBERSHIP };
   const units = cupUnits(items);
 
   const reward = status.cardComplete && units.length
@@ -3550,6 +3644,8 @@ function notFound(res, req) {
       code: 404,
       cartCount: req ? cartLib.cartCount(req.cart) : 0,
       customer: req ? req.customer : null,
+      // notFound is also called from paths that never saw a request object.
+      loyaltyOn: req ? req.loyaltyOn !== false : true,
     })
   );
 }
@@ -3579,10 +3675,22 @@ module.exports = async (req, res) => {
       req.admin = current
         ? { ...req.admin, role: current.role, username: current.username, permissions: current.permissions }
         : null;
+      // A feature switched off takes its permissions with it, so the sidebar
+      // item, the pages and every POST route behind them vanish together
+      // rather than each needing its own check. Settings are cached per
+      // process and this only runs when an admin cookie is present, so the
+      // storefront's hot path never pays for it.
+      if (req.admin && !(await settings.loyaltyEnabled())) {
+        req.admin = { ...req.admin, disabledKeys: permissions.LOYALTY_KEYS };
+      }
     }
     req.isAdmin = Boolean(req.admin);
     req.isSuperadmin = Boolean(req.admin && req.admin.role === 'superadmin');
     req.can = (key) => permissions.has(req.admin, key);
+    // One cached read, shared by every surface that has to know whether the
+    // loyalty programme exists — the storefront footer, the sign-up copy, the
+    // admin menu — so no two of them can disagree within the same request.
+    req.loyaltyOn = await settings.loyaltyEnabled();
     // Deliberately *not* re-checked against the DB here: the token already
     // carries everything the header needs (name), and the routes that act on
     // a customer load the row themselves. Keeps the storefront hot path at

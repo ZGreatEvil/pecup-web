@@ -94,6 +94,13 @@ const CATALOG = [
 const ALL_KEYS = CATALOG.flatMap((g) => g.items.map((i) => i.key));
 const KEY_SET = new Set(ALL_KEYS);
 
+// Permissions that only mean anything while the loyalty programme is running.
+// With the programme switched off these are taken away from everyone — the
+// owner included — so the menu item, the pages and the POST routes behind them
+// all disappear together, instead of each one needing its own check and one of
+// them eventually being forgotten.
+const LOYALTY_KEYS = ['loyalitas.kelola', 'pelanggan.stempel'];
+
 // What a plain 'admin' account could already do before this existed. Accounts
 // created before permissions were introduced are seeded with exactly this, so
 // nobody wakes up with less access than they had yesterday.
@@ -165,12 +172,20 @@ function normalize(keys) {
  */
 function permissionsFor(admin) {
   if (!admin) return [];
-  if (admin.role === 'superadmin') return ALL_KEYS.slice();
-  return normalize(admin.permissions || []);
+  const all = admin.role === 'superadmin' ? ALL_KEYS.slice() : normalize(admin.permissions || []);
+  // A feature that is switched off takes its permissions with it, for the
+  // superadmin too: with no programme left to manage, holding the key would
+  // only put a menu item on screen that leads nowhere.
+  const off = new Set(admin.disabledKeys || []);
+  return off.size ? all.filter((k) => !off.has(k)) : all;
 }
 
 function has(admin, key) {
   if (!admin) return false;
+  // Checked before the superadmin short-circuit, so a disabled feature is
+  // closed to the owner as well — otherwise the one account that matters most
+  // would still reach a page the shop has turned off.
+  if ((admin.disabledKeys || []).includes(key)) return false;
   if (admin.role === 'superadmin') return true;
   return normalize(admin.permissions || []).includes(key);
 }
@@ -222,6 +237,7 @@ function describe(keys) {
 module.exports = {
   CATALOG,
   ALL_KEYS,
+  LOYALTY_KEYS,
   LEGACY_ADMIN_KEYS,
   PRESETS,
   normalize,

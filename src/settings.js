@@ -10,6 +10,13 @@ function nowWIB(at = new Date()) {
 
 const DEFAULTS = {
   stamps_per_reward: '10',
+  // The whole loyalty programme — stamps, free cups, membership tiers and
+  // every perk they carry — behind a single switch. Turned off, the shop runs
+  // like any ordinary online shop: no stamp card, no free cup, no member
+  // discount, no birthday cup, and no mention of any of it on any page, for
+  // customers or for admins. Ships ON, so a shop already running one sees no
+  // change until someone deliberately turns it off.
+  loyalty_enabled: '1',
   // Operational settings a shop actually needs day to day: closing for a
   // holiday, a minimum order, a delivery fee, and a cut-off after which
   // same-day delivery isn't offered any more.
@@ -105,6 +112,10 @@ async function shopConfig() {
     // is 0 whenever the box is off — so one place decides, not each caller.
     taxEnabled: all.tax_enabled === '1',
     taxPercent: Math.min(100, num('tax_percent')),
+    // The loyalty programme's master switch. Everything that grants, shows or
+    // spends a stamp asks this one question, so there is no surface that can
+    // disagree with another about whether the programme exists.
+    loyaltyEnabled: all.loyalty_enabled !== '0',
     // Which days may be delivered on, and how the shopper is asked to pick.
     // `delivery` is the rule set; `deliveryMode` is only presentation.
     delivery: deliveryRules(all),
@@ -244,6 +255,12 @@ async function stampsPerReward() {
   return Number.isFinite(n) && n >= 1 && n <= 100 ? Math.round(n) : 10;
 }
 
+// For the callers that need the answer without loading the whole shop config.
+async function loyaltyEnabled() {
+  const values = await getAll();
+  return values.loyalty_enabled !== '0';
+}
+
 async function setValue(key, value) {
   await db.query(
     `insert into settings (key, value, updated_at) values ($1, $2, now())
@@ -256,6 +273,7 @@ async function setValue(key, value) {
 module.exports = {
   getAll,
   stampsPerReward,
+  loyaltyEnabled,
   setValue,
   shopConfig,
   deliveryFeeFor,

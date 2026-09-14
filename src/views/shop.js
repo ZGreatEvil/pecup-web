@@ -150,7 +150,7 @@ function renderBeranda({
     ? products
         .map((p) => {
           const isMix = Boolean(p.combo_enabled);
-          const inStock = p.stock > 0;
+          const inStock = Boolean(p.unlimited_stock) || p.stock > 0;
           // A cup whose contents are chosen is configured on its own page, so
           // it can't be stepped up and down from the card.
           const action = !inStock
@@ -208,7 +208,7 @@ function renderBeranda({
       <h1 class="hero-title">Buah Potong Segar, Siap Santap Tanpa Ribet</h1>
       <p style="font-size:17px;line-height:1.7;color:var(--text-muted);max-width:480px;">Dipotong higienis dan dikemas rapi dalam cup, langsung dari Pecup ke meja kamu. Pesan sekarang, transfer, tinggal tunggu paket buah segar sampai.</p>
       <div style="display:flex;gap:14px;margin-top:6px;">
-        <a href="#menu" class="btn-primary" style="padding:16px 30px;border-radius:14px;font-size:15px;font-weight:700;display:inline-block;">Lihat Menu Buah</a>
+        <a href="#menu" class="btn-primary" style="padding:15px 30px;border-radius:14px;font-size:15px;font-weight:700;display:inline-block;">Lihat Menu Buah</a>
       </div>
     </div>
     <div class="hero-art">
@@ -306,13 +306,13 @@ function renderBeranda({
     </div>
   </section>
 
-  ${customerFooter()}
+  ${customerFooter(!shop || shop.loyaltyEnabled !== false)}
 </div></div>`;
 
   return page({ title: 'Pecup — Buah Potong Segar', bodyHtml: body });
 }
 
-function renderProdukDetail({ product, related, cartCount, comboOptions = [], customer = null }) {
+function renderProdukDetail({ product, related, cartCount, comboOptions = [], customer = null, loyaltyOn = true }) {
   const relatedCards = related
     .map(
       (p) => `
@@ -324,7 +324,7 @@ function renderProdukDetail({ product, related, cartCount, comboOptions = [], cu
     )
     .join('');
 
-  const inStock = product.stock > 0;
+  const inStock = Boolean(product.unlimited_stock) || product.stock > 0;
   // Whether this cup's contents are chosen is a switch on the product, not a
   // guess from its category — and with nothing ticked as a choice there is
   // nothing to pick from, so it falls back to an ordinary add-to-cart.
@@ -360,7 +360,7 @@ function renderProdukDetail({ product, related, cartCount, comboOptions = [], cu
           <select name="qty" style="width:90px;padding:12px 10px;">
             ${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}
           </select>
-          <button class="btn-primary" type="submit" id="addToCartBtn" ${inStock ? '' : 'disabled'} style="flex:1;padding:16px 24px;border-radius:12px;font-size:15px;font-weight:700;max-width:280px;">
+          <button class="btn-primary" type="submit" id="addToCartBtn" ${inStock ? '' : 'disabled'} style="flex:1;padding:15px 24px;border-radius:12px;font-size:15px;font-weight:700;max-width:280px;">
             ${inStock ? 'Tambah ke Keranjang' : 'Stok Habis'}
           </button>
         </div>
@@ -422,7 +422,13 @@ function renderProdukDetail({ product, related, cartCount, comboOptions = [], cu
         ${wholesaleBadge(product)}
         <span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:${inStock ? '#58a05c' : '#a13f3f'};background:${inStock ? 'var(--green-soft)' : '#f6dcdc'};padding:5px 12px;border-radius:99px;">
           <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="${inStock ? '#58a05c' : '#a13f3f'}"/></svg>
-          ${inStock ? (product.stock <= 5 ? 'Tinggal Sedikit' : 'Stok Tersedia') : 'Stok Habis'}
+          ${
+            !inStock
+              ? 'Stok Habis'
+              : product.unlimited_stock || product.stock > 5
+              ? 'Stok Tersedia'
+              : 'Tinggal Sedikit'
+          }
         </span>
       </div>
       <p style="font-size:15px;line-height:1.8;color:var(--text-muted);max-width:480px;">${escapeHtml(product.description)}</p>
@@ -444,7 +450,7 @@ function renderProdukDetail({ product, related, cartCount, comboOptions = [], cu
   </section>`
       : ''
   }
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>`;
 
   // Structured data so a search result can show the price and whether it's in
@@ -562,14 +568,14 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null, shop = n
                 Toko sedang tutup, jadi pesanan belum bisa dikirim.<br>
                 <span style="font-weight:600;">Keranjangmu tersimpan — tinggal checkout saat buka lagi.</span>
               </div>`
-            : `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
+            : `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
         }
       </div>
     </div>`
         : emptyCart
     }
   </section>
-  ${customerFooter()}
+  ${customerFooter(!shop || shop.loyaltyEnabled !== false)}
 </div></div>`;
 
   return page({ title: 'Keranjang — Pecup', bodyHtml: body, noindex: true });
@@ -585,6 +591,9 @@ function renderCheckout({
   reward = { available: 0, discount: 0, itemName: null },
   membership = { tier: null, percent: 0, perks: { withReward: [], withoutReward: [] }, discount: { withReward: 0, withoutReward: 0 } },
   useReward = false,
+  // Whether the loyalty programme is running. Defaults to on, so a caller that
+  // hasn't been told behaves the way the shop always has.
+  loyaltyOn = true,
   shop = { open: true, notice: '', minOrder: 0, deliveryFee: 0, freeDeliveryOver: 0, sameDayCutoff: '' },
   voucher = { applied: false, code: '', discount: 0, error: '', label: '' },
   totals = null,
@@ -692,7 +701,7 @@ function renderCheckout({
       </div>
     </div>
   </section>
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>`;
     return page({ title: 'Toko Tutup — Pecup', bodyHtml: closedBody, noindex: true });
   }
@@ -712,10 +721,14 @@ function renderCheckout({
             customer
               ? `<div style="display:flex;align-items:center;gap:10px;background:var(--green-soft);border-radius:12px;padding:14px 16px;font-size:13.5px;color:var(--green-dark);line-height:1.6;">
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>
-                  <span>Data di bawah terisi otomatis dari akunmu. Pesanan ini juga menambah stempelmu setelah selesai.</span>
+                  <span>Data di bawah terisi otomatis dari akunmu.${
+                    loyaltyOn ? ' Pesanan ini juga menambah stempelmu setelah selesai.' : ''
+                  }</span>
                 </div>`
               : `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--surface-2);border-radius:12px;padding:14px 18px;">
-                  <span style="font-size:13.5px;color:var(--text-muted);line-height:1.6;">Lanjut sebagai tamu saja juga boleh — akun cuma untuk isi otomatis &amp; kumpul stempel.</span>
+                  <span style="font-size:13.5px;color:var(--text-muted);line-height:1.6;">Lanjut sebagai tamu saja juga boleh — akun cuma untuk isi otomatis${
+                    loyaltyOn ? ' &amp; kumpul stempel' : ''
+                  }.</span>
                   <a href="/masuk?next=/checkout" class="btn-outline" style="padding:10px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Masuk / Daftar</a>
                 </div>`
           }
@@ -857,7 +870,7 @@ function renderCheckout({
                   data-full="${escapeAttr(formatRupiah(totalFull))}"
                   data-discounted="${escapeAttr(formatRupiah(totalDiscounted))}">${formatRupiah(payable)}</span>
           </div>
-          <button class="btn-primary" type="submit" style="width:100%;padding:17px;border-radius:12px;font-size:15.5px;font-weight:700;">Kirim Pesanan Sekarang</button>
+          <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15.5px;font-weight:700;">Kirim Pesanan Sekarang</button>
           <p style="font-size:12.5px;color:var(--text-muted);text-align:center;line-height:1.6;">Dengan mengirim pesanan, data di atas beserta bukti transfer akan otomatis terkirim melalui email ke tim Pecup untuk diverifikasi.</p>
         </div>
 
@@ -911,7 +924,7 @@ function renderCheckout({
       </div>
     </form>
   </section>
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>
 <script>
 // "Pakai" re-loads checkout with ?voucher=CODE so the server can validate the
@@ -976,7 +989,7 @@ ${
   return page({ title: 'Checkout — Pecup', bodyHtml: body, noindex: true });
 }
 
-function renderSukses({ order, items, emailOk, customer = null }) {
+function renderSukses({ order, items, emailOk, customer = null, loyaltyOn = true }) {
   const rewardDiscount = Number(order.reward_discount) || 0;
   // Same list the email and the admin page render, from src/orderMoney.js —
   // the receipt a customer keeps must itemise exactly what the shop's copy does.
@@ -1099,7 +1112,7 @@ function renderSukses({ order, items, emailOk, customer = null }) {
 }
 
 // Friendly error page, used for 404s and 500s instead of a bare <h1>404</h1>.
-function renderError({ code = 404, title, message, cartCount = 0, customer = null }) {
+function renderError({ code = 404, title, message, cartCount = 0, customer = null, loyaltyOn = true }) {
   const heading = title || (code === 404 ? 'Halaman tidak ditemukan' : 'Ada yang tidak beres');
   const text =
     message ||
@@ -1124,7 +1137,7 @@ function renderError({ code = 404, title, message, cartCount = 0, customer = nul
       <a href="https://wa.me/6281245684104" target="_blank" rel="noopener" style="font-size:13.5px;margin-top:8px;">Butuh bantuan? Chat WhatsApp kami →</a>
     </div>
   </main>
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>`;
 
   return page({

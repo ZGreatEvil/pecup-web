@@ -43,8 +43,8 @@ async function listCategories() {
 async function createProduct(data) {
   const rows = await db.query(
     `insert into products (name, description, category, weight, price, stock, image, active, is_bestseller, is_recommended, images, wholesale_min_qty, wholesale_price,
-                           combo_enabled, combo_min, combo_max, combo_option)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13, $14, $15, $16, $17)
+                           combo_enabled, combo_min, combo_max, combo_option, unlimited_stock)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13, $14, $15, $16, $17, $18)
      returning id`,
     [
       data.name,
@@ -64,6 +64,7 @@ async function createProduct(data) {
       Number(data.comboMin) || 1,
       Number(data.comboMax) || 3,
       Boolean(data.comboOption),
+      Boolean(data.unlimitedStock),
     ]
   );
   return Number(rows[0].id);
@@ -81,8 +82,9 @@ async function updateProduct(id, data) {
     `update products set name = $1, description = $2, category = $3, weight = $4,
             price = $5, stock = $6, active = $7, is_bestseller = $8, is_recommended = $9,
             images = $10::text[], image = $11, wholesale_min_qty = $12, wholesale_price = $13,
-            combo_enabled = $14, combo_min = $15, combo_max = $16, combo_option = $17
-     where id = $18`,
+            combo_enabled = $14, combo_min = $15, combo_max = $16, combo_option = $17,
+            unlimited_stock = $18
+     where id = $19`,
     [
       data.name,
       data.description,
@@ -101,6 +103,7 @@ async function updateProduct(id, data) {
       Number(data.comboMin) || 1,
       Number(data.comboMax) || 3,
       Boolean(data.comboOption),
+      Boolean(data.unlimitedStock),
       id,
     ]
   );
@@ -111,12 +114,86 @@ async function updateProduct(id, data) {
 // tick "pilihan isi" on a product and it shows up here, in the shop picker and
 // in manual order entry at the same moment.
 //
-// `active` is deliberately NOT part of the test. Taking a cup off the menu and
-// offering that fruit inside a mix are different decisions — a shop can sell a
-// variant only as part of a mix, and can pull a fruit from the mix while still
-// selling it on its own. The two switches on the product form say so plainly.
-async function listComboOptions() {
-  return db.query('select * from products where combo_option = true order by name');
+// A choice must also be a cup the shop is really selling right now — on the
+// menu and in stock. Offering a fruit inside a mix that nobody can buy on its
+// own is how a shopper ends up choosing something the kitchen hasn't got, so
+// "ticked as a choice" is necessary but not sufficient: the product's own
+// availability decides, and one rule covers the storefront and manual entry
+// alike.
+async function listComboOptions({ includeUnavailable = false, forProductId = null } = {}) {
+  const available = includeUnavailable ? '' : ' and p.active = true and (p.unlimited_stock = true or p.stock > 0)';
+  // A product that has its own ticked list uses exactly that list. Only when it
+  // has none does it fall back to the shop-wide "pilihan isi" pool, so turning
+  // on per-product choices never silently empties an existing combo product.
+  if (forProductId) {
+    const own = await db.query(
+      `select p.* from product_combo_choices c
+         join products p on p.id = c.choice_product_id
+        where c.product_id = $1${available}
+        order by p.name`,
+      [forProductId]
+    );
+    if (own.length) return own;
+    const anyTicked = await db.query(
+      'select 1 from product_combo_choices where product_id = $1 limit 1',
+      [forProductId]
+    );
+    // It HAS a list, but nothing on it is available right now — that is an
+    // empty picker, not a reason to offer the whole shop instead.
+    if (anyTicked.length) return [];
+  }
+  const where = includeUnavailable
+    ? 'p.combo_option = true'
+    : 'p.combo_option = true and p.active = true and (p.unlimited_stock = true or p.stock > 0)';
+  return db.query(`select p.* from products p where ${where} order by p.name`);
+}
+
+/** The ids ticked as this product's own allowed contents. */
+async function comboChoicesFor(productId) {
+  const rows = await db.query(
+    'select choice_product_id from product_combo_choices where product_id = $1',
+    [productId]
+  );
+  return rows.map((r) => Number(r.choice_product_id));
+}
+
+/** Replaces a product's allowed contents with exactly this set of ids. */
+async function setComboChoices(productId, ids) {
+  const wanted = Array.from(
+    new Set((ids || []).map(Number).filter((n) => Number.isFinite(n) && n > 0 && n !== Number(productId)))
+  );
+  await db.query('delete from product_combo_choices where product_id = $1', [productId]);
+  if (!wanted.length) return [];
+  // Only ids that are real products get stored, so a hand-posted form can't
+  // leave rows pointing at nothing.
+  await db.query(
+    `insert into product_combo_choices (product_id, choice_product_id)
+     select $1, id from products where id = any($2::bigint[])
+     on conflict do nothing`,
+    [productId, wanted]
+  );
+  return wanted;
+}
+
+/**
+ * Every combinable product's available contents, in one round-trip, keyed by
+ * product id. Used by manual order entry, which draws a picker per combo
+ * product and would otherwise need a query each.
+ */
+async function comboOptionsByProduct() {
+  const rows = await db.query(
+    `select c.product_id, p.* from product_combo_choices c
+       join products p on p.id = c.choice_product_id
+      where p.active = true and (p.unlimited_stock = true or p.stock > 0)
+      order by p.name`
+  );
+  const byProduct = {};
+  for (const row of rows) {
+    const key = String(row.product_id);
+    if (!byProduct[key]) byProduct[key] = [];
+    byProduct[key].push(row);
+  }
+  return byProduct;
 }
 
 async function setProductStock(id, stock) {
@@ -151,14 +228,17 @@ async function toggleProductActive(id) {
 }
 
 async function productStats() {
-  const all = await db.query('select id, active, stock from products');
+  const all = await db.query('select id, active, stock, unlimited_stock from products');
+  // A product that never runs out is neither sold out nor running low, however
+  // its (unused) stock number happens to read.
+  const limited = all.filter((p) => !p.unlimited_stock);
   return {
     total: all.length,
     active: all.filter((p) => p.active).length,
     inactive: all.filter((p) => !p.active).length,
     // Sold out is its own bucket: "low" means running down but still sellable.
-    soldOut: all.filter((p) => Number(p.stock) <= 0).length,
-    lowStock: all.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= 5).length,
+    soldOut: limited.filter((p) => Number(p.stock) <= 0).length,
+    lowStock: limited.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= 5).length,
   };
 }
 
@@ -619,10 +699,16 @@ async function setOrderCancelled(id, cancelled) {
   const order = rows[0];
 
   const direction = cancelled ? '+' : '-';
+  // A product with unlimited stock is skipped in both directions. Its stock was
+  // never taken when the order was placed (see create_order), so giving it back
+  // on cancellation would invent cups out of nothing — an order for 120 left
+  // the product sitting on 120 in stock, which is exactly the number that is
+  // supposed to mean nothing for it.
   await db.query(
     `update products p set stock = greatest(0, p.stock ${direction} oi.qty)
      from order_items oi
-     where oi.order_id = $1 and oi.product_id = p.id`,
+     where oi.order_id = $1 and oi.product_id = p.id
+       and p.unlimited_stock = false`,
     [id]
   );
 
@@ -700,6 +786,9 @@ module.exports = {
   getProductsByIds,
   listCategories,
   listComboOptions,
+  comboChoicesFor,
+  setComboChoices,
+  comboOptionsByProduct,
   createProduct,
   updateProduct,
   deleteProduct,

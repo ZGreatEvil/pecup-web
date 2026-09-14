@@ -56,6 +56,28 @@ alter table products add column if not exists combo_min integer not null default
 alter table products add column if not exists combo_max integer not null default 3;
 alter table products add column if not exists combo_option boolean not null default false;
 
+-- Which products may be chosen as the contents of a particular combinable
+-- product — one row per allowed pairing. This is what lets two different combo
+-- cups offer two different lists: a Mix Buah that takes any fruit, and a Salad
+-- that takes only three of them, without either affecting the other.
+--
+-- A combo product with no rows here falls back to every product ticked as
+-- combo_option, which is how the shop worked before this table existed, so an
+-- existing setup keeps behaving exactly as it did.
+-- Stock that never runs out. For a cup made to order from bulk fruit, a stock
+-- number is a fiction that has to be topped up by hand forever. With this on,
+-- the product is always available: create_order skips both the "enough left?"
+-- check and the decrement for it, so the number in `stock` simply stops being
+-- consulted rather than drifting into nonsense.
+alter table products add column if not exists unlimited_stock boolean not null default false;
+
+create table if not exists product_combo_choices (
+  product_id bigint not null references products(id) on delete cascade,
+  choice_product_id bigint not null references products(id) on delete cascade,
+  primary key (product_id, choice_product_id)
+);
+create index if not exists idx_combo_choices_product on product_combo_choices(product_id);
+
 create table if not exists orders (
   id bigint generated always as identity primary key,
   order_number text not null default '',
@@ -500,6 +522,7 @@ declare
   v_qty integer;
   v_price integer;
   v_stock integer;
+  v_unlimited boolean;
   v_name text;
   v_label text;
   v_wholesale_min integer;
@@ -553,8 +576,8 @@ begin
     v_product_id := (v_item->>'productId')::bigint;
     v_qty := (v_item->>'qty')::integer;
 
-    select price, stock, name, wholesale_min_qty, wholesale_price, active
-      into v_price, v_stock, v_name, v_wholesale_min, v_wholesale_price, v_active
+    select price, stock, name, wholesale_min_qty, wholesale_price, active, unlimited_stock
+      into v_price, v_stock, v_name, v_wholesale_min, v_wholesale_price, v_active, v_unlimited
     from products where id = v_product_id;
 
     if v_price is null then
@@ -566,7 +589,8 @@ begin
     if not v_active then
       raise exception '% sedang tidak dijual. Hapus dari keranjang lalu coba lagi.', v_name;
     end if;
-    if v_stock < v_qty then
+    -- A product marked unlimited never runs out, so there is nothing to check.
+    if not coalesce(v_unlimited, false) and v_stock < v_qty then
       -- No remaining-count in the message: this text is shown verbatim to the
       -- shopper, and stock levels are not theirs to see.
       raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.', v_name;
@@ -823,11 +847,15 @@ begin
     -- moment can both pass it and oversell the last cups. Here the check and
     -- the decrement are ONE statement, so the row lock settles the race and
     -- the loser raises instead of the stock silently clamping to zero.
-    update products set stock = stock - v_qty
-     where id = v_product_id and stock >= v_qty;
-    if not found then
-      raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.',
-        coalesce(v_label, v_name, 'produk');
+    -- Unlimited stock is not decremented at all: the number in `stock` stops
+    -- being consulted rather than sliding into meaningless negatives.
+    if not coalesce(v_unlimited, false) then
+      update products set stock = stock - v_qty
+       where id = v_product_id and stock >= v_qty;
+      if not found then
+        raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.',
+          coalesce(v_label, v_name, 'produk');
+      end if;
     end if;
 
     -- Packaging and materials come off the shop's own inventory in the same

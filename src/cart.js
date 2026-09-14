@@ -101,7 +101,11 @@ async function buildCartItems(cart, { products } = {}) {
     // Math.max(stock, 0) || entry.qty would wrongly fall through to the
     // full requested qty when stock is exactly 0 (0 is falsy) — clamp
     // explicitly instead, and drop the line if nothing is available.
-    const cappedQty = Math.min(entry.qty, Math.max(Number(product.stock) || 0, 0));
+    // A product marked unlimited never runs out, so there is nothing to clamp
+    // against — its `stock` number is not consulted at all.
+    const cappedQty = product.unlimited_stock
+      ? entry.qty
+      : Math.min(entry.qty, Math.max(Number(product.stock) || 0, 0));
     if (cappedQty <= 0) continue;
     const pricing = unitPriceFor(product, cappedQty);
     const subtotal = pricing.unitPrice * cappedQty;

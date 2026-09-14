@@ -16,7 +16,7 @@ const WA_INPUT_ATTRS =
   'type="tel" inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" ' +
   'title="Masukkan nomor WhatsApp yang valid, contoh: 081234567890" placeholder="Contoh: 081234567890"';
 
-function authShell({ title, heading, subheading, formHtml, footerHtml, cartCount }) {
+function authShell({ title, heading, subheading, formHtml, footerHtml, cartCount, loyaltyOn = true }) {
   const body = `
 <div class="frame-scroll"><div class="frame">
   ${customerHeader(cartCount)}
@@ -34,7 +34,7 @@ function authShell({ title, heading, subheading, formHtml, footerHtml, cartCount
       <p style="text-align:center;font-size:13.5px;color:var(--text-muted);margin-top:20px;">${footerHtml}</p>
     </div>
   </section>
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>`;
   // Sign-in / sign-up aren't useful search results, and robots.txt already
   // disallows them — keep the two consistent.
@@ -46,8 +46,9 @@ function errorBox(errors) {
   return `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>`;
 }
 
-function renderMasuk({ cartCount = 0, errors = [], values = {}, next = '' } = {}) {
+function renderMasuk({ cartCount = 0, errors = [], values = {}, next = '', loyaltyOn = true } = {}) {
   return authShell({
+    loyaltyOn,
     title: 'Masuk — Pecup',
     heading: 'Masuk ke Akunmu',
     subheading: 'Pakai nomor WhatsApp kamu sebagai username, supaya pesanan berikutnya tinggal beberapa klik.',
@@ -74,6 +75,7 @@ function renderLupaSandi({
   sent = false,
   waLink = '',
   shopWhatsapp = '',
+  loyaltyOn = true,
 } = {}) {
   // "Hubungi admin" is only useful with something to tap. When the shop's
   // number is set this is a WhatsApp button; when it isn't, the page says so
@@ -98,6 +100,7 @@ function renderLupaSandi({
          dan mintalah kode reset.
        </div>`;
   return authShell({
+    loyaltyOn,
     title: 'Lupa Password — Pecup',
     heading: 'Lupa Password',
     subheading:
@@ -137,7 +140,15 @@ function renderLupaSandi({
 
 // Step 2: the customer types the code the admin sent them and picks their own
 // new password. No admin ever sees or sets that password.
-function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = false, waLink = '', shopWhatsapp = '' } = {}) {
+function renderResetSandi({
+  cartCount = 0,
+  errors = [],
+  values = {},
+  done = false,
+  waLink = '',
+  shopWhatsapp = '',
+  loyaltyOn = true,
+} = {}) {
   const helpBlock = done
     ? ''
     : waLink
@@ -157,6 +168,7 @@ function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = fals
          </p>
        </div>`;
   return authShell({
+    loyaltyOn,
     title: 'Ganti Password — Pecup',
     heading: 'Masukkan Kode Reset',
     subheading: done
@@ -182,12 +194,14 @@ function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = fals
   });
 }
 
-function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
+function renderDaftar({ cartCount = 0, errors = [], values = {}, loyaltyOn = true } = {}) {
   return authShell({
+    loyaltyOn,
     title: 'Daftar — Pecup',
     heading: 'Buat Akun Pecup',
-    subheading:
-      'Simpan data pengantaranmu sekali, lalu pesan lebih cepat. Kamu juga langsung mulai mengumpulkan stempel — 1 stempel untuk tiap cup yang kamu beli, dan kartunya penuh jadi 1 cup gratis.',
+    subheading: loyaltyOn
+      ? 'Simpan data pengantaranmu sekali, lalu pesan lebih cepat. Kamu juga langsung mulai mengumpulkan stempel — 1 stempel untuk tiap cup yang kamu beli, dan kartunya penuh jadi 1 cup gratis.'
+      : 'Simpan data pengantaranmu sekali, lalu pesan lebih cepat — alamat dan nomormu terisi otomatis tiap checkout.',
     cartCount,
     formHtml: `
       ${errorBox(errors)}
@@ -203,19 +217,29 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
           <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
           <input type="date" name="birthday" value="${escapeAttr(values.birthday || '')}" max="${toDateKey(new Date())}">
           <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
-            Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong> — kami hanya pakai tanggalnya untuk itu. Boleh dikosongkan.
+            ${
+              loyaltyOn
+                ? 'Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong> — kami hanya pakai tanggalnya untuk itu. Boleh dikosongkan.'
+                : 'Boleh dikosongkan — kami hanya memakainya untuk ucapan ulang tahun.'
+            }
           </span>
         </div>
         <div class="field" style="margin-bottom:8px;"><label>Password <span class="req">*</span></label><input type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="Minimal 6 karakter"></div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Daftar</button>
       </form>`,
-    footerHtml: `Sudah punya akun? <a href="/masuk">Masuk di sini</a> &middot; <a href="/keanggotaan">Apa untungnya jadi member?</a>`,
+    footerHtml: `Sudah punya akun? <a href="/masuk">Masuk di sini</a>${
+      loyaltyOn ? ` &middot; <a href="/keanggotaan">Apa untungnya jadi member?</a>` : ''
+    }`,
   });
 }
 
 // One slot per stamp in the current card. Earned slots carry the Pecup logo
 // tilted 30°; the last slot is highlighted as the free-cup reward.
 function stampCard(loyalty, stampHistory = []) {
+  // With the programme switched off there is no card to show. Stamps already
+  // earned stay in the database untouched — if the shop turns it back on, every
+  // customer's card is exactly where they left it.
+  if (!loyalty || loyalty.loyaltyEnabled === false) return '';
   const slots = [];
   for (let i = 0; i < loyalty.perReward; i += 1) {
     const earned = i < loyalty.stamps;
@@ -508,7 +532,7 @@ function orderHistory(orders, { total = 0, previewCount = 0 } = {}) {
 }
 
 // Full, paginated order history — its own page, reachable from "Lihat semua".
-function renderRiwayatPesanan({ customer, orders, pagination, cartCount = 0, view = {} }) {
+function renderRiwayatPesanan({ customer, orders, pagination, cartCount = 0, view = {}, loyaltyOn = true }) {
   const buildUrl = (page) => {
     const params = new URLSearchParams();
     if (view.dari) params.set('dari', view.dari);
@@ -590,7 +614,7 @@ function renderRiwayatPesanan({ customer, orders, pagination, cartCount = 0, vie
     ${pager()}
     <div style="margin-top:28px;">${backButton('/akun', 'Kembali ke Akun')}</div>
   </section>
-  ${customerFooter()}
+  ${customerFooter(loyaltyOn)}
 </div></div>`;
 
   return page({ title: 'Riwayat Pesanan — Pecup', bodyHtml: body, noindex: true });
@@ -641,11 +665,18 @@ function renderAkun({
               <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
               <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${toDateKey(new Date())}">
               <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
-                Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong>${
-                  loyalty && loyalty.tier && loyalty.tier.birthdayFreeCup
-                    ? ` — tingkat ${escapeHtml(loyalty.tier.name)} kamu sudah dapat benefit ini`
-                    : ' di tingkat keanggotaan yang menyediakannya'
-                }. Boleh dikosongkan.
+                ${
+                  // Promising a birthday cup while the programme is off would be
+                  // a promise nothing can keep, so the reason for asking changes
+                  // with it.
+                  loyalty && loyalty.loyaltyEnabled === false
+                    ? 'Boleh dikosongkan — kami hanya memakainya untuk ucapan ulang tahun.'
+                    : `Isi kalau kamu mau dapat <strong>cup gratis ulang tahun</strong>${
+                        loyalty && loyalty.tier && loyalty.tier.birthdayFreeCup
+                          ? ` — tingkat ${escapeHtml(loyalty.tier.name)} kamu sudah dapat benefit ini`
+                          : ' di tingkat keanggotaan yang menyediakannya'
+                      }. Boleh dikosongkan.`
+                }
               </span>
             </div>
             <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;margin-top:14px;">Simpan Perubahan</button>
@@ -671,7 +702,7 @@ function renderAkun({
       </div>
     </div>
   </section>
-  ${customerFooter()}
+  ${customerFooter(!loyalty || loyalty.loyaltyEnabled !== false)}
 </div></div>`;
 
   return page({ title: 'Akun Saya — Pecup', bodyHtml: body, noindex: true });

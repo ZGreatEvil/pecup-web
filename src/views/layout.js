@@ -175,6 +175,23 @@ const SHARED_STYLE = `
   .btn-primary:active{transform:translateY(0) scale(0.98);box-shadow:none;}
   .btn-primary:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none;}
   .btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--text);transition:border-color 0.18s ease, background 0.18s ease, transform 0.15s ease;}
+  /* One height for every button. Call sites set their own padding inline, and
+     an inline style beats a class rule — so the floor is set with min-height,
+     which inline padding cannot override, and the label is centred instead of
+     sitting wherever that padding happens to leave it. 46px is the same height
+     as the inputs and selects above, so a button beside a field lines up with
+     it rather than missing by a pixel or two. */
+  .btn-primary, .btn-outline{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    min-height:46px;box-sizing:border-box;line-height:1.2;text-align:center;
+    /* The vertical padding is neutralised so the 46px floor alone decides the
+       height. Without this every call site's own padding still showed through —
+       46px here, 48px there, 50px somewhere else — and trimming them one at a
+       time just moved the problem. !important is what it takes: these paddings
+       are inline styles, which a plain class rule cannot win against. The
+       horizontal padding is deliberately left alone, so each button keeps its
+       own width. A label long enough to wrap still grows the button, because
+       min-height is a floor and not a fixed height. */
+    padding-top:0 !important;padding-bottom:0 !important;}
   .btn-outline:hover{border-color:var(--orange);background:var(--orange-soft);}
   .btn-outline:active{transform:scale(0.98);}
   .chip{border:1.5px solid var(--border);background:var(--surface);transition:border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.15s ease;}
@@ -1576,7 +1593,10 @@ function emptyState({ icon = 'box', title, text = '', ctaHref = '', ctaLabel = '
     </div>`;
 }
 
-function customerFooter() {
+// `loyaltyOn` decides whether the membership link belongs here at all: with the
+// programme off, /keanggotaan does not exist, and a footer link to a page that
+// answers 404 is worse than no link.
+function customerFooter(loyaltyOn = true) {
   return `
   <footer class="px-page" style="padding-top:64px;padding-bottom:40px;">
     <div class="footer-cols">
@@ -1594,8 +1614,8 @@ function customerFooter() {
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <span style="font-size:13px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;">PELANGGAN</span>
-        <a href="/keanggotaan" style="font-size:14px;color:var(--text);">Keuntungan Member</a>
-        <a href="/akun" style="font-size:14px;color:var(--text);">Akun &amp; Kartu Stempel</a>
+        ${loyaltyOn ? `<a href="/keanggotaan" style="font-size:14px;color:var(--text);">Keuntungan Member</a>` : ''}
+        <a href="/akun" style="font-size:14px;color:var(--text);">${loyaltyOn ? 'Akun &amp; Kartu Stempel' : 'Akun Saya'}</a>
         <a href="/#menu" style="font-size:14px;color:var(--text);">Menu Hari Ini</a>
       </div>
     </div>

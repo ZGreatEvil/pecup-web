@@ -54,7 +54,10 @@ async function getTierConfig() {
   }
   // Ascending by threshold so "highest tier reached" is just the last match.
   tiers.sort((a, b) => a.minClaims - b.minClaims);
-  return { enabled: all.tiers_enabled !== '0', tiers };
+  // Tiers are part of the loyalty programme, so the master switch turns them
+  // off too — without this, switching the programme off would leave member
+  // discounts and free cups still being applied at checkout.
+  return { enabled: all.tiers_enabled !== '0' && all.loyalty_enabled !== '0', tiers };
 }
 
 async function saveTierConfig({ enabled, tiers }) {
@@ -133,16 +136,23 @@ async function statusFor(customerId) {
 
   const { current, next } = tierFor(tierConfig.tiers, claims);
   const expiresAt = expiryFor(active.oldest, months);
+  // The programme's master switch. Stamps already earned are left in the table
+  // untouched — turning the programme off must not destroy anyone's history —
+  // but nothing may be shown, granted or spent while it is off.
+  const programmeOn = all.loyalty_enabled !== '0';
 
   return {
+    loyaltyEnabled: programmeOn,
     stamps,
     perReward,
     expiryMonths: months,
     expiresAt,
     expiresLabel: expiresAt ? formatShortDateID(expiresAt) : null,
     // Stamps reset to zero on claim, so a card is either complete or not —
-    // there's no "banked rewards" count any more.
-    cardComplete: stamps >= perReward,
+    // there's no "banked rewards" count any more. A card can never read as
+    // complete while the programme is off, which is what stops a free cup
+    // being offered or claimed anywhere.
+    cardComplete: programmeOn && stamps >= perReward,
     toNextReward: Math.max(0, perReward - stamps),
     claims,
     expiredCount: Number((byStatus.expired || {}).n) || 0,
@@ -225,6 +235,10 @@ function perkAvailability(status, dateKey = '') {
  */
 async function grantForOrder(customerId, orderId) {
   if (!customerId || !orderId) return 0;
+  // No stamps at all while the programme is switched off — checked here rather
+  // than at each of the three call sites, so a route added later can't quietly
+  // start minting them again.
+  if (!(await settings.loyaltyEnabled())) return 0;
   const rows = await db.query(
     `insert into stamps (customer_id, order_id, cup_no)
      select $1, $2, g
@@ -253,6 +267,9 @@ async function revokeForOrder(orderId) {
 // Spends a full card: every active stamp is marked redeemed (so the count
 // goes back to zero) and the claim counter — which drives the tier — ticks up.
 async function claimReward(customerId, { note } = {}) {
+  if (!(await settings.loyaltyEnabled())) {
+    return { ok: false, error: 'Program stempel sedang dimatikan.' };
+  }
   const status = await statusFor(customerId);
   if (!status.cardComplete) return { ok: false, error: 'Kartu stempel belum penuh.' };
 
@@ -326,6 +343,7 @@ async function statusForMany(customerRows) {
   const perReward = await settings.stampsPerReward();
   const months = Math.min(Math.max(Number(all.stamp_expiry_months) || 2, 1), 60);
   const tierConfig = await getTierConfig();
+  const programmeOn = all.loyalty_enabled !== '0';
   const ids = customerRows.map((c) => Number(c.id));
 
   await expireStaleMany(ids, months);
@@ -360,12 +378,13 @@ async function statusForMany(customerRows) {
       whatsapp: c.whatsapp,
       birthday: c.birthday || null,
       created_at: c.created_at,
+      loyaltyEnabled: programmeOn,
       stamps,
       perReward,
       expiryMonths: months,
       expiresAt,
       expiresLabel: expiresAt ? formatShortDateID(expiresAt) : null,
-      cardComplete: stamps >= perReward,
+      cardComplete: programmeOn && stamps >= perReward,
       toNextReward: Math.max(0, perReward - stamps),
       claims,
       expiredCount: Number((buckets.expired || {}).n) || 0,
