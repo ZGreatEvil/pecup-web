@@ -648,7 +648,8 @@ router.get('/checkout', async (req, res, { query }) => {
   const { reward, membership } = benefits;
   const code = query.get('voucher') || '';
   const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
-  const totals = await checkoutTotals({ code, subtotal, reward, membership, deliveryFee });
+  const taxPercent = settings.taxRateFor(shop);
+  const totals = await checkoutTotals({ code, subtotal, reward, membership, deliveryFee, taxPercent });
 
   sendHtml(
     res,
@@ -663,6 +664,7 @@ router.get('/checkout', async (req, res, { query }) => {
       voucher: totals.voucherWithoutReward,
       totals,
       deliveryFee,
+      taxPercent,
       formValues: saved
         ? {
             customerName: saved.name,
@@ -705,7 +707,8 @@ router.post('/checkout', async (req, res) => {
   const shop = await settings.shopConfig();
   const voucherCode = vouchers.normalizeCode(fields.voucherCode || '');
   const deliveryFee = settings.deliveryFeeFor(shop, subtotal);
-  const totals = await checkoutTotals({ code: voucherCode, subtotal, reward, membership, deliveryFee });
+  const taxPercent = settings.taxRateFor(shop);
+  const totals = await checkoutTotals({ code: voucherCode, subtotal, reward, membership, deliveryFee, taxPercent });
   // Match the voucher preview to whether the free cup is actually being used.
   const voucher = useReward && totals.voucherWithReward ? totals.voucherWithReward : totals.voucherWithoutReward;
   const payable = useReward ? totals.withReward : totals.withoutReward;
@@ -772,6 +775,7 @@ router.post('/checkout', async (req, res) => {
         voucher,
         totals,
         deliveryFee,
+        taxPercent,
         errors,
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
@@ -809,6 +813,8 @@ router.post('/checkout', async (req, res) => {
       // The ladder lives in settings, so the app resolves which tier the
       // customer holds; create_order decides what the perks are still worth.
       tier: membership.tier || {},
+      // Read from the shop settings a moment ago, not from the form.
+      taxPercent,
     });
   } catch (err) {
     console.error(err);
@@ -826,6 +832,7 @@ router.post('/checkout', async (req, res) => {
         voucher,
         totals,
         deliveryFee,
+        taxPercent,
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
@@ -1361,11 +1368,17 @@ router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
 }));
 
 // ---------------------------------------------------------------------
-// admin: walk-in customers and manually recorded orders (superadmin)
+// admin: walk-in customers and manually recorded orders (every admin)
 // ---------------------------------------------------------------------
-// Most sales still arrive by word of mouth. These two pages let a superadmin
-// put those customers and their purchases into the same system the website
-// uses, so stock, stamps, tiers and the revenue report stay whole.
+// Most sales still arrive by word of mouth. These two pages let an admin put
+// those customers and their purchases into the same system the website uses,
+// so stock, stamps, tiers and the revenue report stay whole.
+//
+// Open to regular admins, not just superadmins: taking an order over WhatsApp
+// and signing a walk-in customer up is the front-line job, and the person on
+// the counter is usually not the owner. Handing out stamps by hand is still
+// superadmin-only — the opening stamp balance below is ignored for a regular
+// admin, so this can't become a back door to free cups.
 
 // Readable but not guessable: no 0/O/1/I, and drawn from crypto.
 function tempPassword() {
@@ -1375,16 +1388,20 @@ function tempPassword() {
   return out;
 }
 
-router.get('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
+router.get('/admin/pelanggan/tambah', requireAdmin(async (req, res) => {
   sendHtml(res, adminViews.renderPelangganTambah({ admin: req.admin }));
 }));
 
-router.post('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/tambah', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
   const name = (fields.name || '').trim();
   const whatsapp = (fields.whatsapp || '').trim();
   const address = (fields.address || '').trim();
-  const stamps = Math.max(0, Math.min(100, Math.round(Number(fields.stamps) || 0)));
+  // Stamps are a superadmin's to give. A regular admin sees no such field, and
+  // one posted anyway is dropped here rather than trusted.
+  const stamps = req.isSuperadmin
+    ? Math.max(0, Math.min(100, Math.round(Number(fields.stamps) || 0)))
+    : 0;
   const birthday = parseBirthday(fields.birthday);
   const values = { name, whatsapp, address, stamps: String(stamps), birthday: (fields.birthday || '').trim() };
 
@@ -1422,20 +1439,22 @@ router.post('/admin/pelanggan/tambah', requireSuperadmin(async (req, res) => {
   );
 }));
 
-router.get('/admin/pesanan/tambah', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/pesanan/tambah', requireAdmin(async (req, res, { query }) => {
   // Only the one account that was linked to (from the customer page), if any.
   // The picker searches the server as you type, so the page no longer carries
   // the customer table with it — that list only ever grows.
   const wanted = Number(query.get('pelanggan')) || 0;
-  const [products, picked] = await Promise.all([
+  const [products, picked, shop] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     wanted ? loyalty.getCustomerBasic(wanted) : null,
+    settings.shopConfig(),
   ]);
   sendHtml(
     res,
     adminViews.renderPesananTambah({
       admin: req.admin,
       products,
+      taxPercent: settings.taxRateFor(shop),
       picked: picked
         ? {
             id: Number(picked.id),
@@ -1452,9 +1471,15 @@ router.get('/admin/pesanan/tambah', requireSuperadmin(async (req, res, { query }
   );
 }));
 
-router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
+router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
   const { fields } = await parseBody(req);
-  const products = await queries.listProducts({ onlyActive: true });
+  const [products, shop] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    settings.shopConfig(),
+  ]);
+  // The same PPN the website would charge, read from the settings rather than
+  // the form, so a sale typed in here and one taken online are priced alike.
+  const taxPercent = settings.taxRateFor(shop);
 
   const qty = {};
   for (const p of products) {
@@ -1488,7 +1513,7 @@ router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
       }
     : null;
   const rerender = (errors) =>
-    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, picked, errors, values }));
+    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, picked, errors, values, taxPercent }));
 
   const errors = [];
   if (customerId && !pickedCustomer) errors.push('Akun pelanggan yang dipilih tidak ditemukan.');
@@ -1535,6 +1560,7 @@ router.post('/admin/pesanan/tambah', requireSuperadmin(async (req, res) => {
       voucherCode: null,
       deliveryFee: Number(values.deliveryFee),
       tier: membership.tier || {},
+      taxPercent,
     });
   } catch (err) {
     console.error(err);
@@ -1683,7 +1709,7 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     return redirect(res, '/admin/pengaturan?error=' + encodeURIComponent('Format jam tidak valid.'));
   }
 
-  // Read first: this form writes eleven settings at once and the log used to
+  // Read first: this form writes thirteen settings at once and the log used to
   // mention only whether the shop was open, so any other change — the delivery
   // fee, the cut-off, the retention policy — left no trace of what it had been.
   const settingsBefore = await settings.getAll({ fresh: true });
@@ -1697,6 +1723,10 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     same_day_cutoff: cutoff,
     open_time: openTime,
     close_time: closeTime,
+    // PPN. The rate is kept even while the box is off, so switching it back on
+    // doesn't silently fall back to a different number than it had before.
+    tax_enabled: fields.taxEnabled ? '1' : '0',
+    tax_percent: Math.min(100, num(fields.taxPercent)),
     // 0 is meaningful here (keep forever), so these are clamped rather than
     // coerced through the falsy-to-default path the money fields use.
     retention_proof_days: Math.min(3650, num(fields.retentionProofDays)),
@@ -1715,6 +1745,8 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     { key: 'delivery_fee', label: 'ongkir', format: rupiah },
     { key: 'free_delivery_over', label: 'gratis ongkir di atas', format: rupiah },
     { key: 'same_day_cutoff', label: 'batas pesan hari ini' },
+    { key: 'tax_enabled', label: 'PPN', format: (v) => (String(v) === '1' ? 'aktif' : 'nonaktif') },
+    { key: 'tax_percent', label: 'tarif PPN', format: (v) => `${Number(v) || 0}%` },
     { key: 'open_time', label: 'jam buka' },
     { key: 'close_time', label: 'jam tutup' },
     { key: 'retention_proof_days', label: 'simpan bukti (hari)' },
@@ -2045,7 +2077,10 @@ router.get('/admin/pelanggan/unduh', requireSuperadmin(async (req, res) => {
 //
 // This exists so the manual-order page doesn't have to ship the whole customer
 // table to the browser. It searches; it never lists everybody.
-router.get('/admin/pelanggan/cari', requireSuperadmin(async (req, res, { query }) => {
+//
+// Open to every admin, like the manual-order page it serves — and like the
+// customer search page, which already shows the same names and numbers.
+router.get('/admin/pelanggan/cari', requireAdmin(async (req, res, { query }) => {
   const q = String(query.get('q') || '').trim().slice(0, 80);
   if (!q) return sendJson(res, { customers: [] });
   const rows = await loyalty.searchCustomersForPicker(q, 20);
@@ -2411,8 +2446,12 @@ function requireSuperadmin(handler) {
 // The membership tier's percentage and its free cups come off before the
 // voucher, so both totals below carry the full ladder of discounts in the
 // same order create_order applies them:
-//   free cups → member percentage → promo code → delivery fee
-async function checkoutTotals({ code, subtotal, reward, membership = EMPTY_MEMBERSHIP, deliveryFee }) {
+//   free cups → member percentage → promo code → PPN → delivery fee
+// PPN (0 unless the shop has it switched on) is charged on the discounted
+// cups, so ticking the free-cup box changes it too — hence two of those as
+// well. create_order recomputes it from the same rate; this is only the
+// preview.
+async function checkoutTotals({ code, subtotal, reward, membership = EMPTY_MEMBERSHIP, deliveryFee, taxPercent = 0 }) {
   const rewardDiscount = reward.available > 0 ? reward.discount : 0;
   const percent = membership.percent || 0;
 
@@ -2429,17 +2468,24 @@ async function checkoutTotals({ code, subtotal, reward, membership = EMPTY_MEMBE
       ? voucherPreview(code, subtotal, rewardDiscount + perkWith + tierWith)
       : Promise.resolve(null),
   ]);
-  const withoutReward =
-    Math.max(0, subtotal - perkWithout - tierWithout - voucherWithoutReward.discount) + deliveryFee;
-  const withReward =
+  const cupsWithout = Math.max(0, subtotal - perkWithout - tierWithout - voucherWithoutReward.discount);
+  const cupsWith =
     rewardDiscount > 0
-      ? Math.max(0, subtotal - rewardDiscount - perkWith - tierWith - voucherWithReward.discount) + deliveryFee
-      : withoutReward;
+      ? Math.max(0, subtotal - rewardDiscount - perkWith - tierWith - voucherWithReward.discount)
+      : cupsWithout;
+  const taxWithout = settings.taxOn(cupsWithout, taxPercent);
+  const taxWith = rewardDiscount > 0 ? settings.taxOn(cupsWith, taxPercent) : taxWithout;
+
+  const withoutReward = cupsWithout + taxWithout + deliveryFee;
+  const withReward = rewardDiscount > 0 ? cupsWith + taxWith + deliveryFee : withoutReward;
   return {
     voucherWithoutReward,
     voucherWithReward,
     tierWithout,
     tierWith,
+    taxPercent,
+    taxWithout,
+    taxWith,
     withoutReward,
     withReward,
   };

@@ -133,13 +133,13 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
     formHtml: `
       ${errorBox(errors)}
       <form method="post" action="/daftar">
-        <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="name" required value="${escapeAttr(values.name || '')}" placeholder="Contoh: Alexander Dwiono"></div>
+        <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="name" required value="${escapeAttr(values.name || '')}" placeholder="Contoh: Kezia Sharent"></div>
         <div class="field">
           <label>Nomor WhatsApp <span class="req">*</span></label>
           <input name="whatsapp" required ${WA_INPUT_ATTRS} value="${escapeAttr(values.whatsapp || '')}">
           <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor ini sekaligus jadi username-mu saat masuk.</span>
         </div>
-        <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
+        <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Menara Batavia lt. 26"></div>
         <div class="field">
           <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
           <input type="date" name="birthday" value="${escapeAttr(values.birthday || '')}" max="${toDateKey(new Date())}">
@@ -451,7 +451,7 @@ function renderAkun({
           <form method="post" action="/akun">
             <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="name" required value="${escapeAttr(customer.name)}"></div>
             <div class="field"><label>Nomor WhatsApp</label><input type="text" value="${escapeAttr(formatWhatsapp(customer.whatsapp))}" disabled style="background:var(--surface-2);color:var(--text-muted);"><span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor ini username-mu, jadi tidak bisa diubah sendiri. Hubungi kami kalau nomormu ganti.</span></div>
-            <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5"></div>
+            <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Menara Batavia lt. 26"></div>
             <div class="field" style="margin-bottom:8px;">
               <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
               <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${toDateKey(new Date())}">

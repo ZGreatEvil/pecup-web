@@ -144,10 +144,11 @@ async function createOrder({
   voucherCode,
   deliveryFee,
   tier = {},
+  taxPercent = 0,
 }) {
   const rows = await db.query(
     `select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean, $11, $12::integer,
-                         $13, $14::integer, $15::boolean, $16::boolean) as result`,
+                         $13, $14::integer, $15::boolean, $16::boolean, $17::integer) as result`,
     [
       customerName,
       whatsapp,
@@ -168,6 +169,10 @@ async function createOrder({
       Math.max(0, Math.min(100, Math.round(Number(tier.discountPercent) || 0))),
       Boolean(tier.weeklyFreeCup),
       Boolean(tier.birthdayFreeCup),
+      // PPN comes from the shop settings, never from the browser — the caller
+      // reads it server-side and the amount itself is worked out in the
+      // function, on the discounted price.
+      Math.max(0, Math.min(100, Math.round(Number(taxPercent) || 0))),
     ]
   );
   const raw = rows[0].result;
@@ -187,6 +192,8 @@ async function createOrder({
     tierDiscount: Number(result.tierDiscount) || 0,
     perkDiscount: Number(result.perkDiscount) || 0,
     perkNote: result.perkNote || null,
+    taxPercent: Number(result.taxPercent) || 0,
+    taxAmount: Number(result.taxAmount) || 0,
   };
 }
 
@@ -412,6 +419,9 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
               coalesce(sum(o.tier_discount), 0)::bigint as tier,
               coalesce(sum(o.voucher_discount), 0)::bigint as voucher,
               coalesce(sum(o.delivery_fee), 0)::bigint as delivery,
+              -- Tax collected is part of what was paid but not part of what the
+              -- shop earned, so it's summed separately rather than buried in net.
+              coalesce(sum(o.tax_amount), 0)::bigint as tax,
               coalesce(sum(o.total), 0)::bigint as net
        from orders o ${where}`,
       params
@@ -459,6 +469,7 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
     tierDiscount: Number(t.tier) || 0,
     voucherDiscount: Number(t.voucher) || 0,
     delivery: Number(t.delivery) || 0,
+    tax: Number(t.tax) || 0,
     net,
     cups: Number((cups[0] || {}).cups) || 0,
     averageOrder: orders ? Math.round(net / orders) : 0,

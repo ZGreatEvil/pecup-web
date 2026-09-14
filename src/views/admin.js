@@ -16,7 +16,7 @@ const {
   ORDER_STATUSES,
 } = require('../utils');
 const { tierStyle: tierStyleFor } = require('../loyalty');
-const { discountLines, freeCupValue } = require('../orderMoney');
+const { discountLines, taxLine, freeCupValue } = require('../orderMoney');
 
 function renderLogin({ error }) {
   const body = `
@@ -170,7 +170,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#58a05c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
             <span class="hide-desktop">Edit</span>
           </a>
-          <form method="post" action="/admin/produk/${p.id}/hapus" onsubmit="return confirm('Hapus produk ${escapeAttr(p.name)}?');">
+          <form method="post" action="/admin/produk/${p.id}/hapus" data-confirm="Hapus produk ${escapeAttr(p.name)}?">
             <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
               <span class="hide-desktop">Hapus</span>
@@ -987,14 +987,10 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
       <div>
         <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Pesanan</div>
         <h1 style="font-size:24px;font-weight:800;">Pesanan Masuk</h1>
-        ${
-          admin.role === 'superadmin'
-            ? `<a href="/admin/pesanan/tambah" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--green-dark);margin-top:8px;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                Catat pesanan manual (WhatsApp / datang langsung)
-              </a>`
-            : ''
-        }
+        <a href="/admin/pesanan/tambah" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--green-dark);margin-top:8px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Catat pesanan manual (WhatsApp / datang langsung)
+        </a>
       </div>
       <a class="btn-primary" href="/admin/pesanan/unduh?${new URLSearchParams({
         dari: view.dari || '',
@@ -1141,6 +1137,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
   // (src/orderMoney.js), so this page, the receipt and the email agree.
   const orderDiscounts = discountLines(order);
   const totalDiscount = orderDiscounts.reduce((sum, line) => sum + line.amount, 0);
+  const orderTax = taxLine(order);
   const freeCups = freeCupValue(order);
   const itemCount = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
   const waButtons = whatsappButtons(order, items);
@@ -1230,7 +1227,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
                 </div>
                 ${
                   loyalty.cardComplete
-                    ? `<form method="post" action="/admin/pesanan/${order.id}/tukar-stempel" onsubmit="return confirm('Tukarkan 1 cup gratis untuk pelanggan ini? Stempel akan kembali ke nol.');" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                    ? `<form method="post" action="/admin/pesanan/${order.id}/tukar-stempel" data-confirm="Tukarkan 1 cup gratis untuk pelanggan ini? Stempel akan kembali ke nol." style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <span style="font-size:13.5px;font-weight:700;color:var(--green-dark);">Kartu penuh — 1 cup gratis siap ditukar</span>
                         <button class="btn-primary" type="submit" style="padding:9px 16px;border-radius:9px;font-size:13px;font-weight:700;">Tukarkan 1 Cup Gratis</button>
                       </form>`
@@ -1245,7 +1242,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
         <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;">Item Dipesan</h3>
         ${itemRows}
         ${
-          orderDiscounts.length || deliveryFee > 0
+          orderDiscounts.length || deliveryFee > 0 || orderTax
             ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:10px 0 0;color:var(--text-muted);">
                 <span>Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span>
               </div>`
@@ -1259,6 +1256,13 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
               </div>`
           )
           .join('')}
+        ${
+          orderTax
+            ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0;color:var(--text-muted);">
+                <span>${escapeHtml(orderTax.label)}</span><span class="tnum">${formatRupiah(orderTax.amount)}</span>
+              </div>`
+            : ''
+        }
         ${
           deliveryFee > 0
             ? `<div style="display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0;color:var(--text-muted);">
@@ -1341,7 +1345,7 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
         {
           label: 'Password',
           html: `<form method="post" action="/admin/akun/${a.id}/password" style="display:flex;align-items:center;gap:7px;"
-              onsubmit="return confirm('Ganti password ${escapeAttr(a.username)}? Mereka harus pakai password baru ini untuk masuk.');">
+              data-confirm="Ganti password ${escapeAttr(a.username)}? Mereka harus pakai password baru ini untuk masuk.">
           <input type="password" name="password" required minlength="6" placeholder="Password baru (min. 6)"
                  autocomplete="new-password" style="padding:8px 11px;font-size:12.5px;border-radius:8px;">
           <button class="btn-outline" type="submit" style="padding:8px 13px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap;">Ganti</button>
@@ -1351,7 +1355,7 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
           label: '',
           html: isSelf
             ? ''
-            : `<form method="post" action="/admin/akun/${a.id}/hapus" onsubmit="return confirm('Hapus admin ${escapeAttr(a.username)}?');" style="display:flex;justify-content:flex-end;">
+            : `<form method="post" action="/admin/akun/${a.id}/hapus" data-confirm="Hapus admin ${escapeAttr(a.username)}? Catatan aktivitasnya tetap tersimpan di Log Aktivitas." style="display:flex;justify-content:flex-end;">
                 <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
                   <span class="hide-desktop">Hapus admin</span>
@@ -1525,14 +1529,10 @@ function renderPelangganList({
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Cari Pelanggan</div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:6px;">
       <h1 style="font-size:24px;font-weight:800;">Cari Pelanggan</h1>
-      ${
-        admin.role === 'superadmin'
-          ? `<a class="btn-primary" href="/admin/pelanggan/tambah" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-              Tambah Pelanggan
-            </a>`
-          : ''
-      }
+      <a class="btn-primary" href="/admin/pelanggan/tambah" style="padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Tambah Pelanggan
+      </a>
     </div>
     <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:20px;">Cari berdasarkan nama atau nomor WhatsApp, lalu buka detailnya untuk melihat stempel dan riwayat pesanan.</p>
 
@@ -1732,15 +1732,12 @@ function renderPelangganDetail({
           ${tierPill(loyalty, tiersEnabled)}
         </div>
       </div>
-      ${
-        canEdit
-          ? // Also the route that needs no JavaScript: the manual-order form's
-            // account picker searches over the network, so this link is how an
-            // account gets attached without a script.
-            `<a class="btn-outline" href="/admin/pesanan/tambah?pelanggan=${customer.id}"
-              style="margin-left:auto;padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Catat Pesanan Manual</a>`
-          : ''
-      }
+      <!-- Every admin can record a manual order, so this isn't behind canEdit.
+           It's also the route that needs no JavaScript: the manual-order form's
+           account picker searches over the network, so this link is how an
+           account gets attached without a script. -->
+      <a class="btn-outline" href="/admin/pesanan/tambah?pelanggan=${customer.id}"
+        style="margin-left:auto;padding:11px 18px;border-radius:10px;font-size:13px;font-weight:700;white-space:nowrap;">Catat Pesanan Manual</a>
     </div>
 
     <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">
@@ -1792,7 +1789,7 @@ function renderPelangganDetail({
             <h4 style="font-size:13.5px;font-weight:800;margin-bottom:4px;">Reset Password</h4>
             <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">Password lama tidak bisa dilihat — disimpan sebagai hash. Set yang baru lalu beri tahu pelanggannya.</p>
             <form method="post" action="/admin/pelanggan/${customer.id}/password" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;"
-                  onsubmit="return confirm('Ganti password ${escapeAttr(customer.name)}?');">
+                  data-confirm="Ganti password ${escapeAttr(customer.name)}?">
               <div style="margin:0;flex:1 1 200px;">
                 <input type="password" name="password" required minlength="6" placeholder="Password baru (min. 6 karakter)"
                        autocomplete="new-password" style="padding:10px 12px;">
@@ -1805,7 +1802,7 @@ function renderPelangganDetail({
             <h4 style="font-size:13.5px;font-weight:800;margin-bottom:4px;color:#a13f3f;">Hapus Akun</h4>
             <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">Stempel ikut terhapus. Riwayat pesanan tetap tersimpan sebagai catatan penjualan, hanya tidak lagi terhubung ke akun ini.</p>
             <form method="post" action="/admin/pelanggan/${customer.id}/hapus"
-                  onsubmit="return confirm('Hapus akun ${escapeAttr(customer.name)} beserta stempelnya? Tindakan ini tidak bisa dibatalkan.');">
+                  data-confirm="Hapus akun ${escapeAttr(customer.name)} beserta stempelnya? Tindakan ini tidak bisa dibatalkan.">
               <button type="submit" class="btn-outline" style="padding:10px 18px;border-radius:10px;font-size:13px;font-weight:700;color:#a13f3f;border-color:#e0a0a0;">Hapus Akun Pelanggan</button>
             </form>
           </div>
@@ -1833,7 +1830,7 @@ function renderPelangganDetail({
                 </form>
                 ${
                   loyalty.cardComplete
-                    ? `<form method="post" action="/admin/pelanggan/${customer.id}/klaim" onsubmit="return confirm('Tukarkan 1 cup gratis? Stempel akan kembali ke nol.');" style="margin-top:12px;">
+                    ? `<form method="post" action="/admin/pelanggan/${customer.id}/klaim" data-confirm="Tukarkan 1 cup gratis? Stempel akan kembali ke nol." style="margin-top:12px;">
                         <button class="btn-primary" type="submit" style="padding:12px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Tukar 1 Cup Gratis</button>
                       </form>`
                     : ''
@@ -2272,14 +2269,23 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
     </div>
 
     ${
-      report.discount > 0 || report.delivery > 0
+      report.discount > 0 || report.delivery > 0 || report.tax > 0
         ? `<div class="card" style="padding:18px 20px;margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-mid);">
       <div style="font-size:13px;color:#7a4a1f;line-height:1.8;">
         <strong>Cara angka ini menutup:</strong> nilai kotor ${formatRupiah(report.gross)}
         &minus; potongan ${formatRupiah(report.discount)}
+        ${report.tax > 0 ? `+ PPN ${formatRupiah(report.tax)}` : ''}
         + ongkos antar ${formatRupiah(report.delivery)}
         = uang masuk <strong>${formatRupiah(report.net)}</strong>.
       </div>
+      ${
+        report.tax > 0
+          ? `<div style="font-size:12.5px;color:#7a4a1f;line-height:1.7;margin-top:10px;">
+              Dari jumlah itu, <strong>${formatRupiah(report.tax)}</strong> adalah PPN yang ditagihkan ke pembeli —
+              uang titipan untuk disetor, bukan pendapatan toko.
+            </div>`
+          : ''
+      }
       <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#7a4a1f;">
         <span>Cup gratis: <strong>${formatRupiah(report.freeCups)}</strong></span>
         <span>Diskon member: <strong>${formatRupiah(report.tierDiscount)}</strong></span>
@@ -2496,6 +2502,36 @@ function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { 
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1 1 300px;">
+            <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">PPN</h2>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin:0;">
+              Kalau dicentang, PPN ditambahkan ke setiap pesanan baru — dihitung dari harga buah <em>setelah</em>
+              semua diskon, dan tidak dikenakan ke ongkos antar. Pesanan yang sudah masuk tidak ikut berubah:
+              tarifnya disimpan per pesanan, jadi nota lama tetap apa adanya.
+              <strong>Biarkan mati kalau toko belum PKP.</strong>
+            </p>
+          </div>
+          <label style="display:flex;align-items:center;gap:10px;margin:0;font-size:14px;font-weight:700;white-space:nowrap;">
+            <input type="checkbox" name="taxEnabled" value="1" ${shop.taxEnabled ? 'checked' : ''} style="width:20px;height:20px;">
+            Kenakan PPN
+          </label>
+        </div>
+        <div class="field" style="margin-top:20px;margin-bottom:0;max-width:200px;">
+          <label>Tarif PPN (%)</label>
+          <input type="number" name="taxPercent" min="0" max="100" step="1" value="${escapeAttr(
+            shop.taxPercent === 0 || shop.taxPercent ? shop.taxPercent : 11
+          )}">
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Tarif berlaku saat ini 11%. Nilainya tetap tersimpan walau PPN dimatikan.</div>
+        </div>
+        ${
+          shop.taxEnabled && Number(shop.taxPercent) > 0
+            ? `<div class="flash flash-ok" style="margin:16px 0 0;">PPN ${Number(shop.taxPercent)}% sedang aktif dan ditagihkan ke pembeli.</div>`
+            : `<div style="margin-top:16px;font-size:12.5px;color:var(--text-muted);">Status sekarang: <strong>tidak ada PPN</strong> yang ditagihkan.</div>`
+        }
+      </div>
+
       <div class="card" style="margin-bottom:24px;">
         <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Jam Operasional</h2>
         <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:18px;">
@@ -2609,7 +2645,7 @@ function renderVoucher({ admin, vouchers: list, kinds, flash = '', error = '' })
                 <form method="post" action="/admin/voucher/${v.id}/toggle">
                   <button class="btn-outline" type="submit" style="padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap;">${v.active ? 'Nonaktifkan' : 'Aktifkan'}</button>
                 </form>
-                <form method="post" action="/admin/voucher/${v.id}/hapus" onsubmit="return confirm('Hapus voucher ${escapeAttr(v.code)}?');">
+                <form method="post" action="/admin/voucher/${v.id}/hapus" data-confirm="Hapus voucher ${escapeAttr(v.code)}?">
                   <button type="submit" class="icon-action" style="padding:6px;display:inline-flex;align-items:center;gap:6px;color:#c94f4f;font-size:12px;font-weight:700;" title="Hapus">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c94f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0l-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
                     <span class="hide-desktop">Hapus</span>
@@ -2762,7 +2798,18 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
               html: `<span style="font-size:13px;font-weight:700;">${escapeHtml(actionLabel(l.action))}</span>`,
             },
             { label: 'Waktu', html: `<span style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;">${escapeHtml(formatDateTimeID(l.created_at))}</span>` },
-            { label: 'Admin', html: `<span style="font-size:13.5px;font-weight:700;">${escapeHtml(l.admin_username)}</span>` },
+            {
+              label: 'Admin',
+              // admin_id goes null when the account is deleted; the entry
+              // itself stays, which is the whole point of an audit trail. The
+              // tag says so, so a name with no account behind it doesn't read
+              // as a mistake.
+              html:
+                `<span style="font-size:13.5px;font-weight:700;">${escapeHtml(l.admin_username)}</span>` +
+                (l.admin_id === null || l.admin_id === undefined
+                  ? `<span style="display:block;font-size:10.5px;font-weight:700;color:var(--text-muted);">akun sudah dihapus</span>`
+                  : ''),
+            },
             { label: 'Detail', html: `<span style="font-size:12.5px;color:var(--text-muted);text-align:right;">${l.detail ? escapeHtml(l.detail) : '—'}</span>` },
           ])
         )
@@ -2906,7 +2953,7 @@ function renderResetSandi({ requests, admin, flash = '', issued = null, error = 
                         r.status === 'disetujui' ? 'Buat Kode Baru' : 'Setujui &amp; Buat Kode'
                       }</button>
                     </form>
-                    <form method="post" action="/admin/reset-sandi/${r.id}/tolak" onsubmit="return confirm('Tolak permintaan reset ini?');">
+                    <form method="post" action="/admin/reset-sandi/${r.id}/tolak" data-confirm="Tolak permintaan reset ini?">
                       <button type="submit" class="icon-action" style="padding:9px 14px;font-size:12.5px;font-weight:700;color:#c94f4f;">Tolak</button>
                     </form>
                   </div>`
@@ -3023,7 +3070,7 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
     <form method="post" action="/admin/pelanggan/tambah" class="card" data-warn-unsaved style="max-width:620px;">
       <div class="field">
         <label>Nama Lengkap <span class="req">*</span></label>
-        <input type="text" name="name" required value="${escapeAttr(values.name || '')}" placeholder="Contoh: Alexander Dwiono">
+        <input type="text" name="name" required value="${escapeAttr(values.name || '')}" placeholder="Contoh: Kezia Sharent">
       </div>
       <div class="field">
         <label>Nomor WhatsApp <span class="req">*</span></label>
@@ -3032,18 +3079,25 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
       </div>
       <div class="field">
         <label>Lokasi Pengantaran</label>
-        <input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5">
+        <input type="text" name="address" maxlength="200" value="${escapeAttr(values.address || '')}" placeholder="Contoh: Menara Batavia lt. 26">
       </div>
       <div class="field">
         <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
         <input type="date" name="birthday" max="${today}" value="${escapeAttr(values.birthday || '')}">
         <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Perlu diisi kalau pelanggan ini mau dapat cup gratis ulang tahun.</div>
       </div>
-      <div class="field" style="margin-bottom:8px;">
+      ${
+        // Handing out stamps is a superadmin's call — the same rule as the
+        // stamp controls on the customer page. A regular admin creates the
+        // account and it starts empty; the route ignores the field either way.
+        admin.role === 'superadmin'
+          ? `<div class="field" style="margin-bottom:8px;">
         <label>Stempel Awal</label>
         <input type="number" name="stamps" min="0" max="100" value="${escapeAttr(values.stamps || '0')}">
         <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Kalau dia sudah belanja sebelum ada website, isi stempel yang sudah terkumpul.</div>
-      </div>
+      </div>`
+          : ''
+      }
       <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;margin-top:14px;">Buat Akun Pelanggan</button>
     </form>
   </main>
@@ -3054,7 +3108,7 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
 // Manual order entry: a sale that happened over WhatsApp or at the door, typed
 // in afterwards. It runs through the same create_order path as a web checkout,
 // so stock, stamps, tier perks and the books all move together.
-function renderPesananTambah({ admin, products, picked = null, errors = [], values = {} }) {
+function renderPesananTambah({ admin, products, picked = null, errors = [], values = {}, taxPercent = 0 }) {
   // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
   // would pre-fill the wrong day.
   const today = toDateKey(new Date());
@@ -3090,6 +3144,11 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
     <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;max-width:640px;margin-bottom:24px;">
       Untuk pesanan yang masuk lewat WhatsApp atau langsung di tempat. Stok otomatis terpotong, dan kalau
       dipilihkan akun pelanggan, pesanan ini ikut menghitung stempel dan benefit tier persis seperti pesanan dari website.
+      ${
+        taxPercent > 0
+          ? `<br><strong>PPN ${taxPercent}% ikut ditambahkan</strong> ke pesanan ini, sama seperti pesanan dari website.`
+          : ''
+      }
     </p>
 
     ${errors.length ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>` : ''}

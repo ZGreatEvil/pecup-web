@@ -1,7 +1,7 @@
 const { page, customerHeader, customerFooter, backButton, emptyState } = require('./layout');
 const { productThumb, productPhotos } = require('./productIcon');
 const { formatRupiah, escapeHtml, escapeAttr, toDateKey, formatDateID, orderStatus } = require('../utils');
-const { discountLines, freeCupValue } = require('../orderMoney');
+const { discountLines, taxLine, freeCupValue } = require('../orderMoney');
 
 const DEFAULT_PRODUCT_DESCRIPTION = 'Buah potong segar, dipotong higienis dan dikemas rapi dalam cup.';
 
@@ -569,6 +569,7 @@ function renderCheckout({
   voucher = { applied: false, code: '', discount: 0, error: '', label: '' },
   totals = null,
   deliveryFee = 0,
+  taxPercent = 0,
 }) {
   const rewardOn = Boolean(useReward) && reward.available > 0;
   const rewardCut = rewardOn ? reward.discount : 0;
@@ -601,6 +602,21 @@ function renderCheckout({
             data-discounted="${escapeAttr(`− ${formatRupiah(on ? on.amount : 0)}`)}">− ${formatRupiah(active ? active.amount : 0)}</span>
     </div>`;
   }).join('');
+  // PPN, when the shop charges it. Like the total, both versions are rendered
+  // so the free-cup checkbox can swap between them without a round trip — a
+  // free cup lowers the price, so it lowers the tax with it.
+  const taxWithout = totals ? totals.taxWithout || 0 : 0;
+  const taxWith = totals ? totals.taxWith || 0 : 0;
+  const taxNow = rewardOn ? taxWith : taxWithout;
+  const taxRow =
+    taxPercent > 0 && (taxWithout > 0 || taxWith > 0)
+      ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:var(--text-muted);">
+          <span>PPN ${taxPercent}%</span>
+          <span class="tnum" data-tax
+                data-full="${escapeAttr(formatRupiah(taxWithout))}"
+                data-discounted="${escapeAttr(formatRupiah(taxWith))}">${formatRupiah(taxNow)}</span>
+        </div>`
+      : '';
   const tierCutNow = totals ? (rewardOn ? totals.tierWith : totals.tierWithout) : 0;
   const tierRow =
     membership.percent > 0 && totals && (totals.tierWith > 0 || totals.tierWithout > 0)
@@ -681,7 +697,7 @@ function renderCheckout({
 
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
-            <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Alexander Dwiono"></div>
+            <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Kezia Sharent"></div>
             <div class="field">
               <label>Nomor WhatsApp <span class="req">*</span></label>
               <input type="tel" name="whatsapp" required inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" title="Masukkan nomor WhatsApp yang valid, contoh: 081234567890" value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 081234567890">
@@ -699,7 +715,7 @@ function renderCheckout({
             </div>
             <div style="margin-bottom:0;">
               <label>Lokasi Pengantaran <span class="req">*</span></label>
-              <input type="text" name="address" required maxlength="200" value="${escapeAttr(formValues.address || '')}" placeholder="Contoh: Kantor BCA Sudirman lt. 5, atau Kos Melati no. 12">
+              <input type="text" name="address" required maxlength="200" value="${escapeAttr(formValues.address || '')}" placeholder="Contoh: Menara Batavia lt. 26, atau Kos Melati no. 12">
               <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Cukup nama kantor/tempat dan patokannya — tidak perlu alamat lengkap.</span>
             </div>
           </div>
@@ -815,6 +831,7 @@ function renderCheckout({
                 </div>`
               : ''
           }
+          ${taxRow}
           ${
             deliveryFee > 0
               ? `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:4px 0;color:var(--text-muted);">
@@ -874,7 +891,7 @@ ${
     var on = box.checked;
     var row = document.getElementById('rewardRow');
     if(row) row.style.display = on ? 'flex' : 'none';
-    var totals = document.querySelectorAll('[data-total], [data-perk-amount], [data-perk-label], [data-tier-cut]');
+    var totals = document.querySelectorAll('[data-total], [data-perk-amount], [data-perk-label], [data-tier-cut], [data-tax]');
     for(var i = 0; i < totals.length; i++){
       totals[i].textContent = on ? totals[i].dataset.discounted : totals[i].dataset.full;
     }
@@ -910,6 +927,7 @@ function renderSukses({ order, items, emailOk, customer = null }) {
   // Same list the email and the admin page render, from src/orderMoney.js —
   // the receipt a customer keeps must itemise exactly what the shop's copy does.
   const orderDiscounts = discountLines(order);
+  const orderTax = taxLine(order);
   const freeCups = freeCupValue(order);
   const emailNote = emailOk
     ? `Detail pesanan dan bukti transfermu sudah kami terima dan otomatis terkirim ke email tim Pecup.`
@@ -975,7 +993,9 @@ function renderSukses({ order, items, emailOk, customer = null }) {
             : ''
         }
         ${
-          orderDiscounts.length
+          // The subtotal is only worth showing when something moved it — a
+          // discount, or the tax added on top.
+          orderDiscounts.length || orderTax
             ? `<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Subtotal</span><span class="tnum">${formatRupiah(order.subtotal)}</span></div>
         ${orderDiscounts
           .map(
@@ -985,6 +1005,11 @@ function renderSukses({ order, items, emailOk, customer = null }) {
         </div>`
           )
           .join('')}`
+            : ''
+        }
+        ${
+          orderTax
+            ? `<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">${escapeHtml(orderTax.label)}</span><span class="tnum">${formatRupiah(orderTax.amount)}</span></div>`
             : ''
         }
         ${

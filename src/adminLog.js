@@ -3,13 +3,33 @@
 // audit-log write should never be the reason an actual admin action fails.
 const db = require('./db');
 
+// The username is stored alongside the id on purpose. Deleting an admin
+// account sets admin_id to null (see the foreign key in schema.sql) and leaves
+// every entry standing — an audit trail that disappears with the account it
+// accuses is no audit trail at all.
 async function logAdminAction(admin, action, detail) {
+  const adminId = admin.adminId || admin.id;
   try {
     await db.query(
       'insert into admin_logs (admin_id, admin_username, action, detail) values ($1, $2, $3, $4)',
-      [admin.adminId || admin.id, admin.username, action, detail || null]
+      [adminId, admin.username, action, detail || null]
     );
   } catch (err) {
+    // 23503 = the account was deleted between this request signing in and the
+    // action finishing. Record it anyway, unlinked — the same state a row ends
+    // up in after a deletion. Losing the entry would be the worse outcome.
+    if (err && (err.code === '23503' || /foreign key/i.test(err.message || ''))) {
+      try {
+        await db.query(
+          'insert into admin_logs (admin_id, admin_username, action, detail) values (null, $1, $2, $3)',
+          [admin.username, action, detail || null]
+        );
+        return;
+      } catch (retryErr) {
+        console.error('Gagal mencatat log admin:', retryErr.message);
+        return;
+      }
+    }
     console.error('Gagal mencatat log admin:', err.message);
   }
 }

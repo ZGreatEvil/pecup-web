@@ -1,5 +1,5 @@
 const { formatRupiah, escapeHtml, formatWhatsapp, formatDateID } = require('./utils');
-const { discountLines, freeCupValue } = require('./orderMoney');
+const { discountLines, taxLine, freeCupValue } = require('./orderMoney');
 
 function buildOrderEmailHtml({ order, items }) {
   // Anything waived — a free cup, a member discount, a promo code — makes the
@@ -8,6 +8,7 @@ function buildOrderEmailHtml({ order, items }) {
   const discounts = discountLines(order);
   const totalDiscount = discounts.reduce((sum, line) => sum + line.amount, 0);
   const freeCups = freeCupValue(order);
+  const tax = taxLine(order);
   const deliveryFee = Number(order.delivery_fee) || 0;
   const rows = items
     .map(
@@ -48,7 +49,7 @@ function buildOrderEmailHtml({ order, items }) {
       <tbody>${rows}</tbody>
       <tfoot>
         ${
-          totalDiscount > 0 || deliveryFee > 0
+          totalDiscount > 0 || deliveryFee > 0 || tax
             ? `<tr>
           <td colspan="2" style="padding:8px 12px;text-align:right;color:#666;">Subtotal</td>
           <td style="padding:8px 12px;text-align:right;">${formatRupiah(order.subtotal)}</td>
@@ -63,6 +64,14 @@ function buildOrderEmailHtml({ order, items }) {
         </tr>`
           )
           .join('')}
+        ${
+          tax
+            ? `<tr>
+          <td colspan="2" style="padding:8px 12px;text-align:right;color:#666;">${escapeHtml(tax.label)}</td>
+          <td style="padding:8px 12px;text-align:right;">${formatRupiah(tax.amount)}</td>
+        </tr>`
+            : ''
+        }
         ${
           deliveryFee > 0
             ? `<tr>
@@ -152,4 +161,7 @@ async function sendOrderNotification({ order, items, proofFile }) {
   }
 }
 
-module.exports = { sendOrderNotification };
+// buildOrderEmailHtml is exported so the money breakdown can be checked
+// without sending anything — the email is the one surface that can't be
+// opened in a browser to look at.
+module.exports = { sendOrderNotification, buildOrderEmailHtml };

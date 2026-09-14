@@ -88,6 +88,12 @@ alter table orders add column if not exists voucher_discount integer not null de
 --   perk_discount/perk_note — free cups granted by the tier (weekly /
 --                             birthday), separate from the stamp-card cup so
 --                             finance can tell the two apart.
+-- PPN charged on this order. A snapshot like the fields above: turning the
+-- tax on or changing its rate later must not rewrite what a past customer
+-- actually paid. Both stay 0 while the setting is off, which is how it ships.
+alter table orders add column if not exists tax_percent integer not null default 0;
+alter table orders add column if not exists tax_amount integer not null default 0;
+
 alter table orders add column if not exists tier_name text;
 alter table orders add column if not exists tier_percent integer not null default 0;
 alter table orders add column if not exists tier_discount integer not null default 0;
@@ -258,6 +264,29 @@ create table if not exists admin_logs (
   created_at timestamptz not null default now()
 );
 
+-- An audit trail that vanishes with the account it accuses is worthless, so
+-- this is enforced rather than assumed. `create table if not exists` above
+-- leaves an existing table exactly as it is — including a foreign key from an
+-- older version of this file — so the rule is (re)applied here every run. It
+-- only ever rewrites the constraint when it isn't already SET NULL ('n'), and
+-- it never touches a single row.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.conname = 'admin_logs_admin_id_fkey' and t.relname = 'admin_logs' and c.confdeltype <> 'n'
+  ) then
+    alter table admin_logs drop constraint admin_logs_admin_id_fkey;
+    alter table admin_logs
+      add constraint admin_logs_admin_id_fkey
+      foreign key (admin_id) references admins(id) on delete set null;
+  end if;
+end $$;
+
+-- Same reason: admin_id has to be nullable for the delete to succeed at all.
+alter table admin_logs alter column admin_id drop not null;
+
 create index if not exists idx_admin_logs_created_at on admin_logs(created_at desc);
 -- The activity log page filters by who did it and by what kind of action.
 create index if not exists idx_admin_logs_username on admin_logs(admin_username, created_at desc);
@@ -308,7 +337,8 @@ create or replace function create_order(
   p_tier_name text,
   p_tier_percent integer,
   p_tier_weekly boolean,
-  p_tier_birthday boolean
+  p_tier_birthday boolean,
+  p_tax_percent integer
 ) returns jsonb
 language plpgsql
 as $$
@@ -340,6 +370,9 @@ declare
   v_cheapest_price integer;
   v_cheapest_name text;
   v_tier_percent integer := least(100, greatest(0, coalesce(p_tier_percent, 0)));
+  v_tax_percent integer := least(100, greatest(0, coalesce(p_tax_percent, 0)));
+  v_tax_amount integer := 0;
+  v_taxable integer;
   v_tier_name text;
   v_tier_discount integer := 0;
   v_perk_discount integer := 0;
@@ -588,13 +621,21 @@ begin
     update vouchers set used_count = used_count + 1 where id = v_voucher.id;
   end if;
 
+  -- PPN, if the shop has it switched on. Charged on the cups after every
+  -- discount — a promo lowers the price, and tax follows the price actually
+  -- paid — and not on the delivery fee. Integer division truncates, which is
+  -- the same direction the preview in src/settings.js rounds.
+  v_taxable := greatest(0, v_subtotal - v_reward_discount - v_perk_discount - v_tier_discount - v_voucher_discount);
+  if v_tax_percent > 0 then
+    v_tax_amount := (v_taxable * v_tax_percent) / 100;
+  end if;
+
   -- Delivery fee is added after discounts: a promo reduces the cups, not the
   -- cost of getting them there.
-  v_total := greatest(0, v_subtotal - v_reward_discount - v_perk_discount - v_tier_discount - v_voucher_discount)
-             + v_delivery_fee;
+  v_total := v_taxable + v_tax_amount + v_delivery_fee;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee, tier_name, tier_percent, tier_discount, perk_discount, perk_note)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note)
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee, tier_name, tier_percent, tier_discount, perk_discount, perk_note, tax_percent, tax_amount)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note, v_tax_percent, v_tax_amount)
   returning id into v_order_id;
 
   -- Explicitly WIB: the database session runs in GMT, so a plain now() would
@@ -646,6 +687,8 @@ begin
     'tierDiscount', v_tier_discount,
     'perkDiscount', v_perk_discount,
     'perkNote', v_perk_note,
+    'taxPercent', v_tax_percent,
+    'taxAmount', v_tax_amount,
     'total', v_total
   );
 end;
@@ -656,6 +699,8 @@ $$;
 -- stay callable and the old one silently ignores the newer discounts.
 drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean);
 drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean, text, integer);
+-- The 16-argument version, before PPN was added as the 17th.
+drop function if exists create_order(text, text, text, jsonb, text, text, text, date, bigint, boolean, text, integer, text, integer, boolean, boolean);
 
 -- Note: there's no "storage buckets" step here anymore. File storage (product
 -- photos, payment proofs) lives in Vercel Blob, not in this Postgres

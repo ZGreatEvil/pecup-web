@@ -815,7 +815,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) 
       ${logoMark(38)}
       <div style="display:flex;flex-direction:column;">
         <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:22px;letter-spacing:-0.3px;color:var(--text);">Pecup</span>
-        <span class="header-tagline" style="font-size:11px;color:var(--text-muted);letter-spacing:0.4px;">POTONGAN BUAH SEGAR</span>
+        <span class="header-tagline" style="font-size:11px;color:var(--text-muted);letter-spacing:0.4px;">BUAH POTONG SEGAR</span>
       </div>
     </a>
     <nav class="site-nav">
@@ -1444,6 +1444,28 @@ const CART_SCRIPT = `
   }
   window.addEventListener('pageshow', closeDrawer);
   closeDrawer();
+})();
+
+// "Are you sure?" on a form carrying data-confirm.
+//
+// The message lives in an attribute rather than in an inline onsubmit, because
+// most of these messages quote something a stranger chose — a customer's name,
+// a product name, a voucher code. escapeAttr protects an attribute VALUE, but a
+// browser decodes entities BEFORE it parses the JavaScript inside an event
+// attribute, so an apostrophe in a customer's name closed the string literal
+// and whatever followed it ran, in an admin's session. Read back with
+// getAttribute it is only ever text.
+(function(){
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if(!form || !form.getAttribute) return;
+    var message = form.getAttribute('data-confirm');
+    if(!message) return;
+    if(!window.confirm(message)){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
 })();
 
 // Warns before leaving a form with edits that were never saved.

@@ -57,6 +57,17 @@ function discountLines(order) {
   return lines;
 }
 
+// PPN charged on this order, or null if there wasn't any — which is every
+// order placed while the setting is off, and every order placed before it
+// existed. Read from the order, never recomputed: the rate is a snapshot, so
+// turning the tax off tomorrow must not rewrite yesterday's receipt.
+function taxLine(order) {
+  const amount = money(order.tax_amount);
+  if (amount <= 0) return null;
+  const percent = Number(order.tax_percent) || 0;
+  return { key: 'tax', label: percent ? `PPN ${percent}%` : 'PPN', amount, percent };
+}
+
 function totalDiscount(order) {
   return discountLines(order).reduce((sum, line) => sum + line.amount, 0);
 }
@@ -76,4 +87,4 @@ function discountSummary(order) {
   return parts.join(' · ');
 }
 
-module.exports = { discountLines, totalDiscount, freeCupValue, discountSummary, money };
+module.exports = { discountLines, taxLine, totalDiscount, freeCupValue, discountSummary, money };

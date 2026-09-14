@@ -21,6 +21,12 @@ const DEFAULTS = {
   min_order: '0',
   delivery_fee: '0',
   free_delivery_over: '0', // 0 = never free
+  // PPN (Indonesian VAT). Off until someone ticks the box in Pengaturan Toko:
+  // a shop that isn't registered as a PKP must not charge it, so this ships
+  // switched off and changes nothing until it's turned on. The rate is a
+  // stored value rather than a constant because it has moved before (10 → 11).
+  tax_enabled: '0',
+  tax_percent: '11',
   same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
   // Opening hours in WIB. Outside them the shop is closed automatically, the
   // same as flipping the switch off. Empty = no hour limit.
@@ -73,7 +79,28 @@ async function shopConfig() {
     deliveryFee: num('delivery_fee'),
     freeDeliveryOver: num('free_delivery_over'),
     sameDayCutoff: cutoff,
+    // taxEnabled is the tick itself; taxPercent is the rate it would charge.
+    // Everything that prices an order uses taxRateFor() below instead, which
+    // is 0 whenever the box is off — so one place decides, not each caller.
+    taxEnabled: all.tax_enabled === '1',
+    taxPercent: Math.min(100, num('tax_percent')),
   };
+}
+
+/** The percentage actually charged right now — 0 unless the box is ticked. */
+function taxRateFor(config) {
+  if (!config || !config.taxEnabled) return 0;
+  const percent = Number(config.taxPercent) || 0;
+  return percent > 0 && percent <= 100 ? Math.round(percent) : 0;
+}
+
+// PPN on an already-discounted amount. Rounded down, the same direction every
+// other discount in this shop rounds, so the preview and create_order (integer
+// division in Postgres) can never disagree by a rupiah.
+function taxOn(base, percent) {
+  const rate = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  if (!rate) return 0;
+  return Math.floor((Math.max(0, Math.round(Number(base) || 0)) * rate) / 100);
 }
 
 // What this particular order pays to have it delivered.
@@ -117,4 +144,4 @@ async function setValue(key, value) {
   cache = null;
 }
 
-module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor, nowWIB };
+module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor, taxRateFor, taxOn, nowWIB };

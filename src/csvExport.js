@@ -1,6 +1,6 @@
 const { csvEscape, formatTimeID, formatWhatsapp, toDateOnly, orderStatus } = require('./utils');
 const { getOrderItemsForOrders } = require('./queries');
-const { discountLines, freeCupValue } = require('./orderMoney');
+const { discountLines, taxLine, freeCupValue } = require('./orderMoney');
 
 // Money is exported as bare numbers (18000, not "Rp 18.000") so the columns
 // can be summed in Excel/Sheets without cleaning them up first. That's the
@@ -28,6 +28,11 @@ async function buildDailyOrdersCsv(orders) {
     'Diskon Voucher',
     'Kode Voucher',
     'Total Potongan',
+    // Its own column, and kept out of "Total Potongan": tax collected is money
+    // owed to the state, not shop revenue, and a bookkeeper has to be able to
+    // sum it on its own.
+    'Tarif PPN (%)',
+    'PPN',
     'Ongkos Antar',
     'Total Dibayar',
     'Status',
@@ -45,6 +50,7 @@ async function buildDailyOrdersCsv(orders) {
   let totalVoucher = 0;
   let totalDiscount = 0;
   let totalDelivery = 0;
+  let totalTax = 0;
   let totalPaid = 0;
   let totalCups = 0;
 
@@ -59,8 +65,9 @@ async function buildDailyOrdersCsv(orders) {
     const tierCut = Number(o.tier_discount) || 0;
     const voucherCut = Number(o.voucher_discount) || 0;
     const delivery = Number(o.delivery_fee) || 0;
+    const tax = taxLine(o);
     // Older rows pre-date the subtotal column; fall back to total + discount.
-    const subtotal = Number(o.subtotal) || Number(o.total) + discount - delivery;
+    const subtotal = Number(o.subtotal) || Number(o.total) + discount - delivery - (tax ? tax.amount : 0);
 
     // Only completed orders count toward the money totals — pending and
     // in-progress orders aren't revenue yet.
@@ -71,6 +78,7 @@ async function buildDailyOrdersCsv(orders) {
       totalVoucher += voucherCut;
       totalDiscount += discount;
       totalDelivery += delivery;
+      totalTax += tax ? tax.amount : 0;
       totalPaid += Number(o.total) || 0;
       totalCups += cups;
     }
@@ -94,6 +102,8 @@ async function buildDailyOrdersCsv(orders) {
         money(voucherCut),
         o.voucher_code || '',
         money(discount),
+        tax ? String(tax.percent) : '',
+        money(tax ? tax.amount : 0),
         money(delivery),
         money(o.total),
         orderStatus(o.status).label,
@@ -109,7 +119,7 @@ async function buildDailyOrdersCsv(orders) {
   lines.push(
     ['TOTAL (pesanan selesai saja)', '', '', '', '', '', '', '', String(totalCups), '',
       money(totalSubtotal), money(totalFreeCups), '', money(totalTier), money(totalVoucher), '',
-      money(totalDiscount), money(totalDelivery), money(totalPaid), '', '', '']
+      money(totalDiscount), '', money(totalTax), money(totalDelivery), money(totalPaid), '', '', '']
       .map(csvEscape)
       .join(',')
   );
