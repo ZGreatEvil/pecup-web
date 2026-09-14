@@ -88,17 +88,40 @@ alter table orders add column if not exists voucher_discount integer not null de
 --   perk_discount/perk_note — free cups granted by the tier (weekly /
 --                             birthday), separate from the stamp-card cup so
 --                             finance can tell the two apart.
--- PPN charged on this order. A snapshot like the fields above: turning the
--- tax on or changing its rate later must not rewrite what a past customer
--- actually paid. Both stay 0 while the setting is off, which is how it ships.
-alter table orders add column if not exists tax_percent integer not null default 0;
-alter table orders add column if not exists tax_amount integer not null default 0;
-
 alter table orders add column if not exists tier_name text;
 alter table orders add column if not exists tier_percent integer not null default 0;
 alter table orders add column if not exists tier_discount integer not null default 0;
 alter table orders add column if not exists perk_discount integer not null default 0;
 alter table orders add column if not exists perk_note text;
+
+-- Which tier perks this order actually consumed, and what the customer's perk
+-- state was immediately before. Without this a cancelled order could not give
+-- a perk back: "weekly cup taken" is a timestamp, so restoring it means
+-- putting the OLD timestamp back, not guessing one.
+alter table orders add column if not exists perk_weekly_used boolean not null default false;
+alter table orders add column if not exists perk_weekly_prev timestamptz;
+alter table orders add column if not exists perk_birthday_used boolean not null default false;
+alter table orders add column if not exists perk_birthday_prev integer;
+
+-- Has the money actually arrived? Separate from `status`, which tracks
+-- FULFILMENT (menunggu → diproses → selesai). A walk-in customer can take
+-- their cups and pay on Friday; a transfer can land before anything is
+-- prepared. Web checkout sets this the moment a payment proof is uploaded;
+-- for a manually recorded sale the admin says which it is.
+alter table orders add column if not exists paid boolean not null default false;
+alter table orders add column if not exists paid_at timestamptz;
+
+-- Orders placed through the website are paid at checkout (a transfer proof is
+-- required before the order is accepted), so rows that pre-date this column
+-- are marked paid — except the cancelled ones, which never were.
+update orders set paid = true, paid_at = created_at
+ where paid = false and status <> 'dibatalkan' and proof_filename is not null;
+
+-- PPN charged on this order. A snapshot like the fields above: turning the
+-- tax on or changing its rate later must not rewrite what a past customer
+-- actually paid. Both stay 0 while the setting is off, which is how it ships.
+alter table orders add column if not exists tax_percent integer not null default 0;
+alter table orders add column if not exists tax_amount integer not null default 0;
 
 -- Promo codes. `kind` is 'persen' (percentage off the cups) or 'nominal'
 -- (a flat rupiah amount). Redemptions are counted so a limited code can't be
@@ -187,11 +210,17 @@ create table if not exists stamps (
   note text
 );
 
--- One stamp per order, so flipping an order Selesai → Diproses → Selesai
--- can't mint extra stamps. Not a partial index: Postgres treats NULLs as
--- distinct, so manually-added stamps (order_id null) are unaffected, and a
+-- A stamp is earned per CUP, not per order: buying five cups in one go fills
+-- the card five times faster than buying one, which is the whole point of a
+-- stamp card. cup_no is that cup's position in the order (1, 2, 3...).
+alter table stamps add column if not exists cup_no integer not null default 1;
+
+-- Flipping an order Selesai → Diproses → Selesai must not mint a second set,
+-- so (order_id, cup_no) is unique. Not a partial index: Postgres treats NULLs
+-- as distinct, so manually-added stamps (order_id null) are unaffected, and a
 -- plain index can serve as an ON CONFLICT target (a partial one can't).
-create unique index if not exists idx_stamps_order_id on stamps(order_id);
+drop index if exists idx_stamps_order_id;
+create unique index if not exists idx_stamps_order_cup on stamps(order_id, cup_no);
 create index if not exists idx_stamps_customer_status on stamps(customer_id, status);
 
 -- How many free cups this customer has actually claimed — drives the tier.
@@ -251,6 +280,93 @@ create table if not exists admins (
   role text not null default 'admin', -- 'superadmin' | 'admin'
   created_at timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------------
+-- Inventory, packaging and expenses (the shop's own books)
+-- ---------------------------------------------------------------------
+-- None of this is ever shown to a shopper: it is the cost side of the
+-- business, and every route that touches it is behind an admin permission.
+--
+-- inventory_items  — the things the shop buys: cups, lids, spoons, labels,
+--                    plastic bags, and anything else. Each has a quantity on
+--                    hand and what one of them costs.
+create table if not exists inventory_items (
+  id bigint generated always as identity primary key,
+  name text not null,
+  unit text not null default 'pcs',        -- satuan: pcs, pack, kg, liter...
+  stock integer not null default 0,        -- how many are on hand right now
+  unit_cost integer not null default 0,    -- rupiah for ONE unit
+  low_threshold integer not null default 0, -- warn at or below this (0 = never)
+  active boolean not null default true,
+  note text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_inventory_items_active on inventory_items(active, name);
+
+-- product_materials — what ONE cup of a product uses. A product can use
+-- several things (a cup AND a lid AND a spoon), which is why this is its own
+-- table rather than a column.
+create table if not exists product_materials (
+  id bigint generated always as identity primary key,
+  product_id bigint not null references products(id) on delete cascade,
+  item_id bigint not null references inventory_items(id) on delete cascade,
+  qty integer not null default 1,          -- units consumed per cup sold
+  unique (product_id, item_id)
+);
+create index if not exists idx_product_materials_product on product_materials(product_id);
+
+-- inventory_moves — every change to a quantity, so the number on hand can
+-- always be explained: what was bought, what a sale consumed, what an admin
+-- corrected by hand, and what came back when an order was cancelled.
+create table if not exists inventory_moves (
+  id bigint generated always as identity primary key,
+  item_id bigint not null references inventory_items(id) on delete cascade,
+  delta integer not null,                  -- + in, − out
+  reason text not null,                    -- 'pembelian' | 'pesanan' | 'penyesuaian' | 'batal'
+  order_id bigint references orders(id) on delete set null,
+  note text not null default '',
+  admin_username text,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_inventory_moves_item on inventory_moves(item_id, created_at desc);
+create index if not exists idx_inventory_moves_order on inventory_moves(order_id);
+
+-- expenses — everything the shop pays out. Kept as plain rows with a date key
+-- in WIB so a month's figures line up with the sales report beside them.
+create table if not exists expenses (
+  id bigint generated always as identity primary key,
+  date_key text not null,                  -- 'YYYY-MM-DD', Jakarta calendar day
+  category text not null default 'Lain-lain',
+  description text not null default '',
+  amount integer not null,
+  item_id bigint references inventory_items(id) on delete set null, -- set when it was a stock purchase
+  admin_username text,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_expenses_date on expenses(date_key);
+create index if not exists idx_expenses_category on expenses(category, date_key);
+
+-- What this order's packaging cost the shop, snapshotted at checkout. A
+-- snapshot for the same reason the tax rate and the tier are: changing what a
+-- cup costs tomorrow must not rewrite last week's profit.
+alter table orders add column if not exists cogs integer not null default 0;
+
+-- Per-account permissions (see src/permissions.js for the catalogue and the
+-- rules). NULL means "never set" and is read as the legacy admin capability
+-- set, so an account created before this existed keeps exactly what it had;
+-- an empty array means a deliberately locked-down account. Superadmins ignore
+-- this column entirely — they always have everything.
+alter table admins add column if not exists permissions text[];
+
+-- Seed the accounts that pre-date the column, once. The WHERE clause is what
+-- makes re-running this file safe: an admin whose permissions a superadmin has
+-- since edited (including to "none") is never overwritten.
+update admins
+   set permissions = array[
+     'produk.lihat','produk.kelola','pesanan.lihat','pesanan.status','pesanan.manual',
+     'pesanan.unduh','pelanggan.lihat','pelanggan.tambah','laporan.lihat','reset_sandi.kelola'
+   ]
+ where permissions is null and role <> 'superadmin';
 
 -- Audit trail of admin actions (who did what, when). admin_username is
 -- denormalized so entries stay readable even if that admin account is later
@@ -361,6 +477,7 @@ declare
   v_label text;
   v_wholesale_min integer;
   v_wholesale_price integer;
+  v_active boolean;
   v_reward_discount integer := 0;
   v_reward_item text;
   v_per_reward integer;
@@ -373,6 +490,8 @@ declare
   v_tax_percent integer := least(100, greatest(0, coalesce(p_tax_percent, 0)));
   v_tax_amount integer := 0;
   v_taxable integer;
+  v_cogs integer := 0;
+  v_item_cogs integer := 0;
   v_tier_name text;
   v_tier_discount integer := 0;
   v_perk_discount integer := 0;
@@ -384,6 +503,10 @@ declare
   v_birthday date;
   v_weekly_at timestamptz;
   v_birthday_year integer;
+  -- Whether THIS order spent each perk, so cancelling it can hand the perk
+  -- back and un-cancelling can take it again.
+  v_weekly_taken boolean := false;
+  v_birthday_taken boolean := false;
   v_base integer;
 begin
   if jsonb_array_length(p_items) = 0 then
@@ -403,12 +526,18 @@ begin
     v_product_id := (v_item->>'productId')::bigint;
     v_qty := (v_item->>'qty')::integer;
 
-    select price, stock, name, wholesale_min_qty, wholesale_price
-      into v_price, v_stock, v_name, v_wholesale_min, v_wholesale_price
+    select price, stock, name, wholesale_min_qty, wholesale_price, active
+      into v_price, v_stock, v_name, v_wholesale_min, v_wholesale_price, v_active
     from products where id = v_product_id;
 
     if v_price is null then
       raise exception 'Produk % tidak ditemukan.', v_product_id;
+    end if;
+    -- A product switched off is not for sale. The cart already drops such a
+    -- line (src/cart.js) — this is the authority saying so, so a stale cookie
+    -- or a direct call can't get around it.
+    if not v_active then
+      raise exception '% sedang tidak dijual. Hapus dari keranjang lalu coba lagi.', v_name;
     end if;
     if v_stock < v_qty then
       -- No remaining-count in the message: this text is shown verbatim to the
@@ -526,6 +655,7 @@ begin
             'Cup gratis mingguan' || coalesce(' (' || nullif(btrim(coalesce(p_tier_name, '')), '') || ')', '') || ' — ' || v_perk_name
           );
           update customers set weekly_cup_at = now() where id = p_customer_id;
+          v_weekly_taken := true;
         end if;
       end if;
     end if;
@@ -563,6 +693,7 @@ begin
           update customers set birthday_cup_year =
             extract(year from coalesce(p_delivery_date, (now() at time zone 'Asia/Jakarta')::date))::integer
           where id = p_customer_id;
+          v_birthday_taken := true;
         end if;
       end if;
     end if;
@@ -634,8 +765,8 @@ begin
   -- cost of getting them there.
   v_total := v_taxable + v_tax_amount + v_delivery_fee;
 
-  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee, tier_name, tier_percent, tier_discount, perk_discount, perk_note, tax_percent, tax_amount)
-  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note, v_tax_percent, v_tax_amount)
+  insert into orders (order_number, customer_name, whatsapp, notes, subtotal, total, proof_filename, status, date_key, address, delivery_date, customer_id, reward_discount, reward_item, voucher_code, voucher_discount, delivery_fee, tier_name, tier_percent, tier_discount, perk_discount, perk_note, tax_percent, tax_amount, perk_weekly_used, perk_weekly_prev, perk_birthday_used, perk_birthday_prev)
+  values ('TEMP', p_customer_name, p_whatsapp, coalesce(p_notes, ''), v_subtotal, v_total, p_proof_filename, 'menunggu', p_date_key, coalesce(p_address, ''), p_delivery_date, p_customer_id, v_reward_discount, v_reward_item, v_voucher_code, v_voucher_discount, v_delivery_fee, v_tier_name, v_tier_percent, v_tier_discount, v_perk_discount, v_perk_note, v_tax_percent, v_tax_amount, v_weekly_taken, case when v_weekly_taken then v_weekly_at end, v_birthday_taken, case when v_birthday_taken then v_birthday_year end)
   returning id into v_order_id;
 
   -- Explicitly WIB: the database session runs in GMT, so a plain now() would
@@ -671,7 +802,33 @@ begin
       raise exception 'Stok % tidak mencukupi. Kurangi jumlahnya lalu coba lagi.',
         coalesce(v_label, v_name, 'produk');
     end if;
+
+    -- Packaging and materials come off the shop's own inventory in the same
+    -- transaction as the sale, so the cup count can't drift from what was
+    -- actually sold. A shortage does NOT block the order: the customer is not
+    -- the right person to tell about the shop's own stockroom, and a negative
+    -- number is a truthful "you sold more than you recorded buying" that the
+    -- inventory page shows in red.
+    insert into inventory_moves (item_id, delta, reason, order_id, note)
+    select m.item_id, -(m.qty * v_qty), 'pesanan', v_order_id,
+           coalesce(v_label, v_name, '') || ' ×' || v_qty
+      from product_materials m
+     where m.product_id = v_product_id;
+
+    update inventory_items i
+       set stock = i.stock - (m.qty * v_qty)
+      from product_materials m
+     where m.product_id = v_product_id and i.id = m.item_id;
+
+    -- ...and what that packaging cost, banked onto the order so the profit
+    -- report can never be rewritten by a later price change.
+    select coalesce(sum(m.qty * v_qty * i.unit_cost), 0) into v_item_cogs
+      from product_materials m join inventory_items i on i.id = m.item_id
+     where m.product_id = v_product_id;
+    v_cogs := v_cogs + v_item_cogs;
   end loop;
+
+  update orders set cogs = v_cogs where id = v_order_id;
 
   return jsonb_build_object(
     'id', v_order_id,
@@ -689,6 +846,7 @@ begin
     'perkNote', v_perk_note,
     'taxPercent', v_tax_percent,
     'taxAmount', v_tax_amount,
+    'cogs', v_cogs,
     'total', v_total
   );
 end;

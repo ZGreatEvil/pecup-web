@@ -92,6 +92,12 @@ async function buildCartItems(cart, { products } = {}) {
     if (!entry || entry.qty <= 0) continue;
     const product = byId.get(Number(entry.productId));
     if (!product) continue;
+    // Taken off sale means off sale. The storefront stops offering a product
+    // the moment it's switched off, but a cart cookie written before that (or
+    // edited by hand) still carries the id — and without this the line would
+    // price and check out normally. Dropped the same silent way an
+    // out-of-stock line is, just below.
+    if (!product.active) continue;
     // Math.max(stock, 0) || entry.qty would wrongly fall through to the
     // full requested qty when stock is exactly 0 (0 is falsy) — clamp
     // explicitly instead, and drop the line if nothing is available.

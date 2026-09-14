@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const {
   uploadProductImage,
   uploadProofFile,
+  deleteProofFile,
   signedProofUrl,
   presignProductVideoUpload,
   productBlobInfo,
@@ -43,6 +44,9 @@ async function saveProofFile(file) {
 module.exports = {
   saveProductImage,
   saveProofFile,
+  // Used when an order fails AFTER its proof was uploaded — see the checkout
+  // route. Without it the file would be stranded in the private store.
+  deleteProofFile,
   signedProofUrl,
   presignProductVideoUpload,
   productBlobInfo,

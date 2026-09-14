@@ -1,4 +1,4 @@
-const { escapeHtml, escapeAttr } = require('../utils');
+const { escapeHtml, escapeAttr, SHOP_WHATSAPP_FALLBACK, SHOP_INSTAGRAM, formatWhatsapp } = require('../utils');
 
 const SHARED_STYLE = `
   :root{
@@ -77,6 +77,12 @@ const SHARED_STYLE = `
     text-overflow:ellipsis;
   }
   select::-ms-expand{display:none;}
+  /* One height for every field on a row. A date field reserves 46px for its
+     picker (below); a select and a plain input are sized by their content, so
+     a filter bar that puts "Dari tanggal" next to "Kelompokkan" ended up with
+     one tall box and one short one. Checkboxes and radios keep their own fixed
+     size and are excluded. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select{min-height:46px;}
   /* Fixed-size round things (avatars, steppers, toggles, step numbers) are
      flex children with an explicit width. Without this a narrow phone squashes
      them to a sliver — which is why icons looked like they'd gone missing
@@ -1583,20 +1589,37 @@ function customerFooter() {
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
         <span style="font-size:13px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;">HUBUNGI KAMI</span>
-        <a href="https://wa.me/6281245684104" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">WhatsApp: +62 812-4568-4104</a>
-        <a href="https://instagram.com/pecupchu" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">Instagram: @pecupchu</a>
+        <a href="https://wa.me/${SHOP_WHATSAPP_FALLBACK}" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">WhatsApp: ${escapeHtml(formatWhatsapp(SHOP_WHATSAPP_FALLBACK))}</a>
+        <a href="https://instagram.com/${SHOP_INSTAGRAM}" target="_blank" rel="noopener" style="font-size:14px;color:var(--text);">Instagram: @${escapeHtml(SHOP_INSTAGRAM)}</a>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <span style="font-size:13px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;">PELANGGAN</span>
+        <a href="/keanggotaan" style="font-size:14px;color:var(--text);">Keuntungan Member</a>
+        <a href="/akun" style="font-size:14px;color:var(--text);">Akun &amp; Kartu Stempel</a>
+        <a href="/#menu" style="font-size:14px;color:var(--text);">Menu Hari Ini</a>
       </div>
     </div>
     <p style="text-align:center;font-size:12.5px;color:var(--text-muted);padding-top:24px;">© ${new Date().getFullYear()} Pecup. Semua hak dilindungi.</p>
   </footer>`;
 }
 
-function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {}) {
-  const item = (href, key, label, iconPath) => `
+// `can` is the set of permission keys this admin holds (see src/permissions.js).
+// The menu shows only what they can actually open — a link that 403s is worse
+// than no link. The routes enforce the same thing; this is only the shortcut.
+function adminSidebar(active, { isSuperadmin = false, username = 'Admin', can = null } = {}) {
+  const allowed = (key) => {
+    if (!key) return true;
+    if (!can) return isSuperadmin; // no set passed: fall back to the old rule
+    return can.has(key);
+  };
+  const item = (href, key, label, iconPath, permission) => {
+    if (!allowed(permission)) return '';
+    return `
     <a class="side-link ${active === key ? 'side-link-active' : ''}" href="${href}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${iconPath}</svg>
       ${label}
     </a>`;
+  };
   // The checkbox is a plain sibling of the bar and the rail, so the whole
   // menu opens and closes in CSS alone — no JS, and it still works if the
   // script fails to load.
@@ -1621,20 +1644,18 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin' } = {})
     </a>
     <nav style="display:flex;flex-direction:column;gap:4px;">
       ${item('/admin', 'dashboard', 'Ringkasan', '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>')}
-      ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>')}
-      ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>')}
-      ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>')}
-      ${item('/admin/laporan', 'laporan', 'Laporan Penjualan', '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>')}
-      ${item('/admin/reset-sandi', 'reset', 'Reset Password', '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>')}
-      ${
-        isSuperadmin
-          ? item('/admin/voucher', 'voucher', 'Kode Promo', '<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-6z"/><path d="M13 5v14" stroke-dasharray="2 3"/>') +
-            item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>') +
-            item('/admin/pengaturan', 'pengaturan', 'Pengaturan Toko', '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>') +
-            item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>') +
-            item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>')
-          : ''
-      }
+      ${item('/admin/produk', 'produk', 'Produk', '<path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M4 8l8 5 8-5M12 13v8"/>', 'produk.lihat')}
+      ${item('/admin/pesanan', 'pesanan', 'Pesanan', '<path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/>', 'pesanan.lihat')}
+      ${item('/admin/pelanggan', 'pelanggan', 'Cari Pelanggan', '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>', 'pelanggan.lihat')}
+      ${item('/admin/laporan', 'laporan', 'Laporan Penjualan', '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>', 'laporan.lihat')}
+      ${item('/admin/inventaris', 'inventaris', 'Stok Bahan', '<path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/><path d="M3 7l9 4 9-4M12 11v10"/>', 'inventaris.kelola')}
+      ${item('/admin/pengeluaran', 'pengeluaran', 'Pengeluaran', '<rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/>', 'pengeluaran.kelola')}
+      ${item('/admin/reset-sandi', 'reset', 'Reset Password', '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>', 'reset_sandi.kelola')}
+      ${item('/admin/voucher', 'voucher', 'Kode Promo', '<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-6z"/><path d="M13 5v14" stroke-dasharray="2 3"/>', 'voucher.kelola')}
+      ${item('/admin/loyalitas', 'loyalitas', 'Program Stempel', '<path d="M12 2l2.9 6.3 6.6.8-4.9 4.6 1.3 6.6L12 17l-5.9 3.3 1.3-6.6L2.5 9.1l6.6-.8z"/>', 'loyalitas.kelola')}
+      ${item('/admin/pengaturan', 'pengaturan', 'Pengaturan Toko', '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>', 'pengaturan.kelola')}
+      ${item('/admin/akun', 'akun', 'Kelola Admin', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', 'admin.kelola')}
+      ${item('/admin/log-aktivitas', 'log', 'Log Aktivitas', '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>', 'log.lihat')}
     </nav>
     <div style="margin-top:auto;padding:14px;border-top:1px solid oklch(35% 0.02 255);display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;">

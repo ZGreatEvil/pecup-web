@@ -28,6 +28,27 @@ const DEFAULTS = {
   tax_enabled: '0',
   tax_percent: '11',
   same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
+  // Which days the shop actually delivers on — a pre-order shop that only
+  // makes cups on, say, Wednesday and Saturday sets those here and the
+  // storefront offers nothing else. Empty = every day, which is how it ships,
+  // so a shop that doesn't need this sees no change at all.
+  //   delivery_days          — CSV of weekday numbers, 0=Sunday … 6=Saturday
+  //   delivery_closed_dates  — CSV of 'YYYY-MM-DD' that are shut even though
+  //                            their weekday is open (holidays, stock-taking)
+  //   delivery_open_dates    — CSV of 'YYYY-MM-DD' open even though their
+  //                            weekday isn't (a one-off market day)
+  //   delivery_horizon_days  — how far ahead the date list runs
+  delivery_days: '',
+  delivery_closed_dates: '',
+  delivery_open_dates: '',
+  delivery_horizon_days: '14',
+  // How the shopper picks that date. The rules above decide what is OPEN; this
+  // only decides how it's presented, and the two are interchangeable at any
+  // time without changing which dates are allowed:
+  //   'kalender' — the normal date picker (what the shop has always had)
+  //   'pilihan'  — a list of the open dates only, so nothing invalid is even
+  //                offered. Suits a pre-order shop that cooks on set days.
+  delivery_date_mode: 'kalender',
   // Opening hours in WIB. Outside them the shop is closed automatically, the
   // same as flipping the switch off. Empty = no hour limit.
   open_time: '',
@@ -84,7 +105,95 @@ async function shopConfig() {
     // is 0 whenever the box is off — so one place decides, not each caller.
     taxEnabled: all.tax_enabled === '1',
     taxPercent: Math.min(100, num('tax_percent')),
+    // Which days may be delivered on, and how the shopper is asked to pick.
+    // `delivery` is the rule set; `deliveryMode` is only presentation.
+    delivery: deliveryRules(all),
+    deliveryMode: all.delivery_date_mode === 'pilihan' ? 'pilihan' : 'kalender',
   };
+}
+
+// --- which days orders can be delivered on --------------------------------
+// All of this works in Jakarta days. The server runs in GMT, so asking
+// JavaScript for "today" or "what weekday is this" without shifting first
+// would roll over seven hours early and quietly offer the wrong dates.
+
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** 'YYYY-MM-DD' for an instant, in Jakarta. */
+function dateKeyWIB(at = new Date()) {
+  return new Date(at.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Day of the week (0=Sunday) for a 'YYYY-MM-DD' key, read as a Jakarta day. */
+function weekdayOf(dateKey) {
+  return new Date(`${dateKey}T00:00:00Z`).getUTCDay();
+}
+
+function csvSet(value) {
+  return new Set(
+    String(value || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+/** The delivery-day rules, normalised. `everyDay` is true when nothing limits them. */
+function deliveryRules(all) {
+  // The empty pieces are dropped BEFORE Number(), not after: Number('') is 0,
+  // so an unset value would otherwise parse as "Sunday only" and quietly shut
+  // the shop for six days a week.
+  const days = new Set(
+    String(all.delivery_days || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
+  );
+  const closed = csvSet(all.delivery_closed_dates);
+  const open = csvSet(all.delivery_open_dates);
+  const horizonRaw = Number(all.delivery_horizon_days);
+  const horizon = Number.isFinite(horizonRaw) && horizonRaw >= 1 ? Math.min(60, Math.round(horizonRaw)) : 14;
+  return { days, closed, open, horizon, everyDay: days.size === 0 && closed.size === 0 && open.size === 0 };
+}
+
+/**
+ * Can an order be delivered on this date?
+ * An explicitly opened date always can; an explicitly closed one never can;
+ * otherwise it follows the weekday rule (and with no weekday rule, every day
+ * is open — the shipped default).
+ */
+function isDeliveryDateOpen(config, dateKey) {
+  const rules = config.delivery || deliveryRules({});
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return false;
+  if (rules.open.has(dateKey)) return true;
+  if (rules.closed.has(dateKey)) return false;
+  if (rules.days.size === 0) return true;
+  return rules.days.has(weekdayOf(dateKey));
+}
+
+/**
+ * The dates a shopper may actually choose right now: open by the rules above,
+ * not in the past, and not today once the same-day cut-off has passed.
+ */
+function openDeliveryDates(config, { from = dateKeyWIB(), max = 0 } = {}) {
+  const rules = config.delivery || deliveryRules({});
+  const limit = max > 0 ? max : rules.horizon;
+  const todayKey = dateKeyWIB();
+  const cutoffPassed =
+    Boolean(config.sameDayCutoff) && nowWIB() >= config.sameDayCutoff;
+
+  const out = [];
+  const start = new Date(`${from}T00:00:00Z`);
+  for (let i = 0; i <= limit && out.length < 60; i += 1) {
+    const day = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
+    const key = day.toISOString().slice(0, 10);
+    if (key < todayKey) continue;
+    if (key === todayKey && cutoffPassed) continue;
+    if (isDeliveryDateOpen(config, key)) out.push(key);
+  }
+  return out;
 }
 
 /** The percentage actually charged right now — 0 unless the box is ticked. */
@@ -144,4 +253,18 @@ async function setValue(key, value) {
   cache = null;
 }
 
-module.exports = { getAll, stampsPerReward, setValue, shopConfig, deliveryFeeFor, taxRateFor, taxOn, nowWIB };
+module.exports = {
+  getAll,
+  stampsPerReward,
+  setValue,
+  shopConfig,
+  deliveryFeeFor,
+  taxRateFor,
+  taxOn,
+  nowWIB,
+  dateKeyWIB,
+  weekdayOf,
+  deliveryRules,
+  isDeliveryDateOpen,
+  openDeliveryDates,
+};

@@ -139,7 +139,16 @@ function slugify(name) {
     .replace(/(^-|-$)/g, '');
 }
 
+// The shop's own WhatsApp, as shown in the storefront footer. It lives here so
+// the footer and the "contact the admin" links can't drift apart: a superadmin
+// who fills in the Pengaturan Toko field overrides it, and until then this is
+// what every "hubungi admin" button uses — the page must never be a dead end.
+const SHOP_WHATSAPP_FALLBACK = '6281245684104';
+const SHOP_INSTAGRAM = 'pecupchu';
+
 module.exports = {
+  SHOP_WHATSAPP_FALLBACK,
+  SHOP_INSTAGRAM,
   formatRupiah,
   escapeHtml,
   escapeAttr,

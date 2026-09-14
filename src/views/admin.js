@@ -17,6 +17,23 @@ const {
 } = require('../utils');
 const { tierStyle: tierStyleFor } = require('../loyalty');
 const { discountLines, taxLine, freeCupValue } = require('../orderMoney');
+const permissions = require('../permissions');
+
+// What the sidebar needs to know about who is looking at the page: their name,
+// whether they're the owner, and the exact set of things they're allowed to
+// open — so the menu never offers a page that would turn them away.
+function sidebarProps(admin) {
+  return {
+    isSuperadmin: Boolean(admin && admin.role === 'superadmin'),
+    username: (admin && admin.username) || 'Admin',
+    can: new Set(permissions.permissionsFor(admin)),
+  };
+}
+
+/** Does the admin looking at this page hold this permission? */
+function can(admin, key) {
+  return permissions.has(admin, key);
+}
 
 function renderLogin({ error }) {
   const body = `
@@ -202,7 +219,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('produk', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px;">
@@ -505,8 +522,22 @@ function photoReorder(items) {
     </script>`;
 }
 
-function renderProdukForm({ product, error, categories = [], admin, pendingVideos = [] }) {
+function renderProdukForm({
+  product,
+  error,
+  categories = [],
+  admin,
+  pendingVideos = [],
+  // The stockroom list is passed only when this admin may manage it; empty
+  // means the packaging section isn't drawn at all.
+  inventoryItems = [],
+  materials = [],
+}) {
   const isEdit = Boolean(product && product.id);
+  const materialCostPerCup = materials.reduce(
+    (sum, m) => sum + Number(m.qty || 0) * (Number(m.unit_cost) || 0),
+    0
+  );
   const p = product || {
     name: '',
     description: '',
@@ -544,7 +575,7 @@ function renderProdukForm({ product, error, categories = [], admin, pendingVideo
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('produk', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('produk', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <form method="post" action="${isEdit ? `/admin/produk/${p.id}/edit` : '/admin/produk/tambah'}" enctype="multipart/form-data" data-warn-unsaved style="margin-top:20px;">
@@ -626,6 +657,43 @@ function renderProdukForm({ product, error, categories = [], admin, pendingVideo
               </div>
             </div>
           </div>
+          ${
+            // What one cup of this product uses up. Only shown to an admin who
+            // is allowed to manage the stockroom — for everyone else the
+            // product form is unchanged, and the hidden field below keeps their
+            // save from wiping a list they were never shown.
+            inventoryItems.length
+              ? `<div style="background:var(--surface-2);border-radius:12px;padding:16px 18px;margin-bottom:20px;">
+            <div style="font-size:14px;font-weight:800;margin-bottom:4px;">Bahan &amp; Kemasan per Cup</div>
+            <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:14px;">
+              Centang apa saja yang terpakai untuk <strong>satu</strong> cup produk ini, lalu isi jumlahnya.
+              Setiap kali produk ini terjual, stok bahannya otomatis berkurang segitu.
+            </p>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              ${inventoryItems
+                .map((item) => {
+                  const chosen = materials.find((m) => Number(m.item_id) === Number(item.id));
+                  return `<label style="display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap;">
+                  <input type="checkbox" name="bahan" value="${escapeAttr(item.id)}" ${chosen ? 'checked' : ''} style="width:18px;height:18px;">
+                  <span style="flex:1 1 160px;min-width:0;font-weight:600;">${escapeHtml(item.name)}
+                    <span style="color:var(--text-muted);font-weight:500;"> · sisa ${item.stock} ${escapeHtml(item.unit)} · ${formatRupiah(item.unitCost)}/${escapeHtml(item.unit)}</span>
+                  </span>
+                  <input type="number" name="bahanQty_${escapeAttr(item.id)}" min="1" value="${escapeAttr(
+                    chosen ? chosen.qty : 1
+                  )}" style="width:74px;padding:7px 8px;font-size:12.5px;text-align:center;border-radius:8px;"
+                    aria-label="Jumlah ${escapeAttr(item.name)} per cup">
+                </label>`;
+                })
+                .join('')}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:12px;">
+              Modal kemasan per cup saat ini: <strong>${formatRupiah(materialCostPerCup)}</strong>.
+              Belum ada di daftar? <a href="/admin/inventaris">Tambahkan di Stok Bahan</a>.
+            </div>
+          </div>`
+              : '<input type="hidden" name="bahanTidakDitampilkan" value="1">'
+          }
+
           <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:var(--surface-2);border-radius:12px;">
             <div>
               <div style="font-size:14px;font-weight:700;">Tampilkan di Toko</div>
@@ -952,7 +1020,19 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
                   ${kirim.note ? `<div style="font-size:11.5px;color:${kirim.tone};opacity:0.85;">${escapeHtml(kirim.note)}</div>` : ''}
                 </div>`,
               },
-              { label: 'Total', html: `<span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>` },
+              {
+                label: 'Total',
+                html: `<div style="text-align:right;">
+                  <span class="tnum" style="font-size:13px;font-weight:700;">${formatRupiah(o.total)}</span>
+                  ${
+                    // Money owed has to be visible from the list — an unpaid
+                    // order you have to open to notice is one you forget.
+                    o.paid || o.status === 'dibatalkan'
+                      ? ''
+                      : `<div style="font-size:10.5px;font-weight:800;color:#a13f3f;margin-top:3px;white-space:nowrap;">BELUM DIBAYAR</div>`
+                  }
+                </div>`,
+              },
               {
                 label: 'Status',
                 html: `<span style="font-size:11.5px;font-weight:700;color:${status.color};background:${status.bg};padding:5px 11px;border-radius:99px;white-space:nowrap;">${status.label}</span>`,
@@ -981,7 +1061,7 @@ function renderPesananList({ orders, stats, admin, view = {}, todayKey, activePr
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pesanan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
       <div>
@@ -1174,7 +1254,7 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pesanan', sidebarProps(admin))}
   <main class="admin-main" id="konten" style="max-width:900px;">
     ${backButton('/admin/pesanan', 'Kembali ke Pesanan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;"><a href="/admin/pesanan">Admin / Pesanan</a> / ${escapeHtml(order.order_number)}</div>
@@ -1287,7 +1367,33 @@ function renderPesananDetail({ order, items, proofUrl, admin, loyalty = null, fl
             : ''
         }
 
-        <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
+        ${
+          // Payment is its own line, because it moves independently of the
+          // cups: an order can be delivered and still unpaid, and an unpaid
+          // one must be impossible to overlook on the page that shows it.
+          order.paid
+            ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--green-soft);border-radius:11px;padding:13px 15px;margin-top:18px;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--green-dark)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                <span style="font-size:13.5px;font-weight:700;color:var(--green-dark);">Sudah dibayar${
+                  order.paid_at ? ` — ${escapeHtml(formatDateID(order.paid_at))}` : ''
+                }</span>
+                <form method="post" action="/admin/pesanan/${order.id}/bayar" style="margin-left:auto;"
+                      data-confirm="Tandai pesanan ini BELUM dibayar?">
+                  <input type="hidden" name="paid" value="0">
+                  <button type="submit" style="background:none;border:none;font-size:12px;font-weight:700;color:var(--green-dark);cursor:pointer;text-decoration:underline;">Batalkan tanda ini</button>
+                </form>
+              </div>`
+            : `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f6dcdc;border-radius:11px;padding:13px 15px;margin-top:18px;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#a13f3f" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>
+                <span style="font-size:13.5px;font-weight:800;color:#a13f3f;">Belum dibayar — ${formatRupiah(order.total)}</span>
+                <form method="post" action="/admin/pesanan/${order.id}/bayar" style="margin-left:auto;">
+                  <input type="hidden" name="paid" value="1">
+                  <button class="btn-primary" type="submit" style="padding:9px 16px;border-radius:9px;font-size:12.5px;font-weight:700;">Tandai Sudah Dibayar</button>
+                </form>
+              </div>`
+        }
+
+        <form method="post" action="/admin/pesanan/${order.id}/status" style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
           <select name="status" style="flex:1 1 180px;">
             ${ORDER_STATUSES.map((s) => `<option value="${s.value}" ${order.status === s.value ? 'selected' : ''}>${s.label}</option>`).join('')}
           </select>
@@ -1324,6 +1430,151 @@ document.addEventListener('error', function(e){
   return page({ title: `${order.order_number} — Admin Pecup`, bodyHtml: body, noindex: true });
 }
 
+// Signed in, but this page isn't theirs. Says which allowance is missing and
+// sends them somewhere they can actually go — a bare 403 with a link back to
+// "Produk" was a dead end for an account that can't open Produk either.
+function renderForbidden({ admin, permissionLabel = '', backHref = '/admin' }) {
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('', sidebarProps(admin))}
+  <main class="admin-main" id="konten">
+    <div class="card" style="max-width:560px;margin-top:40px;">
+      <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">403</div>
+      <h1 style="font-size:22px;font-weight:800;margin-bottom:10px;">Halaman ini di luar izinmu</h1>
+      <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;margin-bottom:6px;">
+        Akun <strong>${escapeHtml(admin ? admin.username : '')}</strong> belum punya izin
+        ${permissionLabel ? `<strong>&ldquo;${escapeHtml(permissionLabel)}&rdquo;</strong>` : 'untuk bagian ini'}.
+      </p>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.75;margin-bottom:20px;">
+        Kalau memang butuh, minta superadmin membukanya lewat <em>Kelola Admin → Atur Izin</em>.
+      </p>
+      <a class="btn-primary" href="${escapeAttr(backHref)}" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;display:inline-block;">Kembali</a>
+    </div>
+  </main>
+</div>`;
+  return page({ title: 'Tidak diizinkan — Admin Pecup', bodyHtml: body, noindex: true });
+}
+
+// One page: which boxes are ticked for one admin, and what each one means.
+function renderAdminIzin({ admin, target, catalog, presets, granted, grantable, flash = '', error = '' }) {
+  const grantedSet = new Set(granted);
+  const grantableSet = new Set(grantable);
+
+  const groups = catalog
+    .map((group) => {
+      const rows = group.items
+        .map((item) => {
+          const on = grantedSet.has(item.key);
+          // A permission the editor doesn't hold themselves is shown, but
+          // frozen: they can see what the account has without being able to
+          // hand it out or take it away.
+          const locked = !grantableSet.has(item.key);
+          return `
+        <label style="display:flex;gap:12px;align-items:flex-start;padding:13px 0;border-top:1px solid var(--border);${
+          locked ? 'opacity:0.55;' : 'cursor:pointer;'
+        }">
+          <input type="checkbox" name="izin" value="${escapeAttr(item.key)}" ${on ? 'checked' : ''} ${
+            locked ? 'disabled' : ''
+          } style="width:19px;height:19px;margin-top:2px;flex-shrink:0;">
+          <span style="min-width:0;">
+            <span style="display:block;font-size:13.5px;font-weight:700;">${escapeHtml(item.label)}${
+              item.sensitive ? ' <span style="font-size:11px;color:#a15a1f;font-weight:800;">· hati-hati</span>' : ''
+            }</span>
+            <span style="display:block;font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:3px;">${escapeHtml(
+              item.hint
+            )}</span>
+            ${locked ? '<span style="display:block;font-size:11.5px;color:#a15a1f;margin-top:4px;">Kamu sendiri belum punya izin ini, jadi tidak bisa memberikannya.</span>' : ''}
+          </span>
+        </label>`;
+        })
+        .join('');
+      return `
+      <div class="card" style="margin-bottom:18px;">
+        <h3 style="font-size:14px;font-weight:800;letter-spacing:0.3px;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px;">${escapeHtml(
+          group.group
+        )}</h3>
+        ${rows}
+      </div>`;
+    })
+    .join('');
+
+  const presetButtons = presets
+    .map(
+      (p) => `<button type="button" class="btn-outline" data-preset="${escapeAttr(p.keys.join(' '))}"
+        title="${escapeAttr(p.hint)}"
+        style="padding:9px 15px;border-radius:10px;font-size:12.5px;font-weight:700;">${escapeHtml(p.label)}</button>`
+    )
+    .join('');
+
+  const isSuper = target.role === 'superadmin';
+  const body = `
+<div class="admin-shell">
+  ${adminSidebar('akun', sidebarProps(admin))}
+  <main class="admin-main" id="konten" style="max-width:760px;">
+    ${backButton('/admin/akun', 'Kembali ke Kelola Admin')}
+    <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kelola Admin / Izin</div>
+    <h1 style="font-size:24px;font-weight:800;margin-bottom:6px;">Izin untuk ${escapeHtml(target.username)}</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);line-height:1.75;margin-bottom:20px;max-width:620px;">
+      Centang persis apa yang boleh dia buka. Yang tidak dicentang bukan sekadar disembunyikan dari menu —
+      halamannya benar-benar ditolak, walaupun alamatnya diketik langsung.
+    </p>
+
+    ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
+    ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
+
+    ${
+      isSuper
+        ? `<div class="card" style="background:var(--orange-soft);border-color:var(--orange-mid);">
+            <h3 style="font-size:15px;font-weight:800;color:#7a4a1f;margin-bottom:6px;">${escapeHtml(
+              target.username
+            )} adalah superadmin</h3>
+            <p style="font-size:13px;color:#7a4a1f;line-height:1.75;margin:0;">
+              Superadmin selalu punya seluruh izin, dan itu tidak bisa dikurangi di sini — supaya pemilik toko
+              tidak pernah bisa terkunci dari tokonya sendiri. Kalau orang ini seharusnya dibatasi, ubah dulu
+              perannya menjadi Admin biasa di halaman Kelola Admin.
+            </p>
+          </div>`
+        : `<form method="post" action="/admin/akun/${target.id}/izin" data-warn-unsaved>
+      <div class="card" style="margin-bottom:18px;">
+        <h3 style="font-size:14px;font-weight:800;margin-bottom:4px;">Mulai dari contoh</h3>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:14px;">
+          Ini hanya mengisi centang di bawah — silakan ubah lagi sebelum disimpan.
+        </p>
+        <div style="display:flex;gap:9px;flex-wrap:wrap;">${presetButtons}</div>
+      </div>
+
+      ${groups}
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:40px;">
+        <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Izin</button>
+        <a class="btn-outline" href="/admin/akun" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;">Batal</a>
+        <span style="font-size:12.5px;color:var(--text-muted);">Perubahan berlaku begitu dia memuat halaman berikutnya.</span>
+      </div>
+    </form>
+    <script>
+    // Presets only tick boxes; nothing is saved until the form is submitted.
+    (function(){
+      var form = document.querySelector('form[action$="/izin"]');
+      if(!form) return;
+      form.addEventListener('click', function(e){
+        var btn = e.target.closest && e.target.closest('[data-preset]');
+        if(!btn) return;
+        e.preventDefault();
+        var wanted = (btn.getAttribute('data-preset') || '').split(' ').filter(Boolean);
+        var boxes = form.querySelectorAll('input[name="izin"]');
+        for(var i = 0; i < boxes.length; i++){
+          if(boxes[i].disabled) continue;
+          boxes[i].checked = wanted.indexOf(boxes[i].value) >= 0;
+        }
+      });
+    })();
+    </script>`
+    }
+  </main>
+</div>`;
+  return page({ title: `Izin ${target.username} — Admin Pecup`, bodyHtml: body, noindex: true });
+}
+
 function renderAdminList({ admins, admin, error, flash = '' }) {
   const currentAdminId = admin.adminId;
   const rows = admins
@@ -1341,6 +1592,16 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
           }</span>`,
         },
         { label: 'Peran', html: roleBadge },
+        {
+          label: 'Izin',
+          html:
+            a.role === 'superadmin'
+              ? `<span style="font-size:12px;color:var(--text-muted);">Semua (superadmin)</span>`
+              : `<a href="/admin/akun/${a.id}/izin" style="font-size:12.5px;font-weight:700;color:var(--green-dark);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M2 12h4M18 12h4M12 2v4M12 18v4"/></svg>
+                  ${Number(a.permissions ? a.permissions.length : 0)} izin · atur
+                </a>`,
+        },
         { label: 'Dibuat', html: `<span style="font-size:12.5px;color:var(--text-muted);">${formatDateID(a.created_at)}</span>` },
         {
           label: 'Password',
@@ -1368,7 +1629,7 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('akun', { isSuperadmin: true, username: admin.username })}
+  ${adminSidebar('akun', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kelola Admin</div>
@@ -1386,17 +1647,23 @@ function renderAdminList({ admins, admin, error, flash = '' }) {
           <label>Peran <span class="req">*</span></label>
           <select name="role">
             <option value="admin">Admin</option>
-            <option value="superadmin">Superadmin</option>
+            ${
+              // Only the owner may mint another owner. An admin who merely has
+              // "kelola akun" would otherwise be one dropdown away from
+              // handing themselves the whole shop.
+              admin.role === 'superadmin' ? '<option value="superadmin">Superadmin</option>' : ''
+            }
           </select>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Admin baru dibuat tanpa izin apa pun — kamu akan langsung diantar ke halaman izinnya.</div>
         </div>
         <button class="btn-primary" type="submit" style="padding:13px 24px;border-radius:11px;font-size:14px;font-weight:700;white-space:nowrap;">Tambah Admin</button>
       </form>
     </div>
 
     ${admTable({
-      cols: '1.4fr 0.9fr 1fr 1.9fr 0.5fr',
-      minWidth: 760,
-      head: ['USERNAME', 'PERAN', 'DIBUAT', 'GANTI PASSWORD', ''],
+      cols: '1.3fr 0.8fr 1fr 0.9fr 1.7fr 0.5fr',
+      minWidth: 880,
+      head: ['USERNAME', 'PERAN', 'IZIN', 'DIBUAT', 'GANTI PASSWORD', ''],
       rows,
       note:
         'Password disimpan dalam bentuk hash (scrypt + salt acak) — tidak pernah disimpan apa adanya, dan tidak bisa dilihat lagi oleh siapa pun termasuk superadmin. Kalau admin lupa password, set yang baru di sini lalu beri tahu orangnya.',
@@ -1523,7 +1790,7 @@ function renderPelangganList({
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pelanggan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Cari Pelanggan</div>
@@ -1583,7 +1850,7 @@ function renderPelangganList({
           : ''
       }
       ${
-        admin.role === 'superadmin'
+        can(admin, 'pelanggan.unduh')
           ? `<a class="btn-outline" href="/admin/pelanggan/unduh" style="padding:13px 20px;border-radius:11px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
               Unduh CSV
@@ -1622,8 +1889,8 @@ const STAMP_STATUS_LABELS = {
 };
 
 // One customer: profile, loyalty state, stamp history and order history.
-// `canEdit` is the superadmin flag — everyone else sees the same page in
-// read-only form.
+// `canEdit` (pelanggan.ubah) and `canStamp` (pelanggan.stempel) decide what is
+// editable here; an admin with neither still sees the whole page, read-only.
 function renderPelangganDetail({
   customer,
   loyalty,
@@ -1633,7 +1900,11 @@ function renderPelangganDetail({
   orders = [],
   stamps = [],
   admin,
+  // Two separate allowances now, not one "is the boss" flag: editing a
+  // customer's details and handing out stamps are different jobs and can be
+  // given to different people.
   canEdit,
+  canStamp = canEdit,
   tiersEnabled,
   flash = '',
   error = '',
@@ -1711,7 +1982,7 @@ function renderPelangganDetail({
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pelanggan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;"><a href="/admin/pelanggan">Admin / Cari Pelanggan</a> / ${escapeHtml(customer.name)}</div>
@@ -1814,13 +2085,13 @@ function renderPelangganDetail({
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
             <h3 style="font-size:15px;font-weight:800;">Kartu Stempel</h3>
             ${
-              canEdit
+              canStamp
                 ? ''
-                : `<span style="font-size:11px;font-weight:700;color:var(--text-muted);background:var(--surface-2);padding:4px 10px;border-radius:99px;">Hanya superadmin yang bisa mengubah</span>`
+                : `<span style="font-size:11px;font-weight:700;color:var(--text-muted);background:var(--surface-2);padding:4px 10px;border-radius:99px;">Kamu tidak punya izin mengubah stempel</span>`
             }
           </div>
           ${
-            canEdit
+            canStamp
               ? `<form method="post" action="/admin/pelanggan/${customer.id}/stempel" style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-top:12px;">
                   <div style="margin:0;flex:0 1 150px;">
                     <label style="margin-bottom:5px;">Jumlah stempel</label>
@@ -1835,7 +2106,7 @@ function renderPelangganDetail({
                       </form>`
                     : ''
                 }
-                <p style="font-size:12px;color:var(--text-muted);line-height:1.7;margin:14px 0 0;">Stempel bertambah otomatis tiap pesanan berstatus <strong>Selesai</strong>. Perubahan manual di sini tercatat di log aktivitas.</p>`
+                <p style="font-size:12px;color:var(--text-muted);line-height:1.7;margin:14px 0 0;">Stempel bertambah <strong>otomatis</strong> begitu pesanan berstatus <strong>Selesai</strong> — <strong>1 stempel per cup</strong>, bukan per pesanan. Jadi belanja 5 cup sekaligus langsung dapat 5 stempel. Perubahan manual di sini tercatat di log aktivitas.</p>`
               : ''
           }
           <h4 style="font-size:13px;font-weight:800;color:var(--text-muted);letter-spacing:0.3px;margin:20px 0 6px;">RIWAYAT STEMPEL</h4>
@@ -1848,9 +2119,22 @@ function renderPelangganDetail({
           <div style="padding:0 2px 14px;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
               <h3 style="font-size:15px;font-weight:800;">Riwayat Pesanan</h3>
-              <span style="font-size:12px;color:var(--text-muted);">${
-                pagination ? `${pagination.total} pesanan` : `${orders.length} pesanan`
-              }</span>
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:12px;color:var(--text-muted);">${
+                  pagination ? `${pagination.total} pesanan` : `${orders.length} pesanan`
+                }</span>
+                ${
+                  // The list below pages, but a customer with a long history is
+                  // usually being looked at to DO something with those orders —
+                  // so this opens them in the full order screen, already
+                  // filtered to this person.
+                  can(admin, 'pesanan.lihat')
+                    ? `<a href="/admin/pesanan?q=${encodeURIComponent(
+                        String(customer.whatsapp || '').replace(/\D/g, '')
+                      )}" style="font-size:12.5px;font-weight:700;color:var(--green-dark);white-space:nowrap;">Lihat semua di daftar pesanan &rarr;</a>`
+                    : ''
+                }
+              </div>
             </div>
             <div class="chip-row" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;">${rangeChips(
               `/admin/pelanggan/${customer.id}`,
@@ -1921,20 +2205,25 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
           <div class="tier-field">
             <label>Diskon (%)</label>
             <input type="number" name="tierDiscount" value="${t.discountPercent}" min="0" max="100" required>
-            <span class="tier-hint">0 berarti tanpa diskon.</span>
+            <span class="tier-hint">Berlaku <strong>setiap kali belanja</strong>, otomatis, tanpa batas berapa kali sebulan. 0 berarti tanpa diskon.</span>
           </div>
           <div class="tier-field">
             <label>Benefit tambahan</label>
             <div class="tier-perks">
               <label class="tier-check">
                 <input type="checkbox" name="tierWeekly" value="${i}" ${t.weeklyFreeCup ? 'checked' : ''}>
-                Diskon mingguan
+                1 cup gratis per minggu
               </label>
               <label class="tier-check">
                 <input type="checkbox" name="tierBirthday" value="${i}" ${t.birthdayFreeCup ? 'checked' : ''}>
-                Gratis ulang tahun
+                1 cup gratis saat ulang tahun
               </label>
             </div>
+            <span class="tier-hint" style="margin-top:8px;">
+              Beda dengan diskon di atas: diskon berlaku tiap belanja, sedangkan dua benefit ini
+              <strong>sekali per minggu</strong> dan <strong>sekali per tahun</strong> — cup termurah di
+              keranjang yang digratiskan, dan hangus kalau tidak dipakai.
+            </span>
           </div>
         </div>
       </div>`;
@@ -1960,8 +2249,8 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
         <span style="color:var(--text-muted);text-align:right;">${
           [
             t.discountPercent ? `diskon ${t.discountPercent}%` : '',
-            t.weeklyFreeCup ? 'diskon mingguan' : '',
-            t.birthdayFreeCup ? 'gratis ulang tahun' : '',
+            t.weeklyFreeCup ? '1 cup gratis/minggu' : '',
+            t.birthdayFreeCup ? '1 cup gratis saat ulang tahun' : '',
           ]
             .filter(Boolean)
             .join(' · ') || 'tanpa benefit tambahan'
@@ -2013,7 +2302,7 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
   }
 </style>
 <div class="admin-shell">
-  ${adminSidebar('loyalitas', { isSuperadmin: true, username: admin.username })}
+  ${adminSidebar('loyalitas', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Program Stempel</div>
@@ -2032,7 +2321,12 @@ function renderLoyalitas({ admin, perReward, expiryMonths, tierConfig, stats, fl
 
     <form method="post" action="/admin/pengaturan/stempel" class="card" data-warn-unsaved style="padding:22px;margin-bottom:20px;">
       <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Aturan Stempel</h2>
-      <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">Satu stempel diberikan tiap pesanan berstatus <strong>Selesai</strong>.</p>
+      <p style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">
+        <strong>1 stempel untuk tiap cup</strong> (bukan tiap pesanan), diberikan otomatis begitu pesanan
+        berstatus <strong>Selesai</strong> — tidak perlu diberikan manual. Beli 5 cup sekaligus = 5 stempel.
+        Cup gratis ikut dihitung. Kalau pesanan dibatalkan atau dikembalikan ke status lain,
+        stempelnya ditarik lagi selama belum ditukar.
+      </p>
       <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
         <div style="margin:0;flex:0 1 220px;">
           <label style="margin-bottom:5px;">Stempel untuk 1 cup gratis</label>
@@ -2140,13 +2434,79 @@ function pageLinks(buildUrl, current, totalPages) {
 }
 
 // Finance view: what was sold, what was given away, and what actually came in.
-function renderLaporan({ admin, report, view, activePreset, todayKey }) {
+function renderLaporan({ admin, report, view, activePreset, todayKey, showProfit = false, expenses = null }) {
+  // Laba kotor  = uang masuk − PPN (bukan milik toko) − modal kemasan
+  // Laba bersih = laba kotor − seluruh pengeluaran pada rentang yang sama
+  const spend = expenses ? expenses.total : 0;
+  const grossProfit = Number(report.grossProfit) || 0;
+  const netProfit = grossProfit - spend;
+  const profitBlock =
+    showProfit && expenses
+      ? `
+    <div class="card" style="margin-bottom:22px;padding:0;overflow:hidden;">
+      <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
+        <h3 style="font-size:16px;font-weight:800;margin-bottom:2px;">Untung &amp; Rugi</h3>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin:0;">
+          Rentang yang sama dengan angka di atas. Hanya admin dengan izin &ldquo;lihat laba&rdquo; yang melihat bagian ini.
+        </p>
+      </div>
+      <div style="padding:6px 22px 18px;">
+        ${[
+          ['Uang masuk', report.net, 'var(--text)', 'Total yang dibayar pembeli'],
+          ['PPN dititipkan', -Number(report.tax || 0), '#a15a1f', 'Bukan pendapatan toko — untuk disetor'],
+          ['Modal kemasan (HPP)', -Number(report.cogs || 0), '#a15a1f', 'Cup, tutup, sendok, dll. yang ikut terjual'],
+        ]
+          .map(
+            ([label, value, color, hint]) => `
+          <div style="display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:13.5px;">${label}<span style="display:block;font-size:11.5px;color:var(--text-muted);margin-top:2px;">${hint}</span></span>
+            <strong class="tnum" style="color:${color};white-space:nowrap;">${value < 0 ? '− ' : ''}${formatRupiah(
+              Math.abs(value)
+            )}</strong>
+          </div>`
+          )
+          .join('')}
+        <div style="display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--border);background:var(--green-soft);margin:0 -22px;padding-left:22px;padding-right:22px;">
+          <span style="font-size:14px;font-weight:800;color:var(--green-dark);">Laba kotor</span>
+          <strong class="tnum" style="font-size:15px;color:var(--green-dark);white-space:nowrap;">${formatRupiah(
+            grossProfit
+          )}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--border);">
+          <span style="font-size:13.5px;">Pengeluaran<span style="display:block;font-size:11.5px;color:var(--text-muted);margin-top:2px;">${
+            expenses.count
+          } catatan · <a href="/admin/pengeluaran?dari=${escapeAttr(view.dari || '')}&amp;sampai=${escapeAttr(
+          view.sampai || ''
+        )}">lihat rinciannya</a></span></span>
+          <strong class="tnum" style="color:#a13f3f;white-space:nowrap;">− ${formatRupiah(spend)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;gap:14px;padding:16px 22px;margin:0 -22px -18px;background:${
+          netProfit >= 0 ? 'var(--green-soft)' : '#f6dcdc'
+        };">
+          <span style="font-size:15px;font-weight:800;color:${netProfit >= 0 ? 'var(--green-dark)' : '#a13f3f'};">Laba bersih</span>
+          <strong class="tnum" style="font-size:19px;color:${
+            netProfit >= 0 ? 'var(--green-dark)' : '#a13f3f'
+          };white-space:nowrap;">${netProfit < 0 ? '− ' : ''}${formatRupiah(Math.abs(netProfit))}</strong>
+        </div>
+      </div>
+    </div>`
+      : '';
   const bigStat = (label, value, sub, accent) => `
     <div class="card" style="padding:20px 22px;border-left:4px solid ${accent};">
       <div style="font-size:12px;font-weight:700;color:var(--text-muted);letter-spacing:0.4px;text-transform:uppercase;">${label}</div>
       <div class="tnum" style="font-size:25px;font-weight:800;margin-top:8px;letter-spacing:-0.5px;">${value}</div>
       ${sub ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">${sub}</div>` : ''}
     </div>`;
+
+  // Expenses for one day/month of the table. The map is keyed by 'YYYY-MM-DD',
+  // so a monthly grouping sums the days whose key starts with that month.
+  const dayExpense = (periode) => {
+    if (!expenses) return 0;
+    if (view.kelompok !== 'bulan') return expenses.byDay.get(periode) || 0;
+    let total = 0;
+    for (const [day, amount] of expenses.byDay) if (String(day).startsWith(periode)) total += amount;
+    return total;
+  };
 
   // Simple inline bar so the trend is visible without a charting library.
   const maxNet = Math.max(1, ...report.series.map((s) => s.net));
@@ -2178,6 +2538,23 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
           <span class="tnum" style="font-size:13px;font-weight:800;color:var(--green-dark);white-space:nowrap;">${formatRupiah(s.net)}</span>
         </div>`,
             },
+            // Per-day profit, and only for the admins allowed to see margins.
+            ...(showProfit
+              ? [
+                  {
+                    label: 'Laba kotor',
+                    html: `<span class="tnum" style="font-size:13px;font-weight:700;color:${
+                      s.grossProfit >= 0 ? 'var(--green-dark)' : '#a13f3f'
+                    };white-space:nowrap;">${s.grossProfit < 0 ? '− ' : ''}${formatRupiah(Math.abs(s.grossProfit))}</span>`,
+                  },
+                  {
+                    label: 'Pengeluaran',
+                    html: `<span class="tnum" style="font-size:13px;color:${
+                      dayExpense(s.periode) ? '#a13f3f' : 'var(--text-muted)'
+                    };white-space:nowrap;">${dayExpense(s.periode) ? '− ' + formatRupiah(dayExpense(s.periode)) : '—'}</span>`,
+                  },
+                ]
+              : []),
           ]);
         })
         .join('')
@@ -2212,7 +2589,7 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('laporan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('laporan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
       <div>
@@ -2268,6 +2645,8 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
       ${bigStat('Rata-rata / Pesanan', formatRupiah(report.averageOrder), `${report.cups} cup terjual`, 'oklch(60% 0.12 245)')}
     </div>
 
+    ${profitBlock}
+
     ${
       report.discount > 0 || report.delivery > 0 || report.tax > 0
         ? `<div class="card" style="padding:18px 20px;margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-mid);">
@@ -2301,9 +2680,12 @@ function renderLaporan({ admin, report, view, activePreset, todayKey }) {
 
     <div style="margin-bottom:24px;">
       ${admTable({
-        cols: '1.1fr 0.6fr 1fr 1fr 0.9fr 1.4fr',
-        minWidth: 780,
-        head: [view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL', 'PESANAN', 'KOTOR', 'POTONGAN', 'ONGKOS', 'UANG MASUK'],
+        cols: showProfit ? '1.1fr 0.6fr 1fr 1fr 0.9fr 1.4fr 1fr 1fr' : '1.1fr 0.6fr 1fr 1fr 0.9fr 1.4fr',
+        minWidth: showProfit ? 1020 : 780,
+        head: [
+          view.kelompok === 'bulan' ? 'BULAN' : 'TANGGAL', 'PESANAN', 'KOTOR', 'POTONGAN', 'ONGKOS', 'UANG MASUK',
+          ...(showProfit ? ['LABA KOTOR', 'PENGELUARAN'] : []),
+        ],
         rows: seriesRows,
         empty: 'Tidak ada penjualan pada rentang ini.',
       })}
@@ -2382,7 +2764,7 @@ function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('dashboard', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('dashboard', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;">Admin / Ringkasan</div>
     <h1 style="font-size:24px;font-weight:800;margin-bottom:4px;">Halo, ${escapeHtml(admin.username)}</h1>
@@ -2398,14 +2780,34 @@ function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop
     }
 
     <div class="grid-4" style="gap:16px;margin-bottom:26px;">
-      ${tile('Pesanan Hari Ini', today.total, `${today.pending} menunggu verifikasi`, 'var(--orange)', '/admin/pesanan?tampilan=hari-ini')}
-      ${tile('Uang Masuk Hari Ini', formatRupiah(today.revenue), 'dari pesanan selesai', 'var(--green)', '/admin/laporan?rentang=hari-ini')}
-      ${tile('Uang Masuk Bulan Ini', formatRupiah(revenue.month), `${revenue.monthOrders} pesanan selesai`, 'oklch(60% 0.12 245)', '/admin/laporan?rentang=bulan-ini')}
-      ${tile('Perlu Restock', lowStock.length, 'produk menipis atau habis', lowStock.length ? '#c94f4f' : 'var(--text-muted)', '/admin/produk?status=menipis')}
+      ${
+        can(admin, 'pesanan.lihat')
+          ? tile('Pesanan Hari Ini', today.total, `${today.pending} menunggu verifikasi`, 'var(--orange)', '/admin/pesanan?tampilan=hari-ini')
+          : ''
+      }
+      ${
+        // Takings are a figure not every admin should see: the summary page is
+        // open to all of them, so these two tiles follow the same permission as
+        // the sales report they link to.
+        can(admin, 'laporan.lihat')
+          ? tile('Uang Masuk Hari Ini', formatRupiah(today.revenue), 'dari pesanan selesai', 'var(--green)', '/admin/laporan?rentang=hari-ini') +
+            tile('Uang Masuk Bulan Ini', formatRupiah(revenue.month), `${revenue.monthOrders} pesanan selesai`, 'oklch(60% 0.12 245)', '/admin/laporan?rentang=bulan-ini')
+          : ''
+      }
+      ${
+        can(admin, 'produk.lihat')
+          ? tile('Perlu Restock', lowStock.length, 'produk menipis atau habis', lowStock.length ? '#c94f4f' : 'var(--text-muted)', '/admin/produk?status=menipis')
+          : ''
+      }
     </div>
 
     <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
-      <div style="flex:1 1 380px;min-width:0;">
+      ${
+        // Each panel follows the permission for the thing it shows, so a
+        // limited account gets a summary of its own work rather than a page
+        // of links that turn it away.
+        can(admin, 'pesanan.lihat')
+          ? `<div style="flex:1 1 380px;min-width:0;">
         <div class="adm-table">
           <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;">
             <h2 style="font-size:15px;font-weight:800;">Perlu Ditangani</h2>
@@ -2413,24 +2815,34 @@ function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop
           </div>
           ${orderList}
         </div>
-      </div>
+      </div>`
+          : ''
+      }
 
       <div style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:20px;">
-        <div class="adm-table">
+        ${
+          can(admin, 'produk.lihat')
+            ? `<div class="adm-table">
           <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;">
             <h2 style="font-size:15px;font-weight:800;">Stok Menipis</h2>
-            <a href="/admin/produk" style="font-size:12.5px;font-weight:700;">Kelola →</a>
+            ${can(admin, 'produk.kelola') ? '<a href="/admin/produk" style="font-size:12.5px;font-weight:700;">Kelola →</a>' : ''}
           </div>
           ${stockList}
-        </div>
+        </div>`
+            : ''
+        }
 
-        <div class="adm-table">
+        ${
+          can(admin, 'pesanan.lihat')
+            ? `<div class="adm-table">
           <div style="padding:16px 18px;">
             <h2 style="font-size:15px;font-weight:800;">Pengantaran Mendatang</h2>
             <p style="font-size:12px;color:var(--text-muted);margin-top:3px;">Yang harus disiapkan.</p>
           </div>
           ${upcomingList}
-        </div>
+        </div>`
+            : ''
+        }
       </div>
     </div>
   </main>
@@ -2440,10 +2852,19 @@ function renderDashboard({ admin, today, lowStock, pendingOrders, upcoming, shop
 
 // Shop-wide operating settings: open/closed, notice, minimum order, delivery
 // fee and the same-day cut-off.
-function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { proofDays: 90, logMonths: 12, lastRun: '' } }) {
+function renderPengaturan({
+  admin,
+  shop,
+  flash = '',
+  error = '',
+  retention = { proofDays: 90, logMonths: 12, lastRun: '' },
+  // The next few dates the current rules actually allow — shown back to the
+  // admin so a rule that accidentally closes the shop is obvious immediately.
+  nextOpenDates = [],
+}) {
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pengaturan', { isSuperadmin: true, username: admin.username })}
+  ${adminSidebar('pengaturan', sidebarProps(admin))}
   <main class="admin-main" id="konten" style="max-width:760px;">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pengaturan Toko</div>
@@ -2477,6 +2898,14 @@ function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { 
             shop.whatsapp ? formatWhatsapp(shop.whatsapp) : ''
           )}" placeholder="Contoh: 081234567890">
           <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Dipakai untuk tombol &ldquo;hubungi admin&rdquo; — misalnya saat pelanggan minta reset password.</div>
+          ${
+            shop.whatsapp
+              ? ''
+              : `<div class="flash flash-error" style="margin:10px 0 0;">
+                  Belum diisi. Halaman <strong>Lupa Password</strong> menyuruh pelanggan menghubungi admin,
+                  tapi tanpa nomor ini tombolnya tidak bisa ditampilkan — pelanggan jadi buntu di situ.
+                </div>`
+          }
         </div>
       </div>
 
@@ -2553,6 +2982,85 @@ function renderPengaturan({ admin, shop, flash = '', error = '' , retention = { 
             <input type="time" name="closeTime" value="${escapeAttr(shop.closeTime || '')}">
           </div>
         </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Hari Pengantaran (Pre-order)</h2>
+        <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:16px;">
+          Kalau Pecup hanya bikin di hari tertentu, centang harinya di sini. Tanggal di luar itu ditolak
+          saat pembeli mengirim pesanan — bukan cuma disembunyikan. Tidak dicentang sama sekali = buka tiap hari.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">
+          ${['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
+            .map(
+              (name, i) => `<label style="display:flex;align-items:center;gap:8px;margin:0;font-size:13px;font-weight:600;background:var(--surface-2);padding:9px 13px;border-radius:10px;cursor:pointer;">
+                <input type="checkbox" name="deliveryDays" value="${i}" ${
+                shop.delivery && shop.delivery.days.has(i) ? 'checked' : ''
+              } style="width:17px;height:17px;">
+                ${name}
+              </label>`
+            )
+            .join('')}
+        </div>
+
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
+            <label>Tanggal khusus ditutup</label>
+            <input type="text" name="deliveryClosedDates" value="${escapeAttr(
+              shop.delivery ? [...shop.delivery.closed].sort().join(', ') : ''
+            )}" placeholder="2026-12-25, 2027-01-01">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Libur/tanggal merah, walaupun harinya dicentang di atas.</div>
+          </div>
+          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
+            <label>Tanggal khusus dibuka</label>
+            <input type="text" name="deliveryOpenDates" value="${escapeAttr(
+              shop.delivery ? [...shop.delivery.open].sort().join(', ') : ''
+            )}" placeholder="2026-12-24">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Buka sekali saja, walaupun harinya tidak dicentang.</div>
+          </div>
+          <div class="field" style="flex:0 1 190px;margin-bottom:0;">
+            <label>Tampilkan berapa hari ke depan</label>
+            <input type="number" name="deliveryHorizon" min="1" max="60" value="${escapeAttr(
+              shop.delivery ? shop.delivery.horizon : 14
+            )}">
+          </div>
+        </div>
+
+        <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border);">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Cara pembeli memilih tanggal</div>
+          <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:12px;">
+            Keduanya pakai aturan hari yang sama — ini cuma soal tampilan, dan bisa ditukar kapan saja.
+          </p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:flex-start;gap:10px;margin:0;flex:1 1 240px;background:var(--surface-2);padding:13px 15px;border-radius:12px;cursor:pointer;">
+              <input type="radio" name="deliveryDateMode" value="kalender" ${
+                shop.deliveryMode !== 'pilihan' ? 'checked' : ''
+              } style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
+              <span>
+                <span style="display:block;font-size:13.5px;font-weight:700;">Kalender biasa</span>
+                <span style="display:block;font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:3px;">Pembeli pilih tanggal sendiri. Tanggal tutup ditolak saat dikirim.</span>
+              </span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;margin:0;flex:1 1 240px;background:var(--surface-2);padding:13px 15px;border-radius:12px;cursor:pointer;">
+              <input type="radio" name="deliveryDateMode" value="pilihan" ${
+                shop.deliveryMode === 'pilihan' ? 'checked' : ''
+              } style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
+              <span>
+                <span style="display:block;font-size:13.5px;font-weight:700;">Daftar tanggal tersedia</span>
+                <span style="display:block;font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:3px;">Hanya tanggal yang buka yang muncul, jadi tidak ada yang salah pilih.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        ${
+          nextOpenDates.length
+            ? `<div class="flash flash-ok" style="margin:18px 0 0;">Tanggal terdekat yang bisa dipesan: ${nextOpenDates
+                .slice(0, 5)
+                .map((d) => escapeHtml(formatShortDateID(d)))
+                .join(' · ')}</div>`
+            : `<div class="flash flash-error" style="margin:18px 0 0;">Dengan aturan ini tidak ada satu pun tanggal yang bisa dipesan — pembeli tidak akan bisa checkout.</div>`
+        }
       </div>
 
       <div class="card" style="margin-bottom:20px;">
@@ -2660,7 +3168,7 @@ function renderVoucher({ admin, vouchers: list, kinds, flash = '', error = '' })
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('voucher', { isSuperadmin: true, username: admin.username })}
+  ${adminSidebar('voucher', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Kode Promo</div>
@@ -2822,7 +3330,7 @@ function renderAdminLog({ logs, admin, filters = {}, page: current = 1, totalPag
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('log', { isSuperadmin: true, username: admin.username })}
+  ${adminSidebar('log', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/produk', 'Kembali ke Produk')}
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:20px;margin-top:20px;">
@@ -2968,7 +3476,7 @@ function renderResetSandi({ requests, admin, flash = '', issued = null, error = 
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('reset', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('reset', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
@@ -3032,7 +3540,7 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
     : '';
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pelanggan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pelanggan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/pelanggan', 'Kembali ke Cari Pelanggan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pelanggan / Tambah</div>
@@ -3087,10 +3595,10 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
         <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Perlu diisi kalau pelanggan ini mau dapat cup gratis ulang tahun.</div>
       </div>
       ${
-        // Handing out stamps is a superadmin's call — the same rule as the
-        // stamp controls on the customer page. A regular admin creates the
-        // account and it starts empty; the route ignores the field either way.
-        admin.role === 'superadmin'
+        // Handing out stamps needs the stamp permission — the same rule as the
+        // stamp controls on the customer page. Without it the account is created
+        // empty; the route ignores the field either way.
+        can(admin, 'pelanggan.stempel')
           ? `<div class="field" style="margin-bottom:8px;">
         <label>Stempel Awal</label>
         <input type="number" name="stamps" min="0" max="100" value="${escapeAttr(values.stamps || '0')}">
@@ -3108,14 +3616,79 @@ function renderPelangganTambah({ admin, errors = [], values = {}, created = null
 // Manual order entry: a sale that happened over WhatsApp or at the door, typed
 // in afterwards. It runs through the same create_order path as a web checkout,
 // so stock, stamps, tier perks and the books all move together.
-function renderPesananTambah({ admin, products, picked = null, errors = [], values = {}, taxPercent = 0 }) {
+function renderPesananTambah({
+  admin,
+  products,
+  picked = null,
+  errors = [],
+  values = {},
+  taxPercent = 0,
+  todayKey = '',
+  openDates = [],
+  deliveryMode = 'kalender',
+  // Single fruits a Mix Buah cup can be built from, and any combinations the
+  // form is being redrawn with after an error.
+  fruitOptions = [],
+  mixLines = {},
+}) {
   // WIB, not UTC: before 07:00 WIB the UTC date is still yesterday, which
   // would pre-fill the wrong day.
   const today = toDateKey(new Date());
   const qty = values.qty || {};
+  // A "Mix Buah" cup is built from single fruits, and every cup can be a
+  // different build — eight cups can be eight combinations. So those products
+  // get a list of combinations instead of one quantity box.
+  const isMix = (p) => p.category === 'Mix Buah' && fruitOptions.length > 0;
+  const fruitCheckboxes = (productId, index, chosen) =>
+    fruitOptions
+      .map(
+        (f) => `<label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-size:12.5px;font-weight:600;background:var(--surface);border:1.5px solid var(--border);border-radius:9px;padding:6px 10px;cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" name="mixBuah_${productId}_${index}" value="${escapeAttr(f.id)}" ${
+          chosen.includes(Number(f.id)) ? 'checked' : ''
+        } style="width:15px;height:15px;">
+          ${escapeHtml(f.name)}
+        </label>`
+      )
+      .join('');
+
+  const mixRow = (p, index, line) => `
+        <div class="mix-line" data-mix-line style="border-top:1px dashed var(--border);padding:12px 0;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+            <span style="font-size:12px;font-weight:800;color:var(--text-muted);">KOMBINASI <span data-mix-number>${index + 1}</span></span>
+            <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px;">
+              <span style="color:var(--text-muted);">Jumlah cup</span>
+              <input type="number" name="mixQty_${p.id}" min="0" max="${p.stock}" value="${escapeAttr(
+    line ? line.qty : 1
+  )}" inputmode="numeric" style="width:70px;padding:6px 8px;font-size:12.5px;text-align:center;border-radius:8px;">
+            </label>
+            <button type="button" data-mix-remove style="margin-left:auto;background:none;border:none;color:#c94f4f;font-size:12px;font-weight:700;cursor:pointer;">Hapus</button>
+          </div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">${fruitCheckboxes(p.id, index, line ? line.fruits : [])}</div>
+        </div>`;
+
   const rows = products
-    .map(
-      (p) => `
+    .map((p) => {
+      if (isMix(p)) {
+        const lines = mixLines[p.id] && mixLines[p.id].length ? mixLines[p.id] : [null];
+        return `
+      <div style="padding:14px 16px;border-top:1px solid var(--border);" data-mix-product="${p.id}" data-mix-max="${p.stock}">
+        <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+          <div style="flex:1 1 190px;min-width:0;">
+            <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${formatRupiah(p.price)} · stok ${p.stock}</div>
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.6;">
+              Tiap cup boleh beda isinya. Pesan 8 cup dengan 8 kombinasi? Tambah 8 baris di bawah.
+            </div>
+          </div>
+          <div style="font-size:12.5px;font-weight:700;color:var(--green-dark);white-space:nowrap;">
+            Total: <span data-mix-total>0</span> cup
+          </div>
+        </div>
+        <div data-mix-lines>${lines.map((line, i) => mixRow(p, i, line)).join('')}</div>
+        <button type="button" data-mix-add style="margin-top:10px;background:none;border:1.5px dashed var(--border);border-radius:10px;padding:9px 14px;font-size:12.5px;font-weight:700;color:var(--green-dark);cursor:pointer;">+ Tambah kombinasi</button>
+      </div>`;
+      }
+      return `
       <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
         <div style="flex:1 1 190px;min-width:0;">
           <div style="font-size:14px;font-weight:700;">${escapeHtml(p.name)}</div>
@@ -3130,13 +3703,13 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
           <button type="button" class="step-btn qty-step" data-delta="1"
                   aria-label="Tambah jumlah ${escapeAttr(p.name)}">+</button>
         </div>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
 
   const body = `
 <div class="admin-shell">
-  ${adminSidebar('pesanan', { isSuperadmin: admin.role === 'superadmin', username: admin.username })}
+  ${adminSidebar('pesanan', sidebarProps(admin))}
   <main class="admin-main" id="konten">
     ${backButton('/admin/pesanan', 'Kembali ke Pesanan')}
     <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px;margin-top:20px;">Admin / Pesanan / Catat Manual</div>
@@ -3202,7 +3775,22 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
           <div class="field" style="flex:1 1 240px;margin-bottom:0;">
             <label>Tanggal Antar <span class="req">*</span></label>
-            <input type="date" name="deliveryDate" required value="${escapeAttr(values.deliveryDate || today)}">
+            <input type="date" name="deliveryDate" required value="${escapeAttr(values.deliveryDate || today)}"
+                   list="tanggalTersedia">
+            ${
+              // The open days as suggestions, not a cage: an admin recording a
+              // sale that already happened must still be able to type any date.
+              openDates.length
+                ? `<datalist id="tanggalTersedia">${openDates
+                    .map((d) => `<option value="${escapeAttr(d)}">`)
+                    .join('')}</datalist>
+                   <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">
+                     Tanggal antar yang dibuka: ${openDates.slice(0, 6).map((d) => escapeHtml(formatShortDateID(d))).join(' · ')}${
+                    openDates.length > 6 ? ' …' : ''
+                  }
+                   </div>`
+                : ''
+            }
           </div>
           <div class="field" style="flex:1 1 240px;margin-bottom:0;">
             <label>Lokasi Antar</label>
@@ -3223,6 +3811,16 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
         <h2 style="font-size:16px;font-weight:800;margin-bottom:16px;">Pembayaran &amp; Status</h2>
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
           <div class="field" style="flex:1 1 200px;">
+            <label>Tanggal Pesanan</label>
+            <input type="date" name="orderDate" max="${escapeAttr(todayKey)}" value="${escapeAttr(
+              values.orderDate || todayKey
+            )}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">
+              Hari pesanan ini benar-benar terjadi. Kalau kamu catat besok, mundurkan tanggalnya supaya
+              laporan penjualan tetap jatuh di hari yang benar.
+            </div>
+          </div>
+          <div class="field" style="flex:1 1 200px;">
             <label>Ongkos Antar (Rp)</label>
             <input type="number" name="deliveryFee" min="0" step="500" value="${escapeAttr(values.deliveryFee || '0')}">
           </div>
@@ -3235,12 +3833,48 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
                 )
                 .join('')}
             </select>
-            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Pilih <strong>Selesai</strong> kalau sudah dibayar dan diantar — stempelnya langsung masuk.</div>
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Ini soal <strong>cup-nya</strong> — sudah disiapkan/diantar atau belum. Uangnya diatur terpisah di bawah.</div>
+          </div>
+        </div>
+
+        <div style="background:var(--surface-2);border-radius:12px;padding:14px 16px;margin-top:16px;">
+          <div style="font-size:13.5px;font-weight:700;margin-bottom:4px;">Uangnya sudah masuk?</div>
+          <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">
+            Terpisah dari status di atas: cup bisa sudah diantar tapi bayarnya belakangan, atau sudah
+            ditransfer padahal belum disiapkan. Yang belum dibayar tetap kelihatan di daftar pesanan.
+          </p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:9px;margin:0;flex:1 1 190px;background:var(--surface);border:1.5px solid var(--border);border-radius:11px;padding:12px 14px;font-size:13.5px;font-weight:600;cursor:pointer;">
+              <input type="radio" name="paid" value="1" ${values.paid === false ? '' : 'checked'} style="width:18px;height:18px;flex-shrink:0;">
+              Sudah dibayar
+            </label>
+            <label style="display:flex;align-items:center;gap:9px;margin:0;flex:1 1 190px;background:var(--surface);border:1.5px solid var(--border);border-radius:11px;padding:12px 14px;font-size:13.5px;font-weight:600;cursor:pointer;">
+              <input type="radio" name="paid" value="0" ${values.paid === false ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0;">
+              Belum dibayar
+            </label>
           </div>
         </div>
         <label style="display:flex;align-items:flex-start;gap:10px;margin:4px 0 0;font-size:13.5px;font-weight:600;cursor:pointer;">
           <input type="checkbox" name="useReward" value="1" ${values.useReward ? 'checked' : ''} style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
           <span>Pakai 1 cup gratis dari kartu stempel pelanggan (kalau kartunya memang penuh)</span>
+        </label>
+
+        <!-- The hidden 0 comes first on purpose: an unticked checkbox posts
+             nothing at all, so without it "don't register them" would be
+             indistinguishable from "the field wasn't on the form". The parser
+             keeps the last value of a repeated name, so ticked wins. -->
+        <input type="hidden" name="buatAkun" value="0">
+        <label style="display:flex;align-items:flex-start;gap:10px;margin:14px 0 0;font-size:13.5px;font-weight:600;cursor:pointer;background:var(--green-soft);border-radius:11px;padding:13px 15px;">
+          <input type="checkbox" name="buatAkun" value="1" ${values.buatAkun === false ? '' : 'checked'} style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
+          <span>
+            Daftarkan pembeli ini sebagai pelanggan
+            <span style="display:block;font-size:12px;font-weight:500;color:var(--green-dark);line-height:1.6;margin-top:3px;">
+              Tanpa ini pesanannya tercatat sebagai pembeli lepas — <strong>stempelnya tidak masuk</strong>.
+              Kalau nomornya sudah punya akun, pesanan ini otomatis ditautkan ke akun itu, bukan bikin baru.
+              Akun baru dibuat tanpa password yang bisa dipakai — kalau pelanggan mau masuk sendiri,
+              dia pakai menu &ldquo;Lupa Password&rdquo; dan kamu yang menyetujui kodenya.
+            </span>
+          </span>
         </label>
         <div class="field" style="margin-top:18px;margin-bottom:0;">
           <label>Catatan</label>
@@ -3255,6 +3889,75 @@ function renderPesananTambah({ admin, products, picked = null, errors = [], valu
     </form>
   </main>
 </div>
+<script>
+// Combinations for a "Mix Buah" product: add a row per different cup. The rows
+// are plain form fields, so the order still saves correctly with JavaScript
+// off — you just get the one combination the page was rendered with.
+(function(){
+  var blocks = document.querySelectorAll('[data-mix-product]');
+  for (var b = 0; b < blocks.length; b++) wire(blocks[b]);
+
+  function wire(block){
+    var list = block.querySelector('[data-mix-lines]');
+    var add = block.querySelector('[data-mix-add]');
+    if(!list || !add) return;
+
+    function renumber(){
+      var lines = list.querySelectorAll('[data-mix-line]');
+      var total = 0;
+      for (var i = 0; i < lines.length; i++){
+        var n = lines[i].querySelector('[data-mix-number]');
+        if(n) n.textContent = String(i + 1);
+        // The checkbox name carries the row index so the server can tell one
+        // combination from another; renumbering keeps them in step after a
+        // row in the middle is removed.
+        var boxes = lines[i].querySelectorAll('input[type="checkbox"]');
+        for (var c = 0; c < boxes.length; c++){
+          boxes[c].name = boxes[c].name.replace(/_\\d+$/, '_' + i);
+        }
+        var qty = lines[i].querySelector('input[type="number"]');
+        total += Math.max(0, Number(qty && qty.value) || 0);
+        if(lines.length === 1){
+          var rm = lines[i].querySelector('[data-mix-remove]');
+          if(rm) rm.style.visibility = 'hidden';
+        }
+      }
+      var out = block.querySelector('[data-mix-total]');
+      if(out){
+        out.textContent = String(total);
+        var max = Number(block.getAttribute('data-mix-max')) || 0;
+        out.style.color = total > max ? '#c94f4f' : '';
+      }
+    }
+
+    add.addEventListener('click', function(){
+      var lines = list.querySelectorAll('[data-mix-line]');
+      var copy = lines[lines.length - 1].cloneNode(true);
+      var boxes = copy.querySelectorAll('input[type="checkbox"]');
+      for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
+      var qty = copy.querySelector('input[type="number"]');
+      if(qty) qty.value = '1';
+      var rm = copy.querySelector('[data-mix-remove]');
+      if(rm) rm.style.visibility = '';
+      list.appendChild(copy);
+      renumber();
+    });
+
+    block.addEventListener('click', function(e){
+      var rm = e.target.closest && e.target.closest('[data-mix-remove]');
+      if(!rm) return;
+      var lines = list.querySelectorAll('[data-mix-line]');
+      if(lines.length <= 1) return;
+      var line = rm.closest('[data-mix-line]');
+      if(line) line.remove();
+      renumber();
+    });
+
+    block.addEventListener('input', renumber);
+    renumber();
+  }
+})();
+</script>
 <style>
   /* Searchable account picker. Sizes are in relative units and the results box
      is capped by viewport height, so it behaves on a small phone as well as a
@@ -3480,5 +4183,7 @@ module.exports = {
   renderPesananList,
   renderPesananDetail,
   renderAdminList,
+  renderAdminIzin,
+  renderForbidden,
   renderAdminLog,
 };

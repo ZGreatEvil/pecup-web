@@ -145,6 +145,9 @@ async function createOrder({
   deliveryFee,
   tier = {},
   taxPercent = 0,
+  // Normally today. A manually recorded sale can be dated to the day it
+  // actually happened so the books line up.
+  dateKey = null,
 }) {
   const rows = await db.query(
     `select create_order($1, $2, $3, $4::jsonb, $5, $6, $7, $8::date, $9::bigint, $10::boolean, $11, $12::integer,
@@ -155,7 +158,7 @@ async function createOrder({
       notes || '',
       JSON.stringify(items.map((it) => ({ productId: it.productId, qty: it.qty, label: it.label || null }))),
       proofFilename || null,
-      toDateKey(new Date()),
+      /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? dateKey : toDateKey(new Date()),
       address || '',
       deliveryDate || null,
       customerId || null,
@@ -195,6 +198,40 @@ async function createOrder({
     taxPercent: Number(result.taxPercent) || 0,
     taxAmount: Number(result.taxAmount) || 0,
   };
+}
+
+/**
+ * Moves an order's "placed at" to a given Jakarta day, for a sale typed in
+ * after the fact. Noon WIB so the instant can't slip into the day either side
+ * whatever timezone reads it back.
+ */
+async function setOrderPlacedAt(id, dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return false;
+  await db.query(
+    "update orders set created_at = ($2 || ' 12:00:00+07')::timestamptz, date_key = $2 where id = $1",
+    [id, dateKey]
+  );
+  return true;
+}
+
+/**
+ * Whether the money for this order has arrived. Deliberately separate from
+ * `status`, which is about the cups, not the cash.
+ */
+async function setOrderPaid(id, paid, { at = null } = {}) {
+  const rows = await db.query(
+    `update orders
+        set paid = $2,
+            paid_at = case
+              when $2 is false then null
+              when $3::text is not null and $3 ~ '^\d{4}-\d{2}-\d{2}$' then ($3 || ' 12:00:00+07')::timestamptz
+              else now()
+            end
+      where id = $1
+      returning paid, paid_at`,
+    [id, Boolean(paid), at]
+  );
+  return rows[0] || null;
 }
 
 async function getOrder(id) {
@@ -422,6 +459,8 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
               -- Tax collected is part of what was paid but not part of what the
               -- shop earned, so it's summed separately rather than buried in net.
               coalesce(sum(o.tax_amount), 0)::bigint as tax,
+              -- What the packaging on those orders cost, snapshotted at sale.
+              coalesce(sum(o.cogs), 0)::bigint as cogs,
               coalesce(sum(o.total), 0)::bigint as net
        from orders o ${where}`,
       params
@@ -437,6 +476,8 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
               coalesce(sum(o.subtotal), 0)::bigint as gross,
               ${DISCOUNT_SUM} as discount,
               coalesce(sum(o.delivery_fee), 0)::bigint as delivery,
+              coalesce(sum(o.tax_amount), 0)::bigint as tax,
+              coalesce(sum(o.cogs), 0)::bigint as cogs,
               coalesce(sum(o.total), 0)::bigint as net
        from orders o ${where}
        group by ${grouping.expr} order by ${grouping.expr} desc limit 400`,
@@ -470,6 +511,12 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
     voucherDiscount: Number(t.voucher) || 0,
     delivery: Number(t.delivery) || 0,
     tax: Number(t.tax) || 0,
+    cogs: Number(t.cogs) || 0,
+    // What the shop actually earned on those sales, before its running costs:
+    // money in, minus the PPN it merely collected for the state, minus what the
+    // packaging cost. Expenses are added on top of this by the report route,
+    // which is what turns it into laba bersih.
+    grossProfit: net - (Number(t.tax) || 0) - (Number(t.cogs) || 0),
     net,
     cups: Number((cups[0] || {}).cups) || 0,
     averageOrder: orders ? Math.round(net / orders) : 0,
@@ -479,7 +526,10 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
       gross: Number(r.gross) || 0,
       discount: Number(r.discount) || 0,
       delivery: Number(r.delivery) || 0,
+      tax: Number(r.tax) || 0,
+      cogs: Number(r.cogs) || 0,
       net: Number(r.net) || 0,
+      grossProfit: (Number(r.net) || 0) - (Number(r.tax) || 0) - (Number(r.cogs) || 0),
     })),
     byProduct: byProduct.map((r) => ({
       name: r.product_name,
@@ -522,12 +572,13 @@ async function setOrderCancelled(id, cancelled) {
   const rows = await db.query(
     `update orders set status = $2, stock_restored = $3
      where id = $1 and coalesce(stock_restored, false) = $4
-     returning id`,
+     returning *`,
     [id, cancelled ? 'dibatalkan' : 'menunggu', cancelled, !cancelled]
   );
   // Someone already did it — nothing further to do, and crucially no second
   // stock movement.
   if (!rows.length) return { ok: false, alreadyDone: true };
+  const order = rows[0];
 
   const direction = cancelled ? '+' : '-';
   await db.query(
@@ -536,6 +587,64 @@ async function setOrderCancelled(id, cancelled) {
      where oi.order_id = $1 and oi.product_id = p.id`,
     [id]
   );
+
+  // The packaging goes back on the shelf with the cups — a cancelled order
+  // didn't use a cup, a lid or a spoon. Guarded by the same stock_restored
+  // flag as the line above, so flipping an order back and forth can't drain
+  // the stockroom. Not clamped at zero: unlike a product's stock, a material
+  // count is allowed to be negative, and hiding that would hide a real
+  // recording error.
+  const sign = cancelled ? 1 : -1;
+  await db.query(
+    `insert into inventory_moves (item_id, delta, reason, order_id, note)
+     select m.item_id, $2 * m.qty * oi.qty, $3, $1, oi.product_name
+       from order_items oi join product_materials m on m.product_id = oi.product_id
+      where oi.order_id = $1`,
+    [id, sign, cancelled ? 'batal' : 'pesanan']
+  );
+  await db.query(
+    `update inventory_items i set stock = i.stock + ($2 * m.qty * oi.qty)
+       from order_items oi join product_materials m on m.product_id = oi.product_id
+      where oi.order_id = $1 and i.id = m.item_id`,
+    [id, sign]
+  );
+
+  // A promo code spent on this order goes back in the pot. create_order
+  // increments used_count inside the checkout transaction, so a cancelled
+  // order was silently burning one use of a limited code — the customer paid
+  // nothing and the code was gone. Matched on the snapshotted code text, not
+  // an id, because the voucher row may have been deleted since; if it has,
+  // this simply updates nothing.
+  if (order.voucher_code) {
+    await db.query(
+      cancelled
+        ? 'update vouchers set used_count = greatest(0, used_count - 1) where upper(code) = upper($1)'
+        : 'update vouchers set used_count = used_count + 1 where upper(code) = upper($1)',
+      [order.voucher_code]
+    );
+  }
+
+  // Tier perks likewise: a weekly or birthday free cup consumed by this order
+  // is handed back when it's cancelled, and taken again if it's reinstated.
+  // Cancelling restores the EXACT previous value the order recorded, so a
+  // customer who had already used this week's cup on an earlier order doesn't
+  // get a second one out of the cancellation.
+  if (order.customer_id) {
+    if (order.perk_weekly_used) {
+      await db.query('update customers set weekly_cup_at = $2 where id = $1', [
+        order.customer_id,
+        cancelled ? order.perk_weekly_prev : order.created_at,
+      ]);
+    }
+    if (order.perk_birthday_used) {
+      await db.query('update customers set birthday_cup_year = $2 where id = $1', [
+        order.customer_id,
+        cancelled
+          ? order.perk_birthday_prev
+          : new Date(order.delivery_date || order.created_at).getFullYear(),
+      ]);
+    }
+  }
   return { ok: true };
 }
 
@@ -559,6 +668,8 @@ module.exports = {
   toggleProductActive,
   productStats,
   createOrder,
+  setOrderPlacedAt,
+  setOrderPaid,
   getOrder,
   getOrderItems,
   getOrderItemsForOrders,

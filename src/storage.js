@@ -4,7 +4,7 @@
 //   - "proofs"   (private store) -> payment-proof uploads, admin-only
 // A private Blob store needs its own read/write token, so each store gets
 // its own environment variable (see .env.example / DEPLOY.txt).
-const { put, head, issueSignedToken, presignUrl } = require('@vercel/blob');
+const { put, head, del, issueSignedToken, presignUrl } = require('@vercel/blob');
 
 function productsToken() {
   const t = process.env.PRODUCTS_BLOB_READ_WRITE_TOKEN;
@@ -38,6 +38,28 @@ async function uploadProofFile(objectPath, buffer, contentType) {
     token: proofsToken(),
   });
   return objectPath;
+}
+
+/**
+ * Deletes a proof file from the PRIVATE store.
+ *
+ * The upload happens before the order is inserted (the file is needed either
+ * way, and the insert can still fail — the last cup sold a moment earlier, a
+ * voucher that just ran out). Without this the file would sit in the store
+ * with nothing pointing at it and nothing that would ever find it: the nightly
+ * sweep only deletes proofs belonging to orders old enough to expire, so an
+ * orphan that never had an order is invisible to it. Never throws — a failed
+ * cleanup must not turn into the customer's error message.
+ */
+async function deleteProofFile(objectPath) {
+  if (!objectPath) return false;
+  try {
+    await del(objectPath, { token: proofsToken() });
+    return true;
+  } catch (err) {
+    console.error('Gagal menghapus bukti transfer yatim:', err.message);
+    return false;
+  }
 }
 
 /** Short-lived signed URL for a proof file in the PRIVATE store — safe to embed directly as an <img src>, the browser fetches it straight from Vercel's CDN. */
@@ -121,6 +143,7 @@ async function productBlobInfo(pathname) {
 module.exports = {
   uploadProductImage,
   uploadProofFile,
+  deleteProofFile,
   signedProofUrl,
   presignProductVideoUpload,
   productBlobInfo,

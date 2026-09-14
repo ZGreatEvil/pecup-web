@@ -209,14 +209,34 @@ function perkAvailability(status, dateKey = '') {
 
 // Called when an order reaches 'selesai'. The unique index on order_id makes
 // this idempotent, so re-completing an order can't mint a second stamp.
+/**
+ * Stamps for a completed order — ONE PER CUP, not one per order.
+ *
+ * Runs automatically the moment an order is marked Selesai (see the status
+ * route and the manual-order route); nobody has to hand them out. Re-running it
+ * is harmless: (order_id, cup_no) is unique, so flipping an order out of
+ * Selesai and back can't mint a second set.
+ *
+ * Every cup in the order counts, including one taken as a free cup — the rule
+ * a customer can actually follow is "tiap cup satu stempel", and carving out
+ * the free ones would make the card unpredictable.
+ *
+ * Returns how many new stamps were actually created.
+ */
 async function grantForOrder(customerId, orderId) {
-  if (!customerId || !orderId) return false;
+  if (!customerId || !orderId) return 0;
   const rows = await db.query(
-    `insert into stamps (customer_id, order_id) values ($1, $2)
-     on conflict (order_id) do nothing returning id`,
+    `insert into stamps (customer_id, order_id, cup_no)
+     select $1, $2, g
+       from generate_series(
+         1,
+         (select coalesce(sum(qty), 0)::int from order_items where order_id = $2)
+       ) as g
+     on conflict (order_id, cup_no) do nothing
+     returning id`,
     [customerId, orderId]
   );
-  return rows.length > 0;
+  return rows.length;
 }
 
 // Called when an order moves back out of 'selesai'. An already-spent stamp is

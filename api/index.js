@@ -22,6 +22,9 @@ const loyalty = require('../src/loyalty');
 const vouchers = require('../src/vouchers');
 const { parseBody } = require('../src/body');
 const adminAuth = require('../src/adminAuth');
+const permissions = require('../src/permissions');
+const inventory = require('../src/inventory');
+const inventoryViews = require('../src/views/inventory');
 const passwordReset = require('../src/passwordReset');
 const retention = require('../src/retention');
 const {
@@ -38,15 +41,18 @@ const {
   formatTimeID,
   csvEscape,
   formatRupiah,
+  formatDateID,
   normalizeWhatsapp,
   formatWhatsapp,
   ORDER_STATUSES,
+  SHOP_WHATSAPP_FALLBACK,
 } = require('../src/utils');
 const { buildDailyOrdersCsv } = require('../src/csvExport');
 const { sendOrderNotification } = require('../src/orderEmail');
 const {
   saveProductImage,
   saveProofFile,
+  deleteProofFile,
   signedProofUrl,
   presignProductVideoUpload,
   productBlobInfo,
@@ -195,7 +201,10 @@ router.get('/', async (req, res, { query }) => {
 
 router.get('/produk/:id', async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
-  if (!product) return notFound(res);
+  // A product switched off is gone from the shop, not merely hidden from the
+  // menu: its page would otherwise stay reachable by old link or search result,
+  // with a working add-to-cart button on it.
+  if (!product || !product.active) return notFound(res);
   const all = await queries.listProducts({ onlyActive: true });
   const related = all.filter((p) => p.id !== product.id).slice(0, 4);
   const singleFruits = all.filter((p) => p.category === 'Buah Tunggal');
@@ -225,6 +234,11 @@ router.post('/keranjang/tambah', async (req, res) => {
   const product = await queries.getProduct(productId);
   if (!product) {
     if (wantsJson) return sendJson(res, { ok: false, error: 'Produk tidak ditemukan.' }, 404);
+    return fallbackRedirect();
+  }
+  // Switched off between the page being opened and the button being pressed.
+  if (!product.active) {
+    if (wantsJson) return sendJson(res, { ok: false, error: 'Produk ini sedang tidak dijual.' }, 409);
     return fallbackRedirect();
   }
 
@@ -379,14 +393,29 @@ router.post('/masuk', async (req, res) => {
 // There is no email on file (the WhatsApp number is the username), so the
 // reset runs through an admin over WhatsApp — see src/passwordReset.js.
 
+// "Hubungi admin" must always have something to tap. The shop's own setting
+// wins; with nothing set it falls back to the number the storefront footer has
+// always shown, so the password-reset page can never be a dead end.
 function resetWaLink(shop, message) {
-  if (!shop.whatsapp) return '';
-  return `https://wa.me/${shop.whatsapp}?text=${encodeURIComponent(message)}`;
+  const number = shop.whatsapp || SHOP_WHATSAPP_FALLBACK;
+  if (!number) return '';
+  return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
 
 router.get('/lupa-sandi', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
-  sendHtml(res, accountViews.renderLupaSandi({ cartCount: cartLib.cartCount(req.cart) }));
+  // The shop's number is fetched here as well as after submitting: telling
+  // someone to "contact the admin" without giving them the way to do it is
+  // where this page used to leave them stuck.
+  const shop = await settings.shopConfig();
+  sendHtml(
+    res,
+    accountViews.renderLupaSandi({
+      cartCount: cartLib.cartCount(req.cart),
+      waLink: resetWaLink(shop, 'Halo admin Pecup, saya lupa password akun saya. Mohon dibantu reset ya.'),
+      shopWhatsapp: shop.whatsapp || '',
+    })
+  );
 });
 
 router.post('/lupa-sandi', async (req, res) => {
@@ -401,6 +430,7 @@ router.post('/lupa-sandi', async (req, res) => {
         cartCount: cartLib.cartCount(req.cart),
         errors: [result.error],
         values: { whatsapp },
+        shopWhatsapp: (await settings.shopConfig()).whatsapp || '',
       })
     );
   }
@@ -417,13 +447,22 @@ router.post('/lupa-sandi', async (req, res) => {
         shop,
         `Halo admin Pecup, saya lupa password akun saya (nomor ${whatsapp}). Mohon dibantu reset ya.`
       ),
+      shopWhatsapp: shop.whatsapp || '',
     })
   );
 });
 
 router.get('/lupa-sandi/kode', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
-  sendHtml(res, accountViews.renderResetSandi({ cartCount: cartLib.cartCount(req.cart) }));
+  const shop = await settings.shopConfig();
+  sendHtml(
+    res,
+    accountViews.renderResetSandi({
+      cartCount: cartLib.cartCount(req.cart),
+      waLink: resetWaLink(shop, 'Halo admin Pecup, saya sudah minta reset password tapi belum menerima kodenya.'),
+      shopWhatsapp: shop.whatsapp || '',
+    })
+  );
 });
 
 router.post('/lupa-sandi/kode', async (req, res) => {
@@ -463,6 +502,28 @@ router.post('/lupa-sandi/kode', async (req, res) => {
 router.get('/daftar', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
   sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart) }));
+});
+
+// What every tier is worth, for a shopper deciding whether to come back.
+// Deliberately open to visitors who aren't signed in — they're the ones it has
+// to convince — and personalised with "you are here" for those who are.
+router.get('/keanggotaan', async (req, res) => {
+  const [config, perReward, loyaltyStatus] = await Promise.all([
+    loyalty.getTierConfig(),
+    settings.stampsPerReward(),
+    req.customer ? loyalty.statusFor(req.customer.customerId) : null,
+  ]);
+  sendHtml(
+    res,
+    accountViews.renderKeanggotaan({
+      cartCount: cartLib.cartCount(req.cart),
+      customer: req.customer,
+      loyalty: loyaltyStatus,
+      tiers: config.tiers,
+      enabled: config.enabled,
+      perReward,
+    })
+  );
 });
 
 router.post('/daftar', async (req, res) => {
@@ -665,6 +726,9 @@ router.get('/checkout', async (req, res, { query }) => {
       totals,
       deliveryFee,
       taxPercent,
+      deliveryMode: shop.deliveryMode,
+      openDates: settings.openDeliveryDates(shop),
+      closedNote: closedDatesNote(shop),
       formValues: saved
         ? {
             customerName: saved.name,
@@ -746,6 +810,14 @@ router.post('/checkout', async (req, res) => {
     errors.push(
       `Pesanan untuk hari ini sudah ditutup pukul ${shop.sameDayCutoff} WIB. Pilih tanggal besok atau setelahnya.`
     );
+  } else if (!settings.isDeliveryDateOpen(shop, deliveryDate)) {
+    // Checked whichever way the date was picked: the list only offers open
+    // days, but a hand-posted form must be refused just the same.
+    const next = settings.openDeliveryDates(shop).slice(0, 3);
+    errors.push(
+      'Pecup tidak mengantar di tanggal itu.' +
+        (next.length ? ` Tanggal terdekat yang bisa: ${next.map((d) => formatDateID(d)).join(', ')}.` : '')
+    );
   }
   // A fully-waived order has nothing to transfer, so don't demand a proof.
   if (payable > 0 && !files.proof) errors.push('Bukti transfer wajib diunggah.');
@@ -776,6 +848,9 @@ router.post('/checkout', async (req, res) => {
         totals,
         deliveryFee,
         taxPercent,
+        deliveryMode: shop.deliveryMode,
+        openDates: settings.openDeliveryDates(shop),
+        closedNote: closedDatesNote(shop),
         errors,
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
@@ -818,6 +893,10 @@ router.post('/checkout', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
+    // The proof was uploaded before the insert was attempted, so a failed
+    // insert leaves a file nothing points at. Take it back out: the shopper is
+    // about to be shown the form again and will upload afresh if they retry.
+    if (proofFilename) await deleteProofFile(proofFilename);
     return sendHtml(
       res,
       shopViews.renderCheckout({
@@ -833,11 +912,19 @@ router.post('/checkout', async (req, res) => {
         totals,
         deliveryFee,
         taxPercent,
+        deliveryMode: shop.deliveryMode,
+        openDates: settings.openDeliveryDates(shop),
+        closedNote: closedDatesNote(shop),
         errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
   }
+
+  // A website order can only get here with a transfer proof attached (or
+  // nothing to pay at all), so it is paid by definition. Manual orders are the
+  // ones where that's a question, and they ask it on the form.
+  await queries.setOrderPaid(order.id, true);
 
   req.cart = cartLib.clearCart();
   saveCartCookie(res, req.cart);
@@ -957,7 +1044,7 @@ router.post('/admin/logout', (req, res) => {
 // admin: products
 // ---------------------------------------------------------------------
 
-router.get('/admin/produk', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/produk', requirePermission('produk.lihat', async (req, res, { query }) => {
   const [allProducts, stats, categories] = await Promise.all([
     queries.listProducts(),
     queries.productStats(),
@@ -1021,7 +1108,7 @@ router.get('/admin/produk', requireAdmin(async (req, res, { query }) => {
 // address, which is scoped to a single pathname, a single content type, a
 // hard byte ceiling and a few minutes of life, all enforced by the store
 // itself rather than trusted from the page.
-router.post('/admin/media/video/presign', requireAdmin(async (req, res) => {
+router.post('/admin/media/video/presign', requirePermission('produk.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const contentType = String(fields.contentType || '').trim();
   const size = Number(fields.size);
@@ -1050,12 +1137,17 @@ router.post('/admin/media/video/presign', requireAdmin(async (req, res) => {
   }
 }));
 
-router.get('/admin/produk/tambah', requireAdmin(async (req, res) => {
-  const categories = await queries.listCategories();
-  sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin }));
+router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
+  const [categories, inventoryItems] = await Promise.all([
+    queries.listCategories(),
+    // Only fetched for an admin who may manage the stockroom — for anyone else
+    // the packaging section is not drawn, and nothing they post can change it.
+    req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
+  ]);
+  sendHtml(res, adminViews.renderProdukForm({ product: null, error: null, categories, admin: req.admin, inventoryItems }));
 }));
 
-router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
+router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
   const { fields, fieldLists, fileLists } = await parseBody(req);
   // Clips are already uploaded by the time the form is posted, so they're
   // carried back through every failure path — bouncing the form must not cost
@@ -1084,7 +1176,7 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
   } catch (err) {
     return bounce(err.userMessage || 'Gagal mengunggah foto. Coba lagi.');
   }
-  await queries.createProduct({
+  const newProductId = await queries.createProduct({
     name: fields.name.trim(),
     description: (fields.description || '').trim(),
     category: fields.category || 'Buah Tunggal',
@@ -1100,6 +1192,8 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
     isRecommended: fields.is_recommended ? 1 : 0,
     ...wholesaleFields(fields),
   });
+  const newMaterials = materialsFromForm(req, fieldLists, fields);
+  if (newMaterials) await inventory.setMaterials(newProductId, newMaterials);
   const photoCount = images.filter((url) => !media.isVideoUrl(url)).length;
   const videoCount = images.length - photoCount;
   await logAdminAction(
@@ -1113,14 +1207,21 @@ router.post('/admin/produk/tambah', requireAdmin(async (req, res) => {
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk baru berhasil ditambahkan.'));
 }));
 
-router.get('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
+router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
   if (!product) return notFound(res);
-  const categories = await queries.listCategories();
-  sendHtml(res, adminViews.renderProdukForm({ product, error: null, categories, admin: req.admin }));
+  const [categories, inventoryItems, materials] = await Promise.all([
+    queries.listCategories(),
+    req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
+    inventory.materialsFor(product.id),
+  ]);
+  sendHtml(
+    res,
+    adminViews.renderProdukForm({ product, error: null, categories, admin: req.admin, inventoryItems, materials })
+  );
 }));
 
-router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
+router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (req, res) => {
   const id = Number(req.params.id);
   const existing = await queries.getProduct(id);
   if (!existing) return notFound(res);
@@ -1179,6 +1280,8 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
     ...wholesaleFields(fields),
   };
   await queries.updateProduct(id, next);
+  const wantedMaterials = materialsFromForm(req, fieldLists, fields);
+  if (wantedMaterials) await inventory.setMaterials(id, wantedMaterials);
 
   // The log used to say only the product's name, which left "what did they
   // actually change?" unanswerable. Now it names the fields that moved.
@@ -1212,7 +1315,7 @@ router.post('/admin/produk/:id/edit', requireAdmin(async (req, res) => {
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk berhasil diperbarui.'));
 }));
 
-router.post('/admin/produk/:id/hapus', requireAdmin(async (req, res) => {
+router.post('/admin/produk/:id/hapus', requirePermission('produk.kelola', async (req, res) => {
   const existing = await queries.getProduct(Number(req.params.id));
   await queries.deleteProduct(Number(req.params.id));
   // A deletion is the one entry nobody can go back and check against the
@@ -1228,7 +1331,7 @@ router.post('/admin/produk/:id/hapus', requireAdmin(async (req, res) => {
   redirect(res, '/admin/produk?flash=' + encodeURIComponent('Produk telah dihapus.'));
 }));
 
-router.post('/admin/produk/:id/toggle', requireAdmin(async (req, res) => {
+router.post('/admin/produk/:id/toggle', requirePermission('produk.kelola', async (req, res) => {
   const id = Number(req.params.id);
   const before = await queries.getProduct(id);
   await queries.toggleProductActive(id);
@@ -1246,7 +1349,7 @@ router.post('/admin/produk/:id/toggle', requireAdmin(async (req, res) => {
 
 // Quick stock edit straight from the product list — takes either an absolute
 // qty or a +/- delta, so restocking doesn't mean opening the full edit form.
-router.post('/admin/produk/:id/stok', requireAdmin(async (req, res) => {
+router.post('/admin/produk/:id/stok', requirePermission('produk.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const product = await queries.getProduct(id);
@@ -1269,7 +1372,7 @@ router.post('/admin/produk/:id/stok', requireAdmin(async (req, res) => {
 // admin: orders
 // ---------------------------------------------------------------------
 
-router.get('/admin/pesanan', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pesanan', requirePermission('pesanan.lihat', async (req, res, { query }) => {
   const todayKey = toDateKey(new Date());
 
   // Presets are shorthand for a filter combination. Picking one replaces the
@@ -1343,7 +1446,7 @@ router.get('/admin/pesanan', requireAdmin(async (req, res, { query }) => {
 // downloads matches what the admin was looking at. Empty dates mean "all
 // time" rather than defaulting to today — that's what makes a yearly export
 // possible.
-router.get('/admin/pesanan/unduh', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pesanan/unduh', requirePermission('pesanan.unduh', async (req, res, { query }) => {
   let dari = query.get('dari') || query.get('tanggal') || '';
   let sampai = query.get('sampai') || query.get('tanggal') || '';
   if (dari && sampai && dari > sampai) [dari, sampai] = [sampai, dari]; // tolerate a reversed range
@@ -1388,11 +1491,11 @@ function tempPassword() {
   return out;
 }
 
-router.get('/admin/pelanggan/tambah', requireAdmin(async (req, res) => {
+router.get('/admin/pelanggan/tambah', requirePermission('pelanggan.tambah', async (req, res) => {
   sendHtml(res, adminViews.renderPelangganTambah({ admin: req.admin }));
 }));
 
-router.post('/admin/pelanggan/tambah', requireAdmin(async (req, res) => {
+router.post('/admin/pelanggan/tambah', requirePermission('pelanggan.tambah', async (req, res) => {
   const { fields } = await parseBody(req);
   const name = (fields.name || '').trim();
   const whatsapp = (fields.whatsapp || '').trim();
@@ -1439,7 +1542,7 @@ router.post('/admin/pelanggan/tambah', requireAdmin(async (req, res) => {
   );
 }));
 
-router.get('/admin/pesanan/tambah', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (req, res, { query }) => {
   // Only the one account that was linked to (from the customer page), if any.
   // The picker searches the server as you type, so the page no longer carries
   // the customer table with it — that list only ever grows.
@@ -1455,6 +1558,10 @@ router.get('/admin/pesanan/tambah', requireAdmin(async (req, res, { query }) => 
       admin: req.admin,
       products,
       taxPercent: settings.taxRateFor(shop),
+      todayKey: toDateKey(new Date()),
+      openDates: settings.openDeliveryDates(shop),
+      deliveryMode: shop.deliveryMode,
+      fruitOptions: products.filter((p) => p.category === 'Buah Tunggal'),
       picked: picked
         ? {
             id: Number(picked.id),
@@ -1471,8 +1578,10 @@ router.get('/admin/pesanan/tambah', requireAdmin(async (req, res, { query }) => 
   );
 }));
 
-router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
-  const { fields } = await parseBody(req);
+router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (req, res) => {
+  // fieldLists as well as fields: a mix product posts one quantity and one
+  // checkbox group per combination, all sharing a name.
+  const { fields, fieldLists } = await parseBody(req);
   const [products, shop] = await Promise.all([
     queries.listProducts({ onlyActive: true }),
     settings.shopConfig(),
@@ -1486,6 +1595,29 @@ router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
     const n = Math.max(0, Math.round(Number(fields[`qty_${p.id}`]) || 0));
     if (n > 0) qty[p.id] = String(n);
   }
+
+  // "Mix Buah" cups are built per cup, so one product can appear as several
+  // lines with different fruit in each — eight cups can be eight combinations.
+  // Each row posts its own quantity plus a checkbox group named with the row's
+  // index, which is what keeps one combination from bleeding into the next.
+  const fruitById = new Map(
+    products.filter((p) => p.category === 'Buah Tunggal').map((p) => [Number(p.id), p])
+  );
+  const mixLines = {};
+  for (const p of products) {
+    if (p.category !== 'Mix Buah') continue;
+    const quantities = fieldLists[`mixQty_${p.id}`] || [];
+    const lines = [];
+    for (let i = 0; i < quantities.length; i += 1) {
+      const cups = Math.max(0, Math.round(Number(quantities[i]) || 0));
+      const picked = (fieldLists[`mixBuah_${p.id}_${i}`] || [])
+        .map((v) => Number(v))
+        .filter((id) => fruitById.has(id));
+      const unique = [...new Set(picked)];
+      if (cups > 0 || unique.length) lines.push({ qty: cups, fruits: unique });
+    }
+    if (lines.length) mixLines[p.id] = lines;
+  }
   const customerId = (fields.customerId || '').trim();
   const values = {
     customerId,
@@ -1497,6 +1629,18 @@ router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
     status: fields.status || 'selesai',
     notes: (fields.notes || '').trim(),
     useReward: Boolean(fields.useReward),
+    // When the sale actually happened. A manual order is usually typed in
+    // afterwards, and dating it "today" would put yesterday's takings in
+    // today's report.
+    orderDate: (fields.orderDate || '').trim(),
+    // Fulfilment and payment are different questions: cups can go out before
+    // the money arrives, and money can arrive before the cups go out.
+    paid: fields.paid === '1',
+    // Turn a walk-in into a customer. Without an account the sale is recorded
+    // as a guest: the name and number sit on the order but the person collects
+    // no stamps and builds no history, which is usually not what the counter
+    // meant to happen.
+    buatAkun: fields.buatAkun !== '0',
     qty,
   };
   // The picked account, looked up rather than taken on trust. It has to be
@@ -1513,7 +1657,22 @@ router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
       }
     : null;
   const rerender = (errors) =>
-    sendHtml(res, adminViews.renderPesananTambah({ admin: req.admin, products, picked, errors, values, taxPercent }));
+    sendHtml(
+      res,
+      adminViews.renderPesananTambah({
+        admin: req.admin,
+        products,
+        picked,
+        errors,
+        values,
+        taxPercent,
+        todayKey: toDateKey(new Date()),
+        openDates: settings.openDeliveryDates(shop),
+        deliveryMode: shop.deliveryMode,
+        fruitOptions: products.filter((p) => p.category === 'Buah Tunggal'),
+        mixLines,
+      })
+    );
 
   const errors = [];
   if (customerId && !pickedCustomer) errors.push('Akun pelanggan yang dipilih tidak ditemukan.');
@@ -1521,22 +1680,93 @@ router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
   const normalized = normalizeWhatsapp(values.whatsapp);
   if (!normalized) errors.push('Nomor WhatsApp tidak valid.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(values.deliveryDate)) errors.push('Tanggal antar wajib diisi.');
+  const todayKeyNow = toDateKey(new Date());
+  if (values.orderDate && !/^\d{4}-\d{2}-\d{2}$/.test(values.orderDate)) {
+    errors.push('Tanggal pesanan tidak valid.');
+  } else if (values.orderDate && values.orderDate > todayKeyNow) {
+    errors.push('Tanggal pesanan tidak boleh di masa depan.');
+  }
   const items = products
     .filter((p) => qty[p.id])
     .map((p) => ({ productId: Number(p.id), name: p.name, price: Number(p.price), qty: Number(qty[p.id]) }));
+
+  // Each combination becomes its own line, labelled with what's in it — the
+  // same shape a shopper's mix produces at checkout, so the order page, the
+  // receipt and the CSV all read the same either way.
+  for (const [productId, lines] of Object.entries(mixLines)) {
+    const product = products.find((p) => Number(p.id) === Number(productId));
+    if (!product) continue;
+    lines.forEach((line, index) => {
+      if (line.qty <= 0) return;
+      if (!line.fruits.length) {
+        errors.push(`Kombinasi ${index + 1} ${product.name}: pilih dulu buahnya.`);
+        return;
+      }
+      const names = line.fruits.map((id) => fruitById.get(id).name);
+      items.push({
+        productId: Number(product.id),
+        name: product.name,
+        price: Number(product.price),
+        qty: line.qty,
+        label: `${product.name} (${names.join(', ')})`,
+      });
+    });
+  }
+
   if (!items.length) errors.push('Isi jumlah untuk minimal satu produk.');
+  // Totalled per product: eight separate one-cup combinations still have to
+  // fit in the stock for eight cups.
+  const wantedPerProduct = new Map();
   for (const it of items) {
-    const product = products.find((p) => Number(p.id) === it.productId);
-    if (product && it.qty > Number(product.stock)) errors.push(`Stok ${product.name} tidak mencukupi.`);
+    wantedPerProduct.set(it.productId, (wantedPerProduct.get(it.productId) || 0) + it.qty);
+  }
+  for (const [productId, wanted] of wantedPerProduct) {
+    const product = products.find((p) => Number(p.id) === productId);
+    if (product && wanted > Number(product.stock)) {
+      errors.push(`Stok ${product.name} tidak mencukupi (diminta ${wanted}, sisa ${product.stock}).`);
+    }
   }
   const status = ORDER_STATUSES.some((o) => o.value === values.status && o.value !== 'dibatalkan')
     ? values.status
     : 'selesai';
   if (errors.length) return rerender(errors);
 
+  // No account picked, but the admin asked for one: reuse the account that
+  // number already has, or make a new one. Done before the order is created so
+  // the sale is linked from the start and its stamps land on the right card.
+  let linkedCustomerId = customerId ? Number(customerId) : null;
+  let newAccount = null;
+  if (!linkedCustomerId && values.buatAkun && normalized) {
+    const existing = await customerAuth.findByWhatsapp(normalized);
+    if (existing) {
+      linkedCustomerId = Number(existing.id);
+    } else {
+      // Nobody ever sees this password — not the customer, not the admin who
+      // typed the order. It exists only so the row is valid; a customer who
+      // later wants to sign in goes through Lupa Password, which is already an
+      // admin-verified flow. That's safer than handing out a password over the
+      // counter and hoping it reaches the right person.
+      const password = crypto.randomBytes(24).toString('hex');
+      const created = await customerAuth.createCustomer({
+        whatsapp: normalized,
+        name: values.customerName,
+        password,
+        address: values.address,
+        birthday: null,
+      });
+      linkedCustomerId = Number(created.id);
+      newAccount = { id: linkedCustomerId, whatsapp: normalized, name: values.customerName };
+      await logAdminAction(
+        req.admin,
+        'customer.create',
+        `${values.customerName} (${formatWhatsapp(normalized)}) — dibuat otomatis dari pesanan manual`
+      );
+    }
+  }
+
   // The same benefits the website would apply, so a manually entered sale and
   // a self-service one are priced identically.
-  const session = customerId ? { customerId: Number(customerId) } : null;
+  const session = linkedCustomerId ? { customerId: linkedCustomerId } : null;
   const cartItems = items.map((it) => ({
     product: products.find((p) => Number(p.id) === it.productId),
     qty: it.qty,
@@ -1555,32 +1785,79 @@ router.post('/admin/pesanan/tambah', requireAdmin(async (req, res) => {
       proofFilename: null,
       address: values.address,
       deliveryDate: values.deliveryDate,
-      customerId: customerId ? Number(customerId) : null,
+      customerId: linkedCustomerId,
       useReward,
       voucherCode: null,
       deliveryFee: Number(values.deliveryFee),
       tier: membership.tier || {},
       taxPercent,
+      // Backdating a sale to the day it really happened, so the revenue
+      // report and the daily figures line up with the shop's own books.
+      dateKey: values.orderDate || undefined,
     });
   } catch (err) {
     console.error(err);
     return rerender([extractPgErrorMessage(err) || 'Gagal menyimpan pesanan. Coba lagi.']);
   }
 
+  // created_at drives "when was this ordered" everywhere it's displayed, so a
+  // backdated sale moves that too — at noon on that day, which keeps it inside
+  // the same Jakarta calendar day whatever the server's clock is doing.
+  if (values.orderDate && values.orderDate !== todayKeyNow) {
+    await queries.setOrderPlacedAt(order.id, values.orderDate);
+  }
+  await queries.setOrderPaid(order.id, values.paid, { at: values.orderDate || null });
+
   // create_order always starts an order at 'menunggu'; apply the chosen state
   // and let the stamp rule follow from it, exactly as the status page does.
   if (status !== 'menunggu') await queries.updateOrderStatus(order.id, status);
-  if (customerId && status === 'selesai') await loyalty.grantForOrder(Number(customerId), order.id);
+  if (linkedCustomerId && status === 'selesai') await loyalty.grantForOrder(linkedCustomerId, order.id);
 
   await logAdminAction(
     req.admin,
     'order.manual_create',
-    `${order.orderNumber} — ${values.customerName} (${items.reduce((n, it) => n + it.qty, 0)} cup, ${status})`
+    `${order.orderNumber} — ${values.customerName} (${items.reduce((n, it) => n + it.qty, 0)} cup, ${status}, ` +
+      `${values.paid ? 'sudah dibayar' : 'BELUM dibayar'}` +
+      `${newAccount ? ', akun pelanggan baru dibuat' : linkedCustomerId ? ', ditautkan ke akun pelanggan' : ', tanpa akun'}` +
+      `${values.orderDate && values.orderDate !== todayKeyNow ? `, dicatat untuk tanggal ${values.orderDate}` : ''})`
   );
-  redirect(res, `/admin/pesanan/${order.id}`);
+  redirect(
+    res,
+    `/admin/pesanan/${order.id}` +
+      (newAccount
+        ? '?flash=' +
+          encodeURIComponent(
+            `Akun pelanggan dibuat untuk ${newAccount.name} (${formatWhatsapp(newAccount.whatsapp)}) — ` +
+              'stempelnya sudah masuk ke akun itu. Kalau nanti mau masuk sendiri ke website, ' +
+              'pelanggan pakai menu "Lupa Password" dan kamu yang menyetujui kodenya.'
+          )
+        : '')
+  );
 }));
 
-router.get('/admin/pesanan/:id', requireAdmin(async (req, res, { query }) => {
+// Marking the money as received (or not). Its own permission-checked route
+// rather than part of the status form: fulfilment and payment move
+// independently, and conflating them is how "selesai but never paid" gets lost.
+router.post('/admin/pesanan/:id/bayar', requirePermission('pesanan.status', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const order = await queries.getOrder(id);
+  if (!order) return notFound(res, req);
+
+  const paid = fields.paid === '1';
+  if (Boolean(order.paid) === paid) return redirect(res, `/admin/pesanan/${id}`);
+  await queries.setOrderPaid(id, paid);
+  await logAdminAction(
+    req.admin,
+    'order.payment',
+    `${order.order_number} (${order.customer_name}): ${order.paid ? 'sudah dibayar' : 'belum dibayar'} → ${
+      paid ? 'sudah dibayar' : 'belum dibayar'
+    } (${formatRupiah(order.total)})`
+  );
+  redirect(res, `/admin/pesanan/${id}?flash=` + encodeURIComponent(paid ? 'Ditandai sudah dibayar.' : 'Ditandai belum dibayar.'));
+}));
+
+router.get('/admin/pesanan/:id', requirePermission('pesanan.lihat', async (req, res, { query }) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
   const items = await queries.getOrderItems(order.id);
@@ -1608,7 +1885,7 @@ router.get('/admin/pesanan/:id', requireAdmin(async (req, res, { query }) => {
   );
 }));
 
-router.post('/admin/pesanan/:id/tukar-stempel', requireAdmin(async (req, res) => {
+router.post('/admin/pesanan/:id/tukar-stempel', requirePermission('pelanggan.stempel', async (req, res) => {
   const order = await queries.getOrder(Number(req.params.id));
   if (!order) return notFound(res);
   if (!order.customer_id) return redirect(res, `/admin/pesanan/${req.params.id}`);
@@ -1622,7 +1899,7 @@ router.post('/admin/pesanan/:id/tukar-stempel', requireAdmin(async (req, res) =>
   redirect(res, `/admin/pesanan/${req.params.id}`);
 }));
 
-router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
+router.post('/admin/pesanan/:id/status', requirePermission('pesanan.status', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   // Only the known states are accepted. An unrecognised value changes nothing:
@@ -1657,10 +1934,12 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
     await queries.updateOrderStatus(id, status);
   }
 
-  // Completing an order earns a stamp; moving it back out takes an unspent
-  // one away again. A cancelled order must not hold a stamp either.
+  // Completing an order earns stamps — one per cup, automatically, the moment
+  // the status becomes Selesai. Moving it back out takes the unspent ones away
+  // again, and a cancelled order must not hold any either.
+  let stampsGranted = 0;
   if (order.customer_id) {
-    if (status === 'selesai') await loyalty.grantForOrder(Number(order.customer_id), id);
+    if (status === 'selesai') stampsGranted = await loyalty.grantForOrder(Number(order.customer_id), id);
     else if (order.status === 'selesai' || nowCancelled) await loyalty.revokeForOrder(id);
   }
 
@@ -1672,7 +1951,11 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
     // checking whether a stamp or a stock movement was correct.
     `${order.order_number} (${order.customer_name}): ${order.status} → ${status}` +
       (nowCancelled !== wasCancelled ? (nowCancelled ? ', stok dikembalikan' : ', stok dipotong lagi') : '') +
-      (order.customer_id && status === 'selesai' ? ', stempel diberikan' : '') +
+      (order.customer_id && status === 'selesai'
+        ? stampsGranted > 0
+          ? `, ${stampsGranted} stempel diberikan (1 per cup)`
+          : ', stempel sudah pernah diberikan'
+        : '') +
       (order.customer_id && order.status === 'selesai' && status !== 'selesai' ? ', stempel ditarik' : '')
   );
   redirect(res, `/admin/pesanan/${id}`);
@@ -1682,12 +1965,14 @@ router.post('/admin/pesanan/:id/status', requireAdmin(async (req, res) => {
 // admin: shop settings & promo codes (superadmin only)
 // ---------------------------------------------------------------------
 
-router.get('/admin/pengaturan', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/pengaturan', requirePermission('pengaturan.kelola', async (req, res, { query }) => {
+  const shopNow = await settings.shopConfig();
   sendHtml(
     res,
     adminViews.renderPengaturan({
       admin: req.admin,
-      shop: await settings.shopConfig(),
+      shop: shopNow,
+      nextOpenDates: settings.openDeliveryDates(shopNow),
       retention: {
         ...(await retention.policy()),
         lastRun: (await settings.getAll()).last_prune_at || '',
@@ -1698,8 +1983,8 @@ router.get('/admin/pengaturan', requireSuperadmin(async (req, res, { query }) =>
   );
 }));
 
-router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
-  const { fields } = await parseBody(req);
+router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', async (req, res) => {
+  const { fields, fieldLists } = await parseBody(req);
   const num = (value) => Math.max(0, Math.round(Number(value) || 0));
   const cutoff = (fields.sameDayCutoff || '').trim();
   const openTime = (fields.openTime || '').trim();
@@ -1727,6 +2012,18 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     // doesn't silently fall back to a different number than it had before.
     tax_enabled: fields.taxEnabled ? '1' : '0',
     tax_percent: Math.min(100, num(fields.taxPercent)),
+    // Delivery days. The weekday boxes post one value each, so they come from
+    // fieldLists; the two date lists are free text and are cleaned to real
+    // 'YYYY-MM-DD' keys here so nothing unparseable can reach the rules.
+    delivery_days: (fieldLists.deliveryDays || [])
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+      .sort()
+      .join(','),
+    delivery_closed_dates: cleanDateList(fields.deliveryClosedDates),
+    delivery_open_dates: cleanDateList(fields.deliveryOpenDates),
+    delivery_horizon_days: String(Math.min(60, Math.max(1, num(fields.deliveryHorizon) || 14))),
+    delivery_date_mode: fields.deliveryDateMode === 'pilihan' ? 'pilihan' : 'kalender',
     // 0 is meaningful here (keep forever), so these are clamped rather than
     // coerced through the falsy-to-default path the money fields use.
     retention_proof_days: Math.min(3650, num(fields.retentionProofDays)),
@@ -1745,6 +2042,23 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
     { key: 'delivery_fee', label: 'ongkir', format: rupiah },
     { key: 'free_delivery_over', label: 'gratis ongkir di atas', format: rupiah },
     { key: 'same_day_cutoff', label: 'batas pesan hari ini' },
+    {
+      key: 'delivery_days',
+      label: 'hari antar',
+      format: (v) => {
+        const names = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+        const list = String(v || '').split(',').filter(Boolean).map((d) => names[Number(d)]);
+        return list.length ? list.join(', ') : 'setiap hari';
+      },
+    },
+    { key: 'delivery_closed_dates', label: 'tanggal ditutup' },
+    { key: 'delivery_open_dates', label: 'tanggal dibuka khusus' },
+    { key: 'delivery_horizon_days', label: 'tampil berapa hari ke depan' },
+    {
+      key: 'delivery_date_mode',
+      label: 'cara pilih tanggal',
+      format: (v) => (String(v) === 'pilihan' ? 'daftar tanggal' : 'kalender'),
+    },
     { key: 'tax_enabled', label: 'PPN', format: (v) => (String(v) === '1' ? 'aktif' : 'nonaktif') },
     { key: 'tax_percent', label: 'tarif PPN', format: (v) => `${Number(v) || 0}%` },
     { key: 'open_time', label: 'jam buka' },
@@ -1756,7 +2070,7 @@ router.post('/admin/pengaturan/toko', requireSuperadmin(async (req, res) => {
   redirect(res, '/admin/pengaturan?flash=' + encodeURIComponent('Pengaturan toko disimpan.'));
 }));
 
-router.get('/admin/voucher', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/voucher', requirePermission('voucher.kelola', async (req, res, { query }) => {
   sendHtml(
     res,
     adminViews.renderVoucher({
@@ -1769,7 +2083,7 @@ router.get('/admin/voucher', requireSuperadmin(async (req, res, { query }) => {
   );
 }));
 
-router.post('/admin/voucher/tambah', requireSuperadmin(async (req, res) => {
+router.post('/admin/voucher/tambah', requirePermission('voucher.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const result = await vouchers.create({
     code: fields.code,
@@ -1790,7 +2104,7 @@ router.post('/admin/voucher/tambah', requireSuperadmin(async (req, res) => {
   redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${result.code} dibuat.`));
 }));
 
-router.post('/admin/voucher/:id/toggle', requireSuperadmin(async (req, res) => {
+router.post('/admin/voucher/:id/toggle', requirePermission('voucher.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const all = await vouchers.list();
@@ -1806,7 +2120,7 @@ router.post('/admin/voucher/:id/toggle', requireSuperadmin(async (req, res) => {
   redirect(res, '/admin/voucher?flash=' + encodeURIComponent(`Kode ${target.code} diperbarui.`));
 }));
 
-router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
+router.post('/admin/voucher/:id/hapus', requirePermission('voucher.kelola', async (req, res) => {
   const id = Number(req.params.id);
   const all = await vouchers.list();
   const target = all.find((v) => Number(v.id) === id);
@@ -1829,7 +2143,7 @@ router.post('/admin/voucher/:id/hapus', requireSuperadmin(async (req, res) => {
 // service, and approving a reset never reveals or sets a password — the
 // customer picks their own with the one-time code.
 
-router.get('/admin/reset-sandi', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/reset-sandi', requirePermission('reset_sandi.kelola', async (req, res, { query }) => {
   sendHtml(
     res,
     adminViews.renderResetSandi({
@@ -1840,7 +2154,7 @@ router.get('/admin/reset-sandi', requireAdmin(async (req, res, { query }) => {
   );
 }));
 
-router.post('/admin/reset-sandi/:id/setujui', requireAdmin(async (req, res) => {
+router.post('/admin/reset-sandi/:id/setujui', requirePermission('reset_sandi.kelola', async (req, res) => {
   const id = Number(req.params.id);
   const result = await passwordReset.approve(id, req.admin.username);
   const requests = await passwordReset.listRequests();
@@ -1876,7 +2190,7 @@ router.post('/admin/reset-sandi/:id/setujui', requireAdmin(async (req, res) => {
   );
 }));
 
-router.post('/admin/reset-sandi/:id/tolak', requireAdmin(async (req, res) => {
+router.post('/admin/reset-sandi/:id/tolak', requirePermission('reset_sandi.kelola', async (req, res) => {
   const rejectId = Number(req.params.id);
   // Was "Permintaan #12", which named nobody. The request is read before it is
   // rejected so the entry can say whose reset was turned down.
@@ -1894,7 +2208,7 @@ router.post('/admin/reset-sandi/:id/tolak', requireAdmin(async (req, res) => {
 
 // Open to every admin: they already see each order's total on the Pesanan
 // page, so this exposes no new information — it just adds them up.
-router.get('/admin/laporan', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/laporan', requirePermission('laporan.lihat', async (req, res, { query }) => {
   const todayKey = toDateKey(new Date());
   const requested = query.get('rentang') || '';
   const hasExplicitDates = query.get('dari') !== null || query.get('sampai') !== null;
@@ -1917,14 +2231,234 @@ router.get('/admin/laporan', requireAdmin(async (req, res, { query }) => {
     groupBy: view.kelompok,
   });
 
-  sendHtml(res, adminViews.renderLaporan({ admin: req.admin, report, view, activePreset, todayKey }));
+  // The profit half of the page is its own permission: an admin can be trusted
+  // with the sales figures without being shown what the shop actually keeps.
+  const showProfit = req.can('laba.lihat');
+  const expenses = showProfit
+    ? await inventory.expenseTotals({ from: view.dari, to: view.sampai })
+    : null;
+
+  sendHtml(
+    res,
+    adminViews.renderLaporan({
+      admin: req.admin,
+      report,
+      view,
+      activePreset,
+      todayKey,
+      showProfit,
+      expenses,
+    })
+  );
+}));
+
+// ---------------------------------------------------------------------
+// admin: stockroom & expenses (never shown to a shopper)
+// ---------------------------------------------------------------------
+// The cost side of the business: what the shop buys, what each cup consumes,
+// and what it pays out. Both pages are behind their own permission, so a
+// counter admin can be given the order screens without ever seeing margins.
+
+router.get('/admin/inventaris', requirePermission('inventaris.kelola', async (req, res, { query }) => {
+  const wanted = Number(query.get('ubah')) || 0;
+  const [items, value, editing] = await Promise.all([
+    inventory.listItems(),
+    inventory.stockValue(),
+    wanted ? inventory.getItem(wanted) : null,
+  ]);
+  sendHtml(
+    res,
+    inventoryViews.renderInventaris({
+      admin: req.admin,
+      items,
+      units: inventory.UNITS,
+      totalValue: value.value,
+      editing,
+      history: editing ? await inventory.itemHistory(editing.id, 12) : [],
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/inventaris/tambah', requirePermission('inventaris.kelola', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const result = await inventory.createItem({
+    name: fields.nama,
+    unit: fields.satuan,
+    stock: fields.stok,
+    unitCost: fields.harga,
+    lowThreshold: fields.batas,
+    by: req.admin.username,
+  });
+  if (!result.ok) return redirect(res, '/admin/inventaris?error=' + encodeURIComponent(result.error));
+  await logAdminAction(
+    req.admin,
+    'inventory.create',
+    `${String(fields.nama).trim()} — stok awal ${Math.round(Number(fields.stok) || 0)} ${fields.satuan || 'pcs'}, ` +
+      `harga ${formatRupiah(Number(fields.harga) || 0)}/satuan`
+  );
+  redirect(res, '/admin/inventaris?flash=' + encodeURIComponent('Barang ditambahkan.'));
+}));
+
+router.post('/admin/inventaris/:id/ubah', requirePermission('inventaris.kelola', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const before = await inventory.getItem(id);
+  if (!before) return notFound(res, req);
+
+  const result = await inventory.updateItem(id, {
+    name: fields.nama,
+    unit: fields.satuan,
+    unitCost: fields.harga,
+    lowThreshold: fields.batas,
+    active: Boolean(fields.aktif),
+    note: fields.catatan,
+  });
+  if (!result.ok) return redirect(res, '/admin/inventaris?error=' + encodeURIComponent(result.error));
+
+  const after = await inventory.getItem(id);
+  const summary = changeSummary(before, after, [
+    { label: 'nama', get: (i) => i.name },
+    { label: 'satuan', get: (i) => i.unit },
+    { label: 'harga/satuan', get: (i) => i.unitCost, format: (v) => formatRupiah(v) },
+    { label: 'batas peringatan', get: (i) => i.lowThreshold },
+    { label: 'status', get: (i) => (i.active ? 'dipakai' : 'tidak dipakai') },
+    { label: 'catatan', get: (i) => i.note || '' },
+  ]);
+  await logAdminAction(req.admin, 'inventory.update', `${before.name}: ${summary}`);
+  redirect(res, '/admin/inventaris?flash=' + encodeURIComponent(`${after.name} disimpan.`));
+}));
+
+// Adding stock. If the total paid is filled in it does two things at once:
+// moves the quantity, and records the money as an expense — which is what
+// keeps "laba bersih" honest without anyone having to remember to type it
+// twice. It also refreshes the unit cost from what was actually just paid.
+router.post('/admin/inventaris/:id/stok', requirePermission('inventaris.kelola', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const item = await inventory.getItem(id);
+  if (!item) return notFound(res, req);
+
+  const qty = Math.round(Number(fields.jumlah) || 0);
+  const spent = Math.max(0, Math.round(Number(fields.totalHarga) || 0));
+  if (!qty) return redirect(res, '/admin/inventaris?error=' + encodeURIComponent('Isi jumlahnya dulu.'));
+
+  const moved = await inventory.adjustStock(id, qty, {
+    reason: qty > 0 && spent > 0 ? 'pembelian' : 'penyesuaian',
+    note: spent > 0 ? `beli ${qty} ${item.unit} seharga ${formatRupiah(spent)}` : '',
+    by: req.admin.username,
+  });
+  if (!moved.ok) return redirect(res, '/admin/inventaris?error=' + encodeURIComponent(moved.error));
+
+  let expenseNote = '';
+  if (spent > 0 && qty > 0) {
+    await inventory.addExpense({
+      dateKey: toDateKey(new Date()),
+      category: 'Kemasan',
+      description: `Beli ${qty} ${item.unit} ${item.name}`,
+      amount: spent,
+      itemId: id,
+      by: req.admin.username,
+    });
+    // The price of the last purchase is the honest figure for what a cup
+    // costs today, so the margin follows the market rather than a number
+    // typed once and forgotten.
+    await inventory.updateItem(id, {
+      name: item.name,
+      unit: item.unit,
+      unitCost: Math.round(spent / qty),
+      lowThreshold: item.lowThreshold,
+      active: item.active,
+      note: item.note,
+    });
+    expenseNote = ` dan dicatat sebagai pengeluaran ${formatRupiah(spent)}`;
+  }
+
+  await logAdminAction(
+    req.admin,
+    'inventory.stock',
+    `${item.name}: ${qty > 0 ? '+' : ''}${qty} ${item.unit} (${item.stock} → ${moved.stock})` +
+      (spent > 0 ? `, dibeli ${formatRupiah(spent)} → harga/satuan jadi ${formatRupiah(Math.round(spent / qty))}` : '')
+  );
+  redirect(
+    res,
+    '/admin/inventaris?flash=' +
+      encodeURIComponent(`Stok ${item.name} sekarang ${moved.stock} ${item.unit}${expenseNote}.`)
+  );
+}));
+
+router.post('/admin/inventaris/:id/hapus', requirePermission('inventaris.kelola', async (req, res) => {
+  const id = Number(req.params.id);
+  const item = await inventory.getItem(id);
+  if (!item) return notFound(res, req);
+  await inventory.deleteItem(id);
+  await logAdminAction(req.admin, 'inventory.delete', `${item.name} (sisa ${item.stock} ${item.unit})`);
+  redirect(res, '/admin/inventaris?flash=' + encodeURIComponent(`${item.name} dihapus dari daftar bahan.`));
+}));
+
+router.get('/admin/pengeluaran', requirePermission('pengeluaran.kelola', async (req, res, { query }) => {
+  const view = {
+    dari: (query.get('dari') || '').trim(),
+    sampai: (query.get('sampai') || '').trim(),
+    kategori: (query.get('kategori') || '').trim(),
+  };
+  const [expenses, totals] = await Promise.all([
+    inventory.listExpenses({ from: view.dari, to: view.sampai, category: view.kategori }),
+    inventory.expenseTotals({ from: view.dari, to: view.sampai }),
+  ]);
+  sendHtml(
+    res,
+    inventoryViews.renderPengeluaran({
+      admin: req.admin,
+      expenses,
+      categories: inventory.EXPENSE_CATEGORIES,
+      totals,
+      view,
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/pengeluaran/tambah', requirePermission('pengeluaran.kelola', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const result = await inventory.addExpense({
+    dateKey: (fields.tanggal || '').trim(),
+    category: fields.kategori,
+    description: fields.keterangan,
+    amount: fields.nominal,
+    by: req.admin.username,
+  });
+  if (!result.ok) return redirect(res, '/admin/pengeluaran?error=' + encodeURIComponent(result.error));
+  await logAdminAction(
+    req.admin,
+    'expense.create',
+    `${formatRupiah(Number(fields.nominal) || 0)} — ${fields.kategori || 'Lain-lain'}` +
+      (String(fields.keterangan || '').trim() ? ` (${String(fields.keterangan).trim()})` : '') +
+      ` pada ${(fields.tanggal || '').trim() || toDateKey(new Date())}`
+  );
+  redirect(res, '/admin/pengeluaran?flash=' + encodeURIComponent('Pengeluaran dicatat.'));
+}));
+
+router.post('/admin/pengeluaran/:id/hapus', requirePermission('pengeluaran.kelola', async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await inventory.getExpense(id);
+  if (!row) return notFound(res, req);
+  await inventory.deleteExpense(id);
+  await logAdminAction(
+    req.admin,
+    'expense.delete',
+    `${formatRupiah(row.amount)} — ${row.category}${row.description ? ` (${row.description})` : ''} pada ${row.date_key}`
+  );
+  redirect(res, '/admin/pengeluaran?flash=' + encodeURIComponent('Pengeluaran dihapus.'));
 }));
 
 // ---------------------------------------------------------------------
 // admin: accounts (superadmin only)
 // ---------------------------------------------------------------------
 
-router.get('/admin/akun', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/akun', requirePermission('admin.kelola', async (req, res, { query }) => {
   const admins = await adminAuth.listAdmins();
   sendHtml(
     res,
@@ -1937,7 +2471,7 @@ router.get('/admin/akun', requireSuperadmin(async (req, res, { query }) => {
   );
 }));
 
-router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
+router.post('/admin/akun/tambah', requirePermission('admin.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const username = (fields.username || '').trim();
   const password = fields.password || '';
@@ -1946,15 +2480,27 @@ router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
   let error = null;
   if (!username) error = 'Username wajib diisi.';
   else if (password.length < 6) error = 'Password minimal 6 karakter.';
+  // Only the owner mints another owner. Without this, "kelola akun" would be a
+  // one-dropdown route to giving yourself everything.
+  else if (role === 'superadmin' && !req.isSuperadmin) {
+    error = 'Hanya superadmin yang bisa membuat akun superadmin.';
+  }
 
   if (error) {
     return redirect(res, '/admin/akun?error=' + encodeURIComponent(error));
   }
 
   try {
-    await adminAuth.createAdmin({ username, password, role });
-    await logAdminAction(req.admin, 'admin.create', `${username} (${role})`);
-    redirect(res, '/admin/akun');
+    // No permissions to start with: the next screen is where they're chosen,
+    // so a new account can never exist with more access than was decided.
+    const newId = await adminAuth.createAdmin({ username, password, role, permissions: [] });
+    await logAdminAction(req.admin, 'admin.create', `${username} (${role}) — belum diberi izin apa pun`);
+    return redirect(
+      res,
+      role === 'superadmin'
+        ? '/admin/akun?flash=' + encodeURIComponent(`Superadmin ${username} dibuat.`)
+        : `/admin/akun/${newId}/izin?flash=` + encodeURIComponent(`Akun ${username} dibuat. Sekarang pilih izinnya.`)
+    );
   } catch (err) {
     const message = /unique/i.test(err.message) ? 'Username sudah dipakai.' : 'Gagal menambahkan admin.';
     redirect(res, '/admin/akun?error=' + encodeURIComponent(message));
@@ -1964,13 +2510,21 @@ router.post('/admin/akun/tambah', requireSuperadmin(async (req, res) => {
 // Superadmin resetting another admin's password. The plaintext is hashed by
 // adminAuth and never stored or logged — the log records only who changed
 // whose password.
-router.post('/admin/akun/:id/password', requireSuperadmin(async (req, res) => {
+router.post('/admin/akun/:id/password', requirePermission('admin.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const password = fields.password || '';
 
   const target = await adminAuth.findAdminById(id);
   if (!target) return notFound(res);
+  // Resetting someone's password is taking their account. Only the owner may
+  // do that to another owner.
+  if (!permissions.canManage(req.admin, target)) {
+    return redirect(
+      res,
+      '/admin/akun?error=' + encodeURIComponent('Hanya superadmin yang bisa mengubah akun superadmin.')
+    );
+  }
   if (password.length < 6) {
     return redirect(res, '/admin/akun?error=' + encodeURIComponent('Password minimal 6 karakter.'));
   }
@@ -1980,7 +2534,77 @@ router.post('/admin/akun/:id/password', requireSuperadmin(async (req, res) => {
   redirect(res, '/admin/akun?flash=' + encodeURIComponent(`Password ${target.username} berhasil diganti.`));
 }));
 
-router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
+// The allowance editor: one page per admin, one tick box per thing they may
+// reach. Registered before /admin/akun/:id/hapus only for readability — the
+// paths don't collide.
+router.get('/admin/akun/:id/izin', requirePermission('admin.kelola', async (req, res, { query }) => {
+  const target = await adminAuth.findAdminById(Number(req.params.id));
+  if (!target) return notFound(res);
+  if (!permissions.canManage(req.admin, target)) return forbidden(req, res, 'admin.kelola');
+
+  sendHtml(
+    res,
+    adminViews.renderAdminIzin({
+      admin: req.admin,
+      target,
+      catalog: permissions.CATALOG,
+      presets: permissions.PRESETS,
+      granted: permissions.permissionsFor(target),
+      // Nobody can hand out more than they hold themselves.
+      grantable: permissions.grantableBy(req.admin),
+      flash: query.get('flash') || '',
+      error: query.get('error') || '',
+    })
+  );
+}));
+
+router.post('/admin/akun/:id/izin', requirePermission('admin.kelola', async (req, res) => {
+  // fieldLists, not fields: a tick-box group posts the same name many times and
+  // `fields` deliberately keeps only the last value of a repeated name.
+  const { fieldLists } = await parseBody(req);
+  const target = await adminAuth.findAdminById(Number(req.params.id));
+  if (!target) return notFound(res);
+  if (!permissions.canManage(req.admin, target)) return forbidden(req, res, 'admin.kelola');
+  if (target.role === 'superadmin') {
+    return redirect(
+      res,
+      `/admin/akun/${target.id}/izin?error=` +
+        encodeURIComponent('Superadmin selalu punya semua izin. Ubah perannya dulu kalau mau dibatasi.')
+    );
+  }
+
+  const wanted = fieldLists.izin || [];
+  const before = permissions.permissionsFor(target);
+  // limitGrant drops anything the editor doesn't hold, and keeps whatever the
+  // target already had that the editor couldn't have granted — so editing
+  // someone's boxes can neither escalate them nor quietly strip an allowance
+  // the editor wasn't even shown.
+  const after = permissions.limitGrant(req.admin, wanted, { keep: before });
+  await adminAuth.setAdminPermissions(target.id, after);
+
+  const added = after.filter((k) => !before.includes(k));
+  const removed = before.filter((k) => !after.includes(k));
+  const parts = [];
+  if (added.length) parts.push(`+ ${permissions.describe(added)}`);
+  if (removed.length) parts.push(`− ${permissions.describe(removed)}`);
+  await logAdminAction(
+    req.admin,
+    'admin.permissions',
+    parts.length
+      ? `${target.username}: ${parts.join(' | ')} (total ${after.length} izin)`
+      : `${target.username}: disimpan tanpa perubahan (${after.length} izin)`
+  );
+
+  redirect(
+    res,
+    `/admin/akun/${target.id}/izin?flash=` +
+      encodeURIComponent(
+        parts.length ? `Izin ${target.username} disimpan.` : `Tidak ada yang berubah untuk ${target.username}.`
+      )
+  );
+}));
+
+router.post('/admin/akun/:id/hapus', requirePermission('admin.kelola', async (req, res) => {
   const id = Number(req.params.id);
 
   if (id === req.admin.adminId) {
@@ -1988,6 +2612,12 @@ router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
   }
   const target = await adminAuth.findAdminById(id);
   if (!target) return notFound(res);
+  if (!permissions.canManage(req.admin, target)) {
+    return redirect(
+      res,
+      '/admin/akun?error=' + encodeURIComponent('Hanya superadmin yang bisa menghapus akun superadmin.')
+    );
+  }
   if (target.role === 'superadmin') {
     const remaining = await adminAuth.countSuperadmins();
     if (remaining <= 1) {
@@ -2006,7 +2636,7 @@ router.post('/admin/akun/:id/hapus', requireSuperadmin(async (req, res) => {
 
 // Looking a customer up is day-to-day work, so every admin can search and
 // read. Changing stamps (below) stays superadmin-only.
-router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pelanggan', requirePermission('pelanggan.lihat', async (req, res, { query }) => {
   const search = (query.get('q') || '').trim();
   const view = {
     urut: query.get('urut') || 'baru',
@@ -2036,7 +2666,7 @@ router.get('/admin/pelanggan', requireAdmin(async (req, res, { query }) => {
 
 // Registered with /:id below it, so this literal path has to be declared
 // first or "unduh" would be read as a customer id.
-router.get('/admin/pelanggan/unduh', requireSuperadmin(async (req, res) => {
+router.get('/admin/pelanggan/unduh', requirePermission('pelanggan.unduh', async (req, res) => {
   const customers = await loyalty.listCustomersWithLoyalty({ limit: 500 });
   const header = [
     'Nama',
@@ -2080,7 +2710,7 @@ router.get('/admin/pelanggan/unduh', requireSuperadmin(async (req, res) => {
 //
 // Open to every admin, like the manual-order page it serves — and like the
 // customer search page, which already shows the same names and numbers.
-router.get('/admin/pelanggan/cari', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pelanggan/cari', requirePermission('pelanggan.lihat', async (req, res, { query }) => {
   const q = String(query.get('q') || '').trim().slice(0, 80);
   if (!q) return sendJson(res, { customers: [] });
   const rows = await loyalty.searchCustomersForPicker(q, 20);
@@ -2095,7 +2725,7 @@ router.get('/admin/pelanggan/cari', requireAdmin(async (req, res, { query }) => 
   });
 }));
 
-router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
+router.get('/admin/pelanggan/:id', requirePermission('pelanggan.lihat', async (req, res, { query }) => {
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
   if (!customer) return notFound(res);
@@ -2146,7 +2776,7 @@ router.get('/admin/pelanggan/:id', requireAdmin(async (req, res, { query }) => {
 }));
 
 // The programme rulebook — separate tab, superadmin only.
-router.get('/admin/loyalitas', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/loyalitas', requirePermission('loyalitas.kelola', async (req, res, { query }) => {
   const [perReward, all, tierConfig, stats] = await Promise.all([
     settings.stampsPerReward(),
     settings.getAll(),
@@ -2167,7 +2797,7 @@ router.get('/admin/loyalitas', requireSuperadmin(async (req, res, { query }) => 
   );
 }));
 
-router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/:id/stempel', requirePermission('pelanggan.stempel', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
@@ -2188,7 +2818,7 @@ router.post('/admin/pelanggan/:id/stempel', requireSuperadmin(async (req, res) =
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Stempel ${customer.name} diperbarui.`));
 }));
 
-router.post('/admin/pelanggan/:id/ubah', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/:id/ubah', requirePermission('pelanggan.ubah', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
@@ -2233,7 +2863,7 @@ router.post('/admin/pelanggan/:id/ubah', requireSuperadmin(async (req, res) => {
 }));
 
 // Same rule as the admin reset above: hashed on write, plaintext never kept.
-router.post('/admin/pelanggan/:id/password', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/:id/password', requirePermission('pelanggan.ubah', async (req, res) => {
   const { fields } = await parseBody(req);
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
@@ -2252,7 +2882,7 @@ router.post('/admin/pelanggan/:id/password', requireSuperadmin(async (req, res) 
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Password ${customer.name} berhasil diganti.`));
 }));
 
-router.post('/admin/pelanggan/:id/hapus', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/:id/hapus', requirePermission('pelanggan.ubah', async (req, res) => {
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
   if (!customer) return notFound(res);
@@ -2262,7 +2892,7 @@ router.post('/admin/pelanggan/:id/hapus', requireSuperadmin(async (req, res) => 
   redirect(res, '/admin/pelanggan?flash=' + encodeURIComponent(`Akun ${customer.name} dihapus.`));
 }));
 
-router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => {
+router.post('/admin/pelanggan/:id/klaim', requirePermission('pelanggan.stempel', async (req, res) => {
   const id = Number(req.params.id);
   const customer = await customerAuth.findById(id);
   if (!customer) return notFound(res);
@@ -2278,7 +2908,7 @@ router.post('/admin/pelanggan/:id/klaim', requireSuperadmin(async (req, res) => 
   redirect(res, `/admin/pelanggan/${id}?flash=` + encodeURIComponent(`Cup gratis ${customer.name} ditukar.`));
 }));
 
-router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
+router.post('/admin/pengaturan/stempel', requirePermission('loyalitas.kelola', async (req, res) => {
   const { fields } = await parseBody(req);
   const perReward = Number(fields.perReward);
   const expiryMonths = Number(fields.expiryMonths);
@@ -2300,7 +2930,7 @@ router.post('/admin/pengaturan/stempel', requireSuperadmin(async (req, res) => {
   redirect(res, '/admin/loyalitas?flash=' + encodeURIComponent('Aturan stempel disimpan.'));
 }));
 
-router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
+router.post('/admin/pengaturan/tier', requirePermission('loyalitas.kelola', async (req, res) => {
   const { fields, fieldLists } = await parseBody(req);
 
   // Each tier row posts one value per field, in display order; the perk
@@ -2334,7 +2964,7 @@ router.post('/admin/pengaturan/tier', requireSuperadmin(async (req, res) => {
 
 // CSV of the activity log, honouring whatever filters are on screen — the
 // export follows the filters, not just the visible page.
-router.get('/admin/log-aktivitas/export', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/log-aktivitas/export', requirePermission('log.lihat', async (req, res, { query }) => {
   const dari = query.get('dari') || '';
   const sampai = query.get('sampai') || '';
   const logs = await queryAllAdminLogs({
@@ -2370,7 +3000,7 @@ router.get('/admin/log-aktivitas/export', requireSuperadmin(async (req, res, { q
   res.end(csv);
 }));
 
-router.get('/admin/log-aktivitas', requireSuperadmin(async (req, res, { query }) => {
+router.get('/admin/log-aktivitas', requirePermission('log.lihat', async (req, res, { query }) => {
   const filters = {
     dari: query.get('dari') || '',
     sampai: query.get('sampai') || '',
@@ -2419,21 +3049,51 @@ function requireAdmin(handler) {
   };
 }
 
-// Admin-account management and the activity log are superadmin-only —
-// regular admins keep full access to products and orders (the day-to-day
-// work) but can't manage who else has access or see the audit trail.
+// Kept for the handful of things that are the owner's alone no matter what is
+// ticked: creating or removing a superadmin, and the account list itself.
 function requireSuperadmin(handler) {
   return (req, res, extra) => {
     if (!req.isAdmin) return redirect(res, '/admin/login');
-    if (!req.isSuperadmin) {
-      return sendHtml(
-        res,
-        '<h1>403</h1><p>Hanya superadmin yang bisa mengakses halaman ini. <a href="/admin/produk">Kembali</a></p>',
-        403
-      );
-    }
+    if (!req.isSuperadmin) return forbidden(req, res);
     return handler(req, res, extra);
   };
+}
+
+// Everything else is a named permission a superadmin ticks per account (see
+// src/permissions.js). This is the only thing that decides access — the menu
+// hides what you can't reach, but the menu is decoration; this is the gate.
+function requirePermission(key, handler) {
+  return (req, res, extra) => {
+    if (!req.isAdmin) return redirect(res, '/admin/login');
+    if (!permissions.has(req.admin, key)) return forbidden(req, res, key);
+    return handler(req, res, extra);
+  };
+}
+
+// Where to send someone who is signed in but not allowed here: the first page
+// they CAN open, so a limited account never lands on a dead end.
+function landingFor(admin) {
+  const first = [
+    ['pesanan.lihat', '/admin/pesanan'],
+    ['produk.lihat', '/admin/produk'],
+    ['pelanggan.lihat', '/admin/pelanggan'],
+    ['laporan.lihat', '/admin/laporan'],
+  ].find(([key]) => permissions.has(admin, key));
+  return first ? first[1] : '/admin';
+}
+
+function forbidden(req, res, key) {
+  const back = landingFor(req.admin);
+  const label = key ? permissions.describe([key]) : '';
+  return sendHtml(
+    res,
+    adminViews.renderForbidden({
+      admin: req.admin,
+      permissionLabel: label,
+      backHref: back,
+    }),
+    403
+  );
 }
 
 // What the loyalty reward would be worth on this exact cart. The cheapest cup
@@ -2667,6 +3327,42 @@ async function acceptVideoUrls(list) {
   return out;
 }
 
+// Which stockroom items a product form asked for, and how many of each per
+// cup. Ignored entirely unless this admin may manage the stockroom, so saving
+// a product can never silently wipe a materials list the person editing it was
+// never shown.
+function materialsFromForm(req, fieldLists, fields) {
+  if (!req.can('inventaris.kelola')) return null;
+  const chosen = fieldLists.bahan || [];
+  return chosen.map((id) => ({ itemId: Number(id), qty: Number(fields[`bahanQty_${id}`]) || 1 }));
+}
+
+// Turns a typed list of dates into clean, sorted 'YYYY-MM-DD' keys. Anything
+// that isn't a real date is dropped rather than stored and puzzled over later.
+function cleanDateList(value) {
+  const seen = new Set();
+  for (const raw of String(value || '').split(/[\s,;]+/)) {
+    const key = raw.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    if (Number.isNaN(Date.parse(key + 'T00:00:00Z'))) continue;
+    seen.add(key);
+  }
+  return [...seen].sort().join(',');
+}
+
+// One line telling a shopper which days the shop actually delivers on, for the
+// calendar mode where the picker itself can't grey out the closed ones.
+function closedDatesNote(shop) {
+  const rules = shop.delivery;
+  if (!rules || rules.everyDay) return '';
+  const names = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  if (rules.days.size) {
+    const open = [...rules.days].sort().map((d) => names[d]).join(', ');
+    return `Pecup mengantar setiap ${open}. Tanggal lain akan ditolak saat dikirim.`;
+  }
+  return 'Beberapa tanggal sedang ditutup — kalau tanggalmu ditolak, pilih hari lain ya.';
+}
+
 // A wholesale tier only counts when both halves are filled in and the
 // discounted price is actually lower — otherwise it's stored as "no tier".
 function wholesaleFields(fields) {
@@ -2812,10 +3508,16 @@ module.exports = async (req, res) => {
       // against the DB — this only runs when an admin cookie is actually
       // present, so it doesn't touch the customer-facing hot path.
       const current = await adminAuth.findAdminById(req.admin.adminId);
-      req.admin = current ? { ...req.admin, role: current.role, username: current.username } : null;
+      // Permissions come from the row, never from the token: a superadmin
+      // taking an allowance away has to take effect on the very next request,
+      // not whenever that person's cookie happens to expire.
+      req.admin = current
+        ? { ...req.admin, role: current.role, username: current.username, permissions: current.permissions }
+        : null;
     }
     req.isAdmin = Boolean(req.admin);
     req.isSuperadmin = Boolean(req.admin && req.admin.role === 'superadmin');
+    req.can = (key) => permissions.has(req.admin, key);
     // Deliberately *not* re-checked against the DB here: the token already
     // carries everything the header needs (name), and the routes that act on
     // a customer load the row themselves. Keeps the storefront hot path at

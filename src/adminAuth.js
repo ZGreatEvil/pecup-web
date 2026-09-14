@@ -3,6 +3,7 @@
 // hashing (the same pattern Node's own docs recommend for this exact case).
 const crypto = require('crypto');
 const db = require('./db');
+const permissions = require('./permissions');
 
 const SCRYPT_KEYLEN = 64;
 
@@ -25,9 +26,18 @@ function verifyPassword(password, stored) {
 // superadmin from ADMIN_USERNAME/ADMIN_PASSWORD so a brand new deploy isn't
 // locked out. Once at least one admin row exists this is a no-op forever;
 // from then on, admin accounts are entirely DB-managed.
+// Remembered per process once an admin exists: the check below is a database
+// round-trip, and it used to run on every single login attempt for the life of
+// the shop even though it can only ever do something on a brand new deploy.
+let bootstrapSettled = false;
+
 async function ensureBootstrapAdmin() {
+  if (bootstrapSettled) return;
   const rows = await db.query('select count(*) as count from admins');
-  if (Number(rows[0].count) > 0) return;
+  if (Number(rows[0].count) > 0) {
+    bootstrapSettled = true;
+    return;
+  }
 
   const username = process.env.ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
@@ -72,10 +82,13 @@ function recordFailure(key) {
 
 async function checkCredentials(username, password) {
   if (!username || !password) return null;
-  await ensureBootstrapAdmin();
 
+  // The brake comes first, before anything that costs a round-trip: an attempt
+  // that is already locked out must cost the shop nothing at all.
   const state = failureState(username);
   if (state.count >= MAX_FAILURES) return { lockedOut: true };
+
+  await ensureBootstrapAdmin();
 
   const rows = await db.query('select * from admins where username = $1', [username]);
   const admin = rows[0];
@@ -89,8 +102,10 @@ async function checkCredentials(username, password) {
 }
 
 async function listAdmins() {
-  const rows = await db.query('select id, username, role, created_at from admins order by created_at asc');
-  return rows.map((r) => ({ ...r, id: Number(r.id) }));
+  const rows = await db.query(
+    'select id, username, role, permissions, created_at from admins order by created_at asc'
+  );
+  return rows.map(shape);
 }
 
 async function countSuperadmins() {
@@ -99,14 +114,47 @@ async function countSuperadmins() {
 }
 
 async function findAdminById(id) {
-  const rows = await db.query('select id, username, role, created_at from admins where id = $1', [id]);
-  return rows[0] ? { ...rows[0], id: Number(rows[0].id) } : null;
+  const rows = await db.query(
+    'select id, username, role, permissions, created_at from admins where id = $1', [id]
+  );
+  return rows[0] ? shape(rows[0]) : null;
 }
 
-async function createAdmin({ username, password, role }) {
+// A row from `admins` in the shape the rest of the app expects. permissions is
+// null on accounts that pre-date the column — read as the legacy set rather
+// than as "no access", so nobody loses what they already had.
+function shape(row) {
+  return {
+    ...row,
+    id: Number(row.id),
+    permissions:
+      row.permissions === null || row.permissions === undefined
+        ? row.role === 'superadmin'
+          ? permissions.ALL_KEYS.slice()
+          : permissions.LEGACY_ADMIN_KEYS.slice()
+        : permissions.normalize(row.permissions),
+  };
+}
+
+/** Replaces an admin's permission list. Superadmins are unaffected by it. */
+async function setAdminPermissions(id, keys) {
+  const clean = permissions.normalize(keys);
+  await db.query('update admins set permissions = $2::text[] where id = $1', [id, clean]);
+  return clean;
+}
+
+async function createAdmin({ username, password, role, permissions: keys }) {
   const rows = await db.query(
-    'insert into admins (username, password_hash, role) values ($1, $2, $3) returning id',
-    [username, hashPassword(password), role === 'superadmin' ? 'superadmin' : 'admin']
+    'insert into admins (username, password_hash, role, permissions) values ($1, $2, $3, $4::text[]) returning id',
+    [
+      username,
+      hashPassword(password),
+      role === 'superadmin' ? 'superadmin' : 'admin',
+      // A new account starts with exactly what it was given — an empty list
+      // when nothing was ticked, not the legacy fallback. The fallback exists
+      // only for rows that pre-date the column.
+      permissions.normalize(keys || []),
+    ]
   );
   return Number(rows[0].id);
 }
@@ -130,4 +178,5 @@ module.exports = {
   createAdmin,
   deleteAdmin,
   updateAdminPassword,
+  setAdminPermissions,
 };

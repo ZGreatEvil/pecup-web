@@ -10,6 +10,7 @@ const {
   toDateKey,
 } = require('../utils');
 const { discountLines } = require('../orderMoney');
+const { tierStyle: tierStyleFor } = require('../loyalty');
 
 const WA_INPUT_ATTRS =
   'type="tel" inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" ' +
@@ -66,7 +67,36 @@ function renderMasuk({ cartCount = 0, errors = [], values = {}, next = '' } = {}
 // Step 1 of a reset: the customer only types their number. Whether that number
 // has an account is deliberately not revealed — the same message comes back
 // either way, so this page can't be used to check who shops here.
-function renderLupaSandi({ cartCount = 0, errors = [], values = {}, sent = false, waLink = '' } = {}) {
+function renderLupaSandi({
+  cartCount = 0,
+  errors = [],
+  values = {},
+  sent = false,
+  waLink = '',
+  shopWhatsapp = '',
+} = {}) {
+  // "Hubungi admin" is only useful with something to tap. When the shop's
+  // number is set this is a WhatsApp button; when it isn't, the page says so
+  // plainly instead of leaving a dead end — and the admin sees the same warning
+  // on their settings page.
+  const contactBlock = waLink
+    ? `<a class="btn-primary" href="${escapeAttr(waLink)}" target="_blank" rel="noopener"
+         style="display:flex;align-items:center;justify-content:center;gap:9px;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-bottom:12px;">
+         <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2zm5.8 14.2c-.2.7-1.2 1.3-1.9 1.4-.5.1-1.2.2-3.5-.7-2.9-1.2-4.8-4.2-5-4.4-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.4.7-.4h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.3.5-.4.4c-.1.1-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.4 2.4 1.5.2.1.4.1.6-.1l.8-1c.2-.2.4-.2.6-.1l2 1c.2.1.4.2.4.3.1.2.1.7-.1 1.4z"/></svg>
+         Hubungi Admin di WhatsApp
+       </a>
+       ${
+         shopWhatsapp
+           ? `<p style="font-size:12.5px;color:var(--text-muted);text-align:center;margin:0 0 14px;">
+                Atau simpan nomornya: <strong>${escapeHtml(formatWhatsapp(shopWhatsapp))}</strong>
+              </p>`
+           : ''
+       }`
+    : `<div class="flash flash-error" style="margin-bottom:12px;">
+         Nomor WhatsApp toko belum dipasang, jadi tombol hubungi admin belum bisa ditampilkan.
+         Hubungi Pecup lewat kontak yang biasa kamu pakai untuk memesan, sebutkan nomor akunmu,
+         dan mintalah kode reset.
+       </div>`;
   return authShell({
     title: 'Lupa Password — Pecup',
     heading: 'Lupa Password',
@@ -74,12 +104,16 @@ function renderLupaSandi({ cartCount = 0, errors = [], values = {}, sent = false
       'Akun Pecup pakai nomor WhatsApp, bukan email — jadi resetnya lewat admin. Masukkan nomormu, lalu hubungi admin di WhatsApp untuk menerima kode resetnya.',
     cartCount,
     formHtml: sent
-      ? `<div class="flash flash-ok">Permintaan reset sudah dicatat. Sekarang hubungi admin lewat WhatsApp — setelah admin memastikan itu memang kamu, kamu akan dikirimi kode 6 angka.</div>
-        ${
-          waLink
-            ? `<a class="btn-primary" href="${escapeAttr(waLink)}" target="_blank" rel="noopener" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-bottom:12px;">Hubungi Admin di WhatsApp</a>`
-            : ''
-        }
+      ? `<div class="flash flash-ok">
+          <strong>Kalau nomor itu punya akun Pecup</strong>, permintaan resetnya sudah kami catat.
+          Sekarang hubungi admin lewat WhatsApp — setelah admin memastikan itu memang kamu, kamu akan
+          dikirimi kode 6 angka.
+        </div>
+        <div style="background:var(--surface-2);border-radius:12px;padding:13px 15px;font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:14px;">
+          Nomor yang belum pernah daftar tidak bisa direset — tidak ada akun untuk direset, dan admin tidak akan
+          menerima permintaannya. Kalau kamu memang belum punya akun, <a href="/daftar">daftar dulu di sini</a>.
+        </div>
+        ${contactBlock}
         <a class="btn-outline" href="/lupa-sandi/kode" style="display:block;text-align:center;width:100%;padding:14px;border-radius:12px;font-size:14.5px;font-weight:700;">Sudah punya kode? Ganti password</a>`
       : `
       ${errorBox(errors)}
@@ -90,14 +124,38 @@ function renderLupaSandi({ cartCount = 0, errors = [], values = {}, sent = false
           <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Nomor yang kamu pakai untuk masuk.</span>
         </div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Minta Kode Reset</button>
-      </form>`,
+      </form>
+      <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--border);">
+        <p style="font-size:13px;color:var(--text-muted);line-height:1.7;margin:0 0 12px;">
+          Kode resetnya dikirim admin lewat WhatsApp, jadi kamu tetap perlu menghubungi admin:
+        </p>
+        ${contactBlock}
+      </div>`,
     footerHtml: `Ingat passwordmu lagi? <a href="/masuk">Masuk di sini</a>`,
   });
 }
 
 // Step 2: the customer types the code the admin sent them and picks their own
 // new password. No admin ever sees or sets that password.
-function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = false } = {}) {
+function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = false, waLink = '', shopWhatsapp = '' } = {}) {
+  const helpBlock = done
+    ? ''
+    : waLink
+    ? `<div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--border);text-align:center;">
+         <p style="font-size:13px;color:var(--text-muted);line-height:1.7;margin:0 0 10px;">Belum menerima kodenya?</p>
+         <a class="btn-outline" href="${escapeAttr(waLink)}" target="_blank" rel="noopener"
+            style="display:block;text-align:center;width:100%;padding:13px;border-radius:12px;font-size:14px;font-weight:700;">Tanya Admin di WhatsApp</a>
+         ${
+           shopWhatsapp
+             ? `<p style="font-size:12.5px;color:var(--text-muted);margin:10px 0 0;">${escapeHtml(formatWhatsapp(shopWhatsapp))}</p>`
+             : ''
+         }
+       </div>`
+    : `<div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--border);">
+         <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin:0;">
+           Belum menerima kodenya? Hubungi Pecup lewat kontak yang biasa kamu pakai untuk memesan.
+         </p>
+       </div>`;
   return authShell({
     title: 'Ganti Password — Pecup',
     heading: 'Masukkan Kode Reset',
@@ -118,7 +176,8 @@ function renderResetSandi({ cartCount = 0, errors = [], values = {}, done = fals
         </div>
         <div class="field" style="margin-bottom:8px;"><label>Password Baru <span class="req">*</span></label><input type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="Minimal 6 karakter"></div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Simpan Password Baru</button>
-      </form>`,
+      </form>
+      ${helpBlock}`,
     footerHtml: `Belum punya kode? <a href="/lupa-sandi">Minta kode reset</a>`,
   });
 }
@@ -128,7 +187,7 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
     title: 'Daftar — Pecup',
     heading: 'Buat Akun Pecup',
     subheading:
-      'Simpan data pengantaranmu sekali, lalu pesan lebih cepat. Kamu juga langsung mulai mengumpulkan stempel — tiap 10 pesanan selesai dapat 1 cup gratis.',
+      'Simpan data pengantaranmu sekali, lalu pesan lebih cepat. Kamu juga langsung mulai mengumpulkan stempel — 1 stempel untuk tiap cup yang kamu beli, dan kartunya penuh jadi 1 cup gratis.',
     cartCount,
     formHtml: `
       ${errorBox(errors)}
@@ -150,7 +209,7 @@ function renderDaftar({ cartCount = 0, errors = [], values = {} } = {}) {
         <div class="field" style="margin-bottom:8px;"><label>Password <span class="req">*</span></label><input type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="Minimal 6 karakter"></div>
         <button class="btn-primary" type="submit" style="width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;margin-top:14px;">Daftar</button>
       </form>`,
-    footerHtml: `Sudah punya akun? <a href="/masuk">Masuk di sini</a>`,
+    footerHtml: `Sudah punya akun? <a href="/masuk">Masuk di sini</a> &middot; <a href="/keanggotaan">Apa untungnya jadi member?</a>`,
   });
 }
 
@@ -234,6 +293,129 @@ function stampCard(loyalty, stampHistory = []) {
   </div>`;
 }
 
+// The whole ladder on one page, for a shopper deciding whether it's worth
+// coming back. Open to everyone — someone who hasn't signed up yet is exactly
+// who this has to convince — and personalised the moment they're signed in.
+function renderKeanggotaan({ cartCount = 0, customer = null, loyalty = null, tiers = [], enabled = true, perReward = 10 } = {}) {
+  const claims = loyalty ? loyalty.claims : 0;
+  const currentName = loyalty && loyalty.tier ? loyalty.tier.name : '';
+
+  const perkList = (tier) => {
+    const perks = [];
+    if (tier.discountPercent > 0) perks.push(`Diskon <strong>${tier.discountPercent}%</strong> setiap belanja`);
+    if (tier.weeklyFreeCup) perks.push('1 cup <strong>gratis tiap minggu</strong>');
+    if (tier.birthdayFreeCup) perks.push('1 cup <strong>gratis saat ulang tahun</strong>');
+    perks.push('1 stempel tiap cup — kartu penuh jadi 1 cup gratis');
+    return perks;
+  };
+
+  const rows = tiers
+    .map((tier, i) => {
+      const style = tierStyleFor(tier.name);
+      const isNow = enabled && currentName === tier.name;
+      const reached = enabled && loyalty ? claims >= tier.minClaims : false;
+      const toGo = Math.max(0, tier.minClaims - claims);
+      const next = tiers[i + 1];
+      const span = next
+        ? tier.minClaims === next.minClaims - 1
+          ? `${tier.minClaims} klaim`
+          : `${tier.minClaims}–${next.minClaims - 1} klaim`
+        : `${tier.minClaims} klaim atau lebih`;
+
+      return `
+      <div class="card" style="padding:0;overflow:hidden;${isNow ? `border-color:${style.color};box-shadow:0 0 0 2px ${style.bg};` : ''}">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 18px;background:${style.bg};">
+          <span style="font-size:13px;font-weight:800;letter-spacing:0.6px;padding:6px 15px;border-radius:99px;color:${style.color};background:var(--surface);">${escapeHtml(
+            tier.name.toUpperCase()
+          )}</span>
+          <span style="font-size:12.5px;color:${style.color};font-weight:700;">${escapeHtml(span)}</span>
+          ${
+            isNow
+              ? `<span style="margin-left:auto;font-size:11.5px;font-weight:800;letter-spacing:0.4px;color:#fff;background:${style.color};padding:5px 12px;border-radius:99px;">TINGKATMU SEKARANG</span>`
+              : reached
+              ? `<span style="margin-left:auto;font-size:11.5px;font-weight:700;color:${style.color};">sudah dilewati</span>`
+              : loyalty
+              ? `<span style="margin-left:auto;font-size:11.5px;font-weight:700;color:${style.color};">${toGo} klaim lagi</span>`
+              : ''
+          }
+        </div>
+        <ul style="list-style:none;padding:16px 18px;margin:0;display:flex;flex-direction:column;gap:10px;">
+          ${perkList(tier)
+            .map(
+              (p) => `<li style="display:flex;align-items:flex-start;gap:10px;font-size:13.5px;line-height:1.6;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${style.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><path d="M20 6L9 17l-5-5"/></svg>
+                <span>${p}</span>
+              </li>`
+            )
+            .join('')}
+        </ul>
+      </div>`;
+    })
+    .join('');
+
+  const yourBit = !enabled
+    ? ''
+    : loyalty
+    ? `<div class="card" style="margin-bottom:22px;background:var(--green-soft);border-color:var(--green);">
+        <div style="font-size:13px;color:var(--green-dark);font-weight:700;margin-bottom:6px;">Posisi kamu sekarang</div>
+        <div style="font-size:15px;color:var(--green-dark);line-height:1.8;">
+          Tingkat <strong>${escapeHtml(currentName)}</strong> · sudah menukar <strong>${claims}</strong> cup gratis ·
+          kartu stempel <strong>${loyalty.stamps}/${loyalty.perReward}</strong>.
+          ${
+            loyalty.nextTier
+              ? `Tinggal <strong>${Math.max(0, loyalty.nextTier.minClaims - claims)}</strong> klaim lagi untuk naik ke <strong>${escapeHtml(
+                  loyalty.nextTier.name
+                )}</strong>.`
+              : 'Kamu sudah di tingkat tertinggi — terima kasih ya!'
+          }
+        </div>
+        <a class="btn-primary" href="/akun" style="display:inline-block;margin-top:14px;padding:11px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Lihat kartu stempelku</a>
+      </div>`
+    : `<div class="card" style="margin-bottom:22px;">
+        <div style="font-size:14.5px;line-height:1.8;margin-bottom:14px;">
+          Semua ini mulai jalan begitu kamu punya akun — stempelnya terkumpul otomatis tiap pesanan selesai.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a class="btn-primary" href="/daftar" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Daftar Sekarang</a>
+          <a class="btn-outline" href="/masuk" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Sudah punya akun</a>
+        </div>
+      </div>`;
+
+  const body = `
+<div class="frame-scroll"><div class="frame">
+  ${customerHeader(cartCount, '', customer)}
+  <section class="px-page" style="padding-top:40px;padding-bottom:100px;">
+    <div style="max-width:640px;margin:0 auto;">
+      ${backButton('/', 'Kembali ke Beranda')}
+      <h1 style="font-size:26px;font-weight:800;letter-spacing:-0.3px;margin:20px 0 8px;">Keuntungan Member Pecup</h1>
+      <p style="font-size:14.5px;color:var(--text-muted);line-height:1.75;margin-bottom:24px;">
+        Tiap cup yang kamu beli dapat <strong>1 stempel</strong>. Kartu penuh ${perReward} stempel ditukar jadi
+        <strong>1 cup gratis</strong> — dan tiap kali kamu menukarnya, kamu naik menuju tingkat berikutnya.
+        Makin tinggi tingkatnya, makin banyak yang kamu dapat.
+      </p>
+
+      ${yourBit}
+
+      ${
+        enabled
+          ? `<div style="display:flex;flex-direction:column;gap:16px;">${rows}</div>
+             <p style="font-size:12.5px;color:var(--text-muted);line-height:1.8;margin-top:22px;">
+               Cup gratis mingguan dan ulang tahun berlaku untuk cup termurah di keranjang, sekali per minggu dan
+               sekali per tahun. Cup gratis ulang tahun perlu tanggal lahir terisi di
+               <a href="/akun">halaman akun</a>, dan mengikuti tanggal pengantaran.
+             </p>`
+          : `<div class="card"><p style="font-size:13.5px;color:var(--text-muted);line-height:1.7;margin:0;">
+               Program tingkat keanggotaan sedang tidak aktif. Kartu stempel tetap jalan: tiap cup dapat 1 stempel,
+               dan ${perReward} stempel ditukar jadi 1 cup gratis.
+             </p></div>`
+      }
+    </div>
+  </section>
+  ${customerFooter()}
+</div></div>`;
+  return page({ title: 'Keuntungan Member — Pecup', bodyHtml: body });
+}
+
 // Shopee-style membership ladder, driven by how many free cups were claimed.
 function tierCard(loyalty) {
   if (!loyalty.tiersEnabled) return '';
@@ -241,7 +423,7 @@ function tierCard(loyalty) {
   const tier = loyalty.tier;
   const perks = [];
   if (tier.discountPercent > 0) perks.push(`Diskon <strong>${tier.discountPercent}%</strong> tiap pesanan`);
-  if (tier.weeklyFreeCup) perks.push('Diskon mingguan untuk 1 cup');
+  if (tier.weeklyFreeCup) perks.push('1 cup gratis tiap minggu');
   if (tier.birthdayFreeCup) perks.push('1 cup gratis saat ulang tahun');
 
   return `
@@ -271,6 +453,7 @@ function tierCard(loyalty) {
           </div>`
         : `<div style="background:var(--surface-2);border-radius:12px;padding:13px 15px;font-size:12.5px;color:var(--text-muted);line-height:1.6;">Kamu sudah di tingkat tertinggi. Terima kasih ya!</div>`
     }
+    <a href="/keanggotaan" style="display:inline-block;margin-top:12px;font-size:13px;font-weight:700;color:var(--green-dark);">Lihat semua tingkat &amp; benefitnya &rarr;</a>
   </div>`;
 }
 
@@ -313,12 +496,14 @@ function orderHistory(orders, { total = 0, previewCount = 0 } = {}) {
     });
   }
   const rows = orders.map(orderRow).join('');
-  const more = total > previewCount
-    ? `<a class="btn-outline" href="/akun/pesanan" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border-radius:11px;font-size:13.5px;font-weight:700;margin-top:16px;">
-        Lihat semua ${total} pesanan
+  // Always offered, not only once the list overflows: the full page is also
+  // where the date filter and the paging live, and a customer looking for one
+  // old receipt shouldn't have to guess that this button appears eventually.
+  const hidden = Math.max(0, total - orders.length);
+  const more = `<a class="btn-outline" href="/akun/pesanan" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border-radius:11px;font-size:13.5px;font-weight:700;margin-top:16px;">
+        ${hidden > 0 ? `Lihat semua ${total} pesanan` : 'Lihat semua pesanan &amp; cari berdasarkan tanggal'}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-      </a>`
-    : '';
+      </a>`;
   return rows + more;
 }
 
@@ -495,6 +680,7 @@ function renderAkun({
 module.exports = {
   renderMasuk,
   renderDaftar,
+  renderKeanggotaan,
   renderAkun,
   renderRiwayatPesanan,
   renderLupaSandi,

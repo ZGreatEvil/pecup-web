@@ -570,6 +570,11 @@ function renderCheckout({
   totals = null,
   deliveryFee = 0,
   taxPercent = 0,
+  // Which dates the shop delivers on, and how to ask for one. Defaults keep
+  // the plain calendar every shop had before this was a setting.
+  deliveryMode = 'kalender',
+  openDates = [],
+  closedNote = '',
 }) {
   const rewardOn = Boolean(useReward) && reward.available > 0;
   const rewardCut = rewardOn ? reward.discount : 0;
@@ -711,7 +716,36 @@ function renderCheckout({
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Kapan dan ke mana pesananmu diantar.</p>
             <div class="field">
               <label>Tanggal Pengantaran <span class="req">*</span></label>
-              <input type="date" name="deliveryDate" required min="${todayKey}" value="${escapeAttr(formValues.deliveryDate || '')}">
+              ${
+                // Two ways to ask the same question, chosen in Pengaturan Toko.
+                // "pilihan" lists only the days the shop actually delivers on,
+                // so a pre-order shop never has to reject a date afterwards;
+                // "kalender" is the ordinary picker. Either way the server
+                // checks the date against the same rules.
+                deliveryMode === 'pilihan'
+                  ? openDates.length
+                    ? `<select name="deliveryDate" required>
+                        <option value="">— pilih tanggal —</option>
+                        ${openDates
+                          .map(
+                            (key) =>
+                              `<option value="${escapeAttr(key)}" ${
+                                formValues.deliveryDate === key ? 'selected' : ''
+                              }>${escapeHtml(formatDateID(key))}</option>`
+                          )
+                          .join('')}
+                      </select>
+                      <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Pecup hanya mengantar di tanggal-tanggal ini.</span>`
+                    : `<div class="flash flash-error" style="margin:0;">Belum ada tanggal pengantaran yang dibuka. Hubungi kami dulu ya.</div>`
+                  : `<input type="date" name="deliveryDate" required min="${todayKey}" value="${escapeAttr(
+                      formValues.deliveryDate || ''
+                    )}">
+                     ${
+                       closedNote
+                         ? `<span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">${escapeHtml(closedNote)}</span>`
+                         : ''
+                     }`
+              }
             </div>
             <div style="margin-bottom:0;">
               <label>Lokasi Pengantaran <span class="req">*</span></label>
