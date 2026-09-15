@@ -3219,20 +3219,55 @@ function renderPengaturan({
             .join('')}
         </div>
 
-        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
-            <label>Tanggal khusus ditutup</label>
-            <input type="text" name="deliveryClosedDates" value="${escapeAttr(
-              shop.delivery ? [...shop.delivery.closed].sort().join(', ') : ''
-            )}" placeholder="2026-12-25, 2027-01-01">
-            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Libur/tanggal merah, walaupun harinya dicentang di atas.</div>
-          </div>
-          <div class="field" style="flex:1 1 240px;margin-bottom:0;">
-            <label>Tanggal khusus dibuka</label>
-            <input type="text" name="deliveryOpenDates" value="${escapeAttr(
-              shop.delivery ? [...shop.delivery.open].sort().join(', ') : ''
-            )}" placeholder="2026-12-24">
-            <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;">Buka sekali saja, walaupun harinya tidak dicentang.</div>
+        <style>
+          .dcal{border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--surface);}
+          .dcal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
+          .dcal-title{font-size:14px;font-weight:800;}
+          .dcal-nav{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);
+            color:var(--text);font-size:18px;font-weight:700;line-height:1;cursor:pointer;font-family:inherit;padding:0;}
+          .dcal-grid{display:grid;grid-template-columns:repeat(7, minmax(0, 1fr));gap:4px;}
+          .dcal-dow{font-size:10.5px;font-weight:800;color:var(--text-muted);text-align:center;padding:4px 0;}
+          .dcal-day{aspect-ratio:1;border:none;border-radius:9px;background:transparent;color:var(--text-muted);
+            font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;padding:0;}
+          .dcal-day.is-open{background:var(--green-soft);color:var(--green-dark);font-weight:700;}
+          .dcal-day.is-closed-extra{background:#f6dcdc;color:#a13f3f;font-weight:700;text-decoration:line-through;}
+          .dcal-day.is-open-extra{background:var(--green);color:#fff;font-weight:800;}
+          .dcal-day.is-today{box-shadow:inset 0 0 0 2px var(--orange);}
+          .dcal-day:disabled{opacity:0.4;cursor:default;}
+          .dcal-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted);margin-top:10px;}
+          .dcal-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+        </style>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+          <div class="field" style="flex:1 1 300px;max-width:380px;margin-bottom:0;">
+            <label>Tanggal khusus</label>
+            <div style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:10px;">
+              Klik tanggal yang biasanya buka untuk <strong>menutupnya</strong> (libur, tanggal merah), atau tanggal yang
+              biasanya tutup untuk <strong>membukanya sekali saja</strong>. Klik lagi untuk membatalkan.
+            </div>
+            <div class="dcal" data-today="${escapeAttr(toDateKey(new Date()))}">
+              <div class="dcal-head">
+                <button type="button" class="dcal-nav" data-step="-1" aria-label="Bulan sebelumnya">&lsaquo;</button>
+                <strong class="dcal-title"></strong>
+                <button type="button" class="dcal-nav" data-step="1" aria-label="Bulan berikutnya">&rsaquo;</button>
+              </div>
+              <div class="dcal-grid">${['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab']
+                .map((d) => `<span class="dcal-dow">${d}</span>`)
+                .join('')}</div>
+              <div class="dcal-grid dcal-days"></div>
+            </div>
+            <div class="dcal-legend">
+              <span><i style="background:var(--green-soft);"></i>Buka</span>
+              <span><i style="background:#f6dcdc;"></i>Ditutup khusus</span>
+              <span><i style="background:var(--green);"></i>Dibuka khusus</span>
+            </div>
+            <!-- The calendar writes into these; the server reads them exactly as it
+                 read the old typed lists (comma-separated YYYY-MM-DD). -->
+            <input type="hidden" name="deliveryClosedDates" value="${escapeAttr(
+              shop.delivery ? [...shop.delivery.closed].sort().join(',') : ''
+            )}">
+            <input type="hidden" name="deliveryOpenDates" value="${escapeAttr(
+              shop.delivery ? [...shop.delivery.open].sort().join(',') : ''
+            )}">
           </div>
           <div class="field" style="flex:0 1 190px;margin-bottom:0;">
             <label>Tampilkan berapa hari ke depan</label>
@@ -3318,6 +3353,101 @@ function renderPengaturan({
 
       <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Pengaturan</button>
     </form>
+<script>
+(function(){
+  // Pre-order calendar. Colours follow the same rule the server applies
+  // (settings.isDeliveryDateOpen): an opened date always wins, a closed date
+  // shuts, otherwise the ticked weekdays decide (none ticked = every day).
+  var cal = document.querySelector('.dcal');
+  if (!cal) return;
+  var form = cal.closest('form');
+  var closedInput = form.querySelector('input[name="deliveryClosedDates"]');
+  var openInput = form.querySelector('input[name="deliveryOpenDates"]');
+  var dayBoxes = form.querySelectorAll('input[name="deliveryDays"]');
+  var MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  var today = cal.getAttribute('data-today');
+
+  function toSet(value){
+    var set = new Set();
+    String(value || '').split(',').forEach(function(k){ k = k.trim(); if (k) set.add(k); });
+    return set;
+  }
+  var closed = toSet(closedInput.value);
+  var open = toSet(openInput.value);
+  // Dates are handled as UTC midnights so the weekday of a key never shifts
+  // with the viewer's own timezone.
+  var view = new Date(today.slice(0, 7) + '-01T00:00:00Z');
+
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+  function keyOf(d){ return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+  function weekdays(){
+    var set = new Set();
+    dayBoxes.forEach(function(b){ if (b.checked) set.add(Number(b.value)); });
+    return set;
+  }
+  function baseOpen(key, days){
+    return days.size === 0 || days.has(new Date(key + 'T00:00:00Z').getUTCDay());
+  }
+  function sync(){
+    closedInput.value = Array.from(closed).sort().join(',');
+    openInput.value = Array.from(open).sort().join(',');
+  }
+
+  function render(){
+    var days = weekdays();
+    cal.querySelector('.dcal-title').textContent = MONTHS[view.getUTCMonth()] + ' ' + view.getUTCFullYear();
+    var html = '';
+    for (var i = 0; i < view.getUTCDay(); i++) html += '<span></span>';
+    var d = new Date(view.getTime());
+    while (d.getUTCMonth() === view.getUTCMonth()) {
+      var key = keyOf(d);
+      var cls = 'dcal-day';
+      var label = 'Tutup';
+      if (open.has(key)) { cls += ' is-open-extra'; label = 'Dibuka khusus'; }
+      else if (closed.has(key)) { cls += ' is-closed-extra'; label = 'Ditutup khusus'; }
+      else if (baseOpen(key, days)) { cls += ' is-open'; label = 'Buka'; }
+      if (key === today) cls += ' is-today';
+      html += '<button type="button" class="' + cls + '" data-key="' + key + '" title="' + label + '"' +
+        (key < today ? ' disabled' : '') + '>' + d.getUTCDate() + '</button>';
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    cal.querySelector('.dcal-days').innerHTML = html;
+  }
+
+  cal.addEventListener('click', function(e){
+    var nav = e.target.closest('.dcal-nav');
+    if (nav) {
+      view.setUTCMonth(view.getUTCMonth() + Number(nav.getAttribute('data-step')));
+      render();
+      return;
+    }
+    var btn = e.target.closest('.dcal-day');
+    if (!btn || btn.disabled) return;
+    var key = btn.getAttribute('data-key');
+    // A second click on an exception clears it; otherwise flip the day away
+    // from whatever the weekday rule would make it.
+    if (open.has(key) || closed.has(key)) { open.delete(key); closed.delete(key); }
+    else if (baseOpen(key, weekdays())) closed.add(key);
+    else open.add(key);
+    sync();
+    render();
+  });
+
+  // Ticking a weekday recolours the calendar straight away.
+  dayBoxes.forEach(function(b){ b.addEventListener('change', render); });
+
+  // Drop exceptions that no longer change anything — past dates, or ones the
+  // weekday ticks now already cover — so the saved lists stay short.
+  form.addEventListener('submit', function(){
+    var days = weekdays();
+    open.forEach(function(k){ if (k < today || baseOpen(k, days)) open.delete(k); });
+    closed.forEach(function(k){ if (k < today || !baseOpen(k, days)) closed.delete(k); });
+    sync();
+  });
+
+  render();
+})();
+</script>
   </main>
 </div>`;
   return page({ title: 'Pengaturan Toko — Admin Pecup', bodyHtml: body, noindex: true });
