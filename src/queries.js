@@ -495,7 +495,9 @@ async function dashboardData({ todayKey, monthStart }) {
        from orders where date_key >= $1 and date_key <= $2`,
       [monthStart, todayKey]
     ),
-    db.query('select id, name, stock from products where stock <= 5 order by stock asc, name asc limit 8'),
+    db.query(
+      'select id, name, stock from products where stock <= 5 and unlimited_stock = false order by stock asc, name asc limit 8'
+    ),
     db.query(
       `select * from orders where status in ('menunggu', 'diproses')
        order by created_at desc limit 8`

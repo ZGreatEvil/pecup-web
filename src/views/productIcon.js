@@ -97,7 +97,9 @@ const ARROW_RIGHT =
 // appears, but only auto-advancing where `autoplay` is set (the product page).
 function productThumb(product, { size = 88, radius = 16, autoplay = false } = {}) {
   const [tint, tintSoft] = tintFor(product.id);
-  const soldOut = Number(product.stock) <= 0;
+  // Unlimited stock never sells out — its `stock` number is ignored, and is
+  // often left at 0.
+  const soldOut = !product.unlimited_stock && Number(product.stock) <= 0;
   const dim = soldOut ? 'filter:grayscale(1);opacity:0.6;' : '';
   // A clip is only playable where it isn't standing inside a link — that's
   // the product page, which is also the only place that autoplays.

@@ -1113,8 +1113,10 @@ router.get('/admin/produk', requirePermission('produk.lihat', async (req, res, {
     semua: () => true,
     aktif: (p) => Boolean(p.active),
     nonaktif: (p) => !p.active,
-    habis: (p) => Number(p.stock) <= 0,
-    menipis: (p) => Number(p.stock) > 0 && Number(p.stock) <= 5,
+    // Unlimited products are never sold out or running low — the same rule the
+    // counts on the stat tiles use (queries.js), so a tile and its list agree.
+    habis: (p) => !p.unlimited_stock && Number(p.stock) <= 0,
+    menipis: (p) => !p.unlimited_stock && Number(p.stock) > 0 && Number(p.stock) <= 5,
   };
   const matchesStatus = statusMatches[view.status] || statusMatches.semua;
 
