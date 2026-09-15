@@ -49,6 +49,12 @@ const DEFAULTS = {
   delivery_closed_dates: '',
   delivery_open_dates: '',
   delivery_horizon_days: '14',
+  // What a click on the admin calendar means, and so what an unticked week
+  // means. 'tutup' (how it ships): no weekday ticked = every day open, and the
+  // clicked dates are the closed ones. 'buka': no weekday ticked = nothing
+  // open, and only the clicked dates can be ordered — for a pre-order shop
+  // that picks its cooking days one by one.
+  delivery_click_mode: 'tutup',
   // How the shopper picks that date. The rules above decide what is OPEN; this
   // only decides how it's presented, and the two are interchangeable at any
   // time without changing which dates are allowed:
@@ -166,7 +172,15 @@ function deliveryRules(all) {
   const open = csvSet(all.delivery_open_dates);
   const horizonRaw = Number(all.delivery_horizon_days);
   const horizon = Number.isFinite(horizonRaw) && horizonRaw >= 1 ? Math.min(60, Math.round(horizonRaw)) : 14;
-  return { days, closed, open, horizon, everyDay: days.size === 0 && closed.size === 0 && open.size === 0 };
+  const onlyListed = all.delivery_click_mode === 'buka';
+  return {
+    days,
+    closed,
+    open,
+    horizon,
+    onlyListed,
+    everyDay: !onlyListed && days.size === 0 && closed.size === 0 && open.size === 0,
+  };
 }
 
 /**
@@ -180,7 +194,8 @@ function isDeliveryDateOpen(config, dateKey) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return false;
   if (rules.open.has(dateKey)) return true;
   if (rules.closed.has(dateKey)) return false;
-  if (rules.days.size === 0) return true;
+  // No weekday ticked: every day in 'tutup' mode, none at all in 'buka' mode.
+  if (rules.days.size === 0) return !rules.onlyListed;
   return rules.days.has(weekdayOf(dateKey));
 }
 

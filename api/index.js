@@ -2156,6 +2156,7 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
     delivery_closed_dates: cleanDateList(fields.deliveryClosedDates),
     delivery_open_dates: cleanDateList(fields.deliveryOpenDates),
     delivery_horizon_days: String(Math.min(60, Math.max(1, num(fields.deliveryHorizon) || 14))),
+    delivery_click_mode: fields.deliveryClickMode === 'buka' ? 'buka' : 'tutup',
     delivery_date_mode: fields.deliveryDateMode === 'pilihan' ? 'pilihan' : 'kalender',
     // 0 is meaningful here (keep forever), so these are clamped rather than
     // coerced through the falsy-to-default path the money fields use.
@@ -2186,6 +2187,7 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
     },
     { key: 'delivery_closed_dates', label: 'tanggal ditutup' },
     { key: 'delivery_open_dates', label: 'tanggal dibuka khusus' },
+    { key: 'delivery_click_mode', label: 'klik kalender', format: (v) => (String(v) === 'buka' ? 'buka' : 'tutup') },
     { key: 'delivery_horizon_days', label: 'tampil berapa hari ke depan' },
     {
       key: 'delivery_date_mode',
@@ -3499,6 +3501,7 @@ function closedDatesNote(shop) {
     const open = [...rules.days].sort().map((d) => names[d]).join(', ');
     return `Pecup mengantar setiap ${open}. Tanggal lain akan ditolak saat dikirim.`;
   }
+  if (rules.onlyListed) return 'Pecup hanya mengantar di tanggal tertentu. Tanggal lain akan ditolak saat dikirim.';
   return 'Beberapa tanggal sedang ditutup — kalau tanggalmu ditolak, pilih hari lain ya.';
 }
 

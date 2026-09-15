@@ -3204,7 +3204,8 @@ function renderPengaturan({
         <h2 style="font-size:16px;font-weight:800;margin-bottom:4px;">Hari Pengantaran (Pre-order)</h2>
         <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:16px;">
           Kalau Pecup hanya bikin di hari tertentu, centang harinya di sini. Tanggal di luar itu ditolak
-          saat pembeli mengirim pesanan — bukan cuma disembunyikan. Tidak dicentang sama sekali = buka tiap hari.
+          saat pembeli mengirim pesanan — bukan cuma disembunyikan. Tidak dicentang sama sekali = buka tiap hari,
+          kecuali kalender di bawah diatur ke <strong>Klik = Buka</strong>.
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">
           ${['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
@@ -3236,14 +3237,46 @@ function renderPengaturan({
           .dcal-day:disabled{opacity:0.4;cursor:default;}
           .dcal-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted);margin-top:10px;}
           .dcal-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+          .dcal-field{flex:1 1 300px;max-width:400px;min-width:0;margin-bottom:0;}
+          .dcal-side{flex:0 1 190px;margin-bottom:0;}
+          /* Buka / Tutup switch: a segmented control, the radios themselves hidden. */
+          .dcal-mode{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:12px;margin-bottom:8px;}
+          .dcal-mode label{flex:1 1 0;display:flex;align-items:center;justify-content:center;gap:7px;margin:0;
+            padding:10px 8px;border-radius:9px;font-size:13px;font-weight:700;color:var(--text-muted);cursor:pointer;
+            text-align:center;position:relative;transition:background 0.15s ease, color 0.15s ease;}
+          .dcal-mode input{position:absolute;opacity:0;width:1px;height:1px;margin:0;padding:0;pointer-events:none;}
+          .dcal-mode label.is-active{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm);}
+          .dcal-mode label:focus-within{outline:2px solid var(--green);outline-offset:1px;}
+          .dcal-mode i{width:10px;height:10px;border-radius:3px;flex-shrink:0;}
+          .dcal-hint{font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:10px;}
+          @media (max-width: 560px){
+            .dcal-field, .dcal-side{flex-basis:100%;max-width:none;}
+            .dcal{padding:10px;}
+            .dcal-grid{gap:3px;}
+            .dcal-day{font-size:14px;}
+            .dcal-nav{width:40px;height:40px;}
+          }
         </style>
         <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
-          <div class="field" style="flex:1 1 300px;max-width:380px;margin-bottom:0;">
+          <div class="field dcal-field">
             <label>Tanggal khusus</label>
-            <div style="font-size:11.5px;color:var(--text-muted);line-height:1.6;margin-bottom:10px;">
-              Klik tanggal yang biasanya buka untuk <strong>menutupnya</strong> (libur, tanggal merah), atau tanggal yang
-              biasanya tutup untuk <strong>membukanya sekali saja</strong>. Klik lagi untuk membatalkan.
+            <div class="dcal-mode" role="radiogroup" aria-label="Tanggal yang diklik">
+              <label class="${shop.delivery && shop.delivery.onlyListed ? 'is-active' : ''}">
+                <input type="radio" name="deliveryClickMode" value="buka" ${shop.delivery && shop.delivery.onlyListed ? 'checked' : ''}>
+                <i style="background:var(--green);"></i>Klik = Buka
+              </label>
+              <label class="${shop.delivery && shop.delivery.onlyListed ? '' : 'is-active'}">
+                <input type="radio" name="deliveryClickMode" value="tutup" ${shop.delivery && shop.delivery.onlyListed ? '' : 'checked'}>
+                <i style="background:#f6dcdc;box-shadow:inset 0 0 0 1px #c94f4f;"></i>Klik = Tutup
+              </label>
             </div>
+            <div class="dcal-hint"
+              data-buka="Hanya tanggal yang kamu klik yang bisa dipesan (ditambah hari yang dicentang di atas). Klik lagi untuk membatalkan."
+              data-tutup="Tanggal yang kamu klik ditutup (libur, tanggal merah). Hari lain tetap buka sesuai centang di atas. Klik lagi untuk membatalkan.">${
+                shop.delivery && shop.delivery.onlyListed
+                  ? 'Hanya tanggal yang kamu klik yang bisa dipesan (ditambah hari yang dicentang di atas). Klik lagi untuk membatalkan.'
+                  : 'Tanggal yang kamu klik ditutup (libur, tanggal merah). Hari lain tetap buka sesuai centang di atas. Klik lagi untuk membatalkan.'
+              }</div>
             <div class="dcal" data-today="${escapeAttr(toDateKey(new Date()))}">
               <div class="dcal-head">
                 <button type="button" class="dcal-nav" data-step="-1" aria-label="Bulan sebelumnya">&lsaquo;</button>
@@ -3256,9 +3289,9 @@ function renderPengaturan({
               <div class="dcal-grid dcal-days"></div>
             </div>
             <div class="dcal-legend">
-              <span><i style="background:var(--green-soft);"></i>Buka</span>
-              <span><i style="background:#f6dcdc;"></i>Ditutup khusus</span>
-              <span><i style="background:var(--green);"></i>Dibuka khusus</span>
+              <span><i style="background:var(--green-soft);"></i>Buka (hari dicentang)</span>
+              <span><i style="background:var(--green);"></i>Diklik buka</span>
+              <span><i style="background:#f6dcdc;"></i>Diklik tutup</span>
             </div>
             <!-- The calendar writes into these; the server reads them exactly as it
                  read the old typed lists (comma-separated YYYY-MM-DD). -->
@@ -3269,7 +3302,7 @@ function renderPengaturan({
               shop.delivery ? [...shop.delivery.open].sort().join(',') : ''
             )}">
           </div>
-          <div class="field" style="flex:0 1 190px;margin-bottom:0;">
+          <div class="field dcal-side">
             <label>Tampilkan berapa hari ke depan</label>
             <input type="number" name="deliveryHorizon" min="1" max="60" value="${escapeAttr(
               shop.delivery ? shop.delivery.horizon : 14
@@ -3357,13 +3390,16 @@ function renderPengaturan({
 (function(){
   // Pre-order calendar. Colours follow the same rule the server applies
   // (settings.isDeliveryDateOpen): an opened date always wins, a closed date
-  // shuts, otherwise the ticked weekdays decide (none ticked = every day).
+  // shuts, otherwise the ticked weekdays decide — and with none ticked, every
+  // day is open under "Klik = Tutup" but no day is under "Klik = Buka".
   var cal = document.querySelector('.dcal');
   if (!cal) return;
   var form = cal.closest('form');
   var closedInput = form.querySelector('input[name="deliveryClosedDates"]');
   var openInput = form.querySelector('input[name="deliveryOpenDates"]');
   var dayBoxes = form.querySelectorAll('input[name="deliveryDays"]');
+  var modeInputs = form.querySelectorAll('input[name="deliveryClickMode"]');
+  var hint = form.querySelector('.dcal-hint');
   var MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
   var today = cal.getAttribute('data-today');
 
@@ -3385,8 +3421,14 @@ function renderPengaturan({
     dayBoxes.forEach(function(b){ if (b.checked) set.add(Number(b.value)); });
     return set;
   }
-  function baseOpen(key, days){
-    return days.size === 0 || days.has(new Date(key + 'T00:00:00Z').getUTCDay());
+  function mode(){
+    var m = 'tutup';
+    modeInputs.forEach(function(r){ if (r.checked) m = r.value; });
+    return m;
+  }
+  function baseOpen(key, days, m){
+    if (days.size === 0) return m !== 'buka';
+    return days.has(new Date(key + 'T00:00:00Z').getUTCDay());
   }
   function sync(){
     closedInput.value = Array.from(closed).sort().join(',');
@@ -3395,6 +3437,7 @@ function renderPengaturan({
 
   function render(){
     var days = weekdays();
+    var m = mode();
     cal.querySelector('.dcal-title').textContent = MONTHS[view.getUTCMonth()] + ' ' + view.getUTCFullYear();
     var html = '';
     for (var i = 0; i < view.getUTCDay(); i++) html += '<span></span>';
@@ -3405,7 +3448,7 @@ function renderPengaturan({
       var label = 'Tutup';
       if (open.has(key)) { cls += ' is-open-extra'; label = 'Dibuka khusus'; }
       else if (closed.has(key)) { cls += ' is-closed-extra'; label = 'Ditutup khusus'; }
-      else if (baseOpen(key, days)) { cls += ' is-open'; label = 'Buka'; }
+      else if (baseOpen(key, days, m)) { cls += ' is-open'; label = 'Buka'; }
       if (key === today) cls += ' is-today';
       html += '<button type="button" class="' + cls + '" data-key="' + key + '" title="' + label + '"' +
         (key < today ? ' disabled' : '') + '>' + d.getUTCDate() + '</button>';
@@ -3424,24 +3467,36 @@ function renderPengaturan({
     var btn = e.target.closest('.dcal-day');
     if (!btn || btn.disabled) return;
     var key = btn.getAttribute('data-key');
-    // A second click on an exception clears it; otherwise flip the day away
-    // from whatever the weekday rule would make it.
-    if (open.has(key) || closed.has(key)) { open.delete(key); closed.delete(key); }
-    else if (baseOpen(key, weekdays())) closed.add(key);
-    else open.add(key);
+    // A click marks the date the way the switch says; clicking a date already
+    // marked that way clears it. A date sits in at most one of the two lists.
+    if (mode() === 'buka') {
+      if (open.has(key)) open.delete(key);
+      else { closed.delete(key); open.add(key); }
+    } else {
+      if (closed.has(key)) closed.delete(key);
+      else { open.delete(key); closed.add(key); }
+    }
     sync();
     render();
   });
 
-  // Ticking a weekday recolours the calendar straight away.
+  // Ticking a weekday or flipping the switch recolours the calendar straight away.
   dayBoxes.forEach(function(b){ b.addEventListener('change', render); });
+  modeInputs.forEach(function(r){
+    r.addEventListener('change', function(){
+      modeInputs.forEach(function(x){ x.parentNode.classList.toggle('is-active', x.checked); });
+      hint.textContent = hint.getAttribute('data-' + mode());
+      render();
+    });
+  });
 
   // Drop exceptions that no longer change anything — past dates, or ones the
   // weekday ticks now already cover — so the saved lists stay short.
   form.addEventListener('submit', function(){
     var days = weekdays();
-    open.forEach(function(k){ if (k < today || baseOpen(k, days)) open.delete(k); });
-    closed.forEach(function(k){ if (k < today || !baseOpen(k, days)) closed.delete(k); });
+    var m = mode();
+    open.forEach(function(k){ if (k < today || baseOpen(k, days, m)) open.delete(k); });
+    closed.forEach(function(k){ if (k < today || !baseOpen(k, days, m)) closed.delete(k); });
     sync();
   });
 
