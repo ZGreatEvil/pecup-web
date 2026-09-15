@@ -117,7 +117,7 @@ function renderLupaSandi({
           menerima permintaannya. Kalau kamu memang belum punya akun, <a href="/daftar">daftar dulu di sini</a>.
         </div>
         ${contactBlock}
-        <a class="btn-outline" href="/lupa-sandi/kode" style="display:block;text-align:center;width:100%;padding:14px;border-radius:12px;font-size:14.5px;font-weight:700;">Sudah punya kode? Ganti password</a>`
+        <a class="btn-outline" href="/lupa-sandi/kode" style="display:flex;text-align:center;width:100%;padding:14px;border-radius:12px;font-size:14.5px;font-weight:700;">Sudah punya kode? Ganti password</a>`
       : `
       ${errorBox(errors)}
       <form method="post" action="/lupa-sandi">
@@ -177,7 +177,7 @@ function renderResetSandi({
     cartCount,
     formHtml: done
       ? `<div class="flash flash-ok">Password berhasil diganti. Silakan masuk dengan password barumu.</div>
-        <a class="btn-primary" href="/masuk" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Masuk Sekarang</a>`
+        <a class="btn-primary" href="/masuk" style="display:flex;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Masuk Sekarang</a>`
       : `
       ${errorBox(errors)}
       <form method="post" action="/lupa-sandi/kode">
@@ -393,7 +393,7 @@ function renderKeanggotaan({ cartCount = 0, customer = null, loyalty = null, tie
               : 'Kamu sudah di tingkat tertinggi — terima kasih ya!'
           }
         </div>
-        <a class="btn-primary" href="/akun" style="display:inline-block;margin-top:14px;padding:11px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Lihat kartu stempelku</a>
+        <a class="btn-primary" href="/akun" style="margin-top:14px;padding:11px 20px;border-radius:11px;font-size:13.5px;font-weight:700;">Lihat kartu stempelku</a>
       </div>`
     : `<div class="card" style="margin-bottom:22px;">
         <div style="font-size:14.5px;line-height:1.8;margin-bottom:14px;">

@@ -208,7 +208,7 @@ function renderBeranda({
       <h1 class="hero-title">Buah Potong Segar, Siap Santap Tanpa Ribet</h1>
       <p style="font-size:17px;line-height:1.7;color:var(--text-muted);max-width:480px;">Dipotong higienis dan dikemas rapi dalam cup, langsung dari Pecup ke meja kamu. Pesan sekarang, transfer, tinggal tunggu paket buah segar sampai.</p>
       <div style="display:flex;gap:14px;margin-top:6px;">
-        <a href="#menu" class="btn-primary" style="padding:15px 30px;border-radius:14px;font-size:15px;font-weight:700;display:inline-block;">Lihat Menu Buah</a>
+        <a href="#menu" class="btn-primary" style="padding:15px 30px;border-radius:14px;font-size:15px;font-weight:700;">Lihat Menu Buah</a>
       </div>
     </div>
     <div class="hero-art">
@@ -268,7 +268,7 @@ function renderBeranda({
             <div style="font-size:38px;margin-bottom:10px;">🍉</div>
             <h3 style="font-size:18px;font-weight:800;margin-bottom:8px;">Tidak ketemu</h3>
             <p style="font-size:14px;color:var(--text-muted);line-height:1.7;max-width:340px;margin:0 auto;">Tidak ada produk yang cocok dengan &ldquo;${escapeHtml(search)}&rdquo;. Coba kata lain, atau lihat semua ${totalProducts} produk kami.</p>
-            <a href="/#menu" class="btn-primary" style="display:inline-block;margin-top:18px;padding:13px 26px;border-radius:12px;font-size:14px;font-weight:700;">Lihat Semua Produk</a>
+            <a href="/#menu" class="btn-primary" style="margin-top:18px;padding:13px 26px;border-radius:12px;font-size:14px;font-weight:700;">Lihat Semua Produk</a>
           </div>`
         : `<div class="grid-4">${cards}</div>`
     }
@@ -568,7 +568,7 @@ function renderKeranjang({ items, subtotal, cartCount, customer = null, shop = n
                 Toko sedang tutup, jadi pesanan belum bisa dikirim.<br>
                 <span style="font-weight:600;">Keranjangmu tersimpan — tinggal checkout saat buka lagi.</span>
               </div>`
-            : `<a href="/checkout" class="btn-primary" style="display:block;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
+            : `<a href="/checkout" class="btn-primary" style="display:flex;text-align:center;width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;">Lanjut ke Checkout</a>`
         }
       </div>
     </div>`
@@ -1103,7 +1103,7 @@ function renderSukses({ order, items, emailOk, customer = null, loyaltyOn = true
       </div>`
           : ''
       }
-      <a href="/" class="btn-primary" style="display:block;width:100%;text-align:center;padding:15px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:8px;">Kembali ke Beranda</a>
+      <a href="/" class="btn-primary" style="display:flex;width:100%;text-align:center;padding:15px;border-radius:12px;font-size:14.5px;font-weight:700;margin-top:8px;">Kembali ke Beranda</a>
     </div>
   </div>
 </div></div>`;

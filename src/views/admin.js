@@ -1617,7 +1617,7 @@ function renderForbidden({ admin, permissionLabel = '', backHref = '/admin' }) {
       <p style="font-size:13px;color:var(--text-muted);line-height:1.75;margin-bottom:20px;">
         Kalau memang butuh, minta superadmin membukanya lewat <em>Kelola Admin → Atur Izin</em>.
       </p>
-      <a class="btn-primary" href="${escapeAttr(backHref)}" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;display:inline-block;">Kembali</a>
+      <a class="btn-primary" href="${escapeAttr(backHref)}" style="padding:12px 22px;border-radius:11px;font-size:14px;font-weight:700;">Kembali</a>
     </div>
   </main>
 </div>`;
