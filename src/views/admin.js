@@ -1339,7 +1339,7 @@ function whatsappButtons(order, items) {
           {
             label: 'Diterima, belum dibayar',
             color: '#d4a017',
-            text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nTapi pembayarannya belum kami terima. Silakan bayar sejumlah ${formatRupiah(order.total)} lewat QRIS Pecup, lalu kirim bukti pembayarannya di chat ini ya. Pesanan akan kami proses setelah pembayaran masuk. Terima kasih!`,
+            text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nTapi pembayarannya *belum kami terima*. Silakan bayar sejumlah ${formatRupiah(order.total)} lewat QRIS Pecup, lalu kirim bukti pembayarannya di chat ini ya. Pesanan akan kami proses setelah pembayaran masuk. Terima kasih!`,
           },
         ]
       : []),
