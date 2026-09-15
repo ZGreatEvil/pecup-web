@@ -1332,6 +1332,17 @@ function whatsappButtons(order, items) {
   const lines = items.map((it) => `- ${it.product_name} x${it.qty}`).join('\n');
   const when = order.delivery_date ? formatDateID(order.delivery_date) : 'segera';
   const templates = [
+    // Only while money is still owed — once it's paid this would be a false
+    // reminder, and a cancelled order owes nothing.
+    ...(!order.paid && order.status !== 'dibatalkan'
+      ? [
+          {
+            label: 'Diterima, belum dibayar',
+            color: '#d4a017',
+            text: `Halo ${order.customer_name}! Pesanan ${order.order_number} sudah kami terima ya\n\n${lines}\n\nTotal: ${formatRupiah(order.total)}\nDiantar: ${when}\n\nTapi pembayarannya belum kami terima. Silakan bayar sejumlah ${formatRupiah(order.total)} lewat QRIS Pecup, lalu kirim bukti pembayarannya di chat ini ya. Pesanan akan kami proses setelah pembayaran masuk. Terima kasih!`,
+          },
+        ]
+      : []),
     {
       label: 'Konfirmasi diterima',
       color: 'var(--green)',
