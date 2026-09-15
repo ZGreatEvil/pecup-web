@@ -218,7 +218,8 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
         </div>`,
               },
             ],
-            { style: Number(p.stock) <= 0 ? 'background:oklch(99% 0.012 25);' : '' }
+            // Pink = sold out. An unlimited product can't be, whatever its number says.
+            { style: !p.unlimited_stock && Number(p.stock) <= 0 ? 'background:oklch(99% 0.012 25);' : '' }
           )
         )
         .join('')
@@ -769,7 +770,7 @@ function renderProdukForm({
                   ${allProducts
                     .filter((o) => !isEdit || Number(o.id) !== Number(p.id))
                     .map((o) => {
-                      const available = Boolean(o.active) && Number(o.stock) > 0;
+                      const available = Boolean(o.active) && (Boolean(o.unlimited_stock) || Number(o.stock) > 0);
                       return `<label style="display:inline-flex;align-items:center;gap:7px;margin:0;font-size:12.5px;font-weight:600;background:var(--surface-2);border:1.5px solid var(--border);border-radius:9px;padding:7px 11px;cursor:pointer;white-space:nowrap;${
                         available ? '' : 'opacity:0.55;'
                       }">
