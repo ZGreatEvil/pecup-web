@@ -446,17 +446,10 @@ const SHARED_STYLE = `
   .admin-shell{display:flex;align-items:stretch;flex-wrap:wrap;min-height:100vh;}
   .admin-sidebar{flex:0 0 240px;background:var(--sidebar);padding:28px 20px;display:flex;flex-direction:column;}
   .admin-main{flex:1 1 480px;min-width:0;padding:32px 40px;}
-  /* A page whose content is a column of self-contained cards used to cap its
-     <main> to keep paragraphs a readable width, which left a wide empty band
-     down the right of a desktop screen. The cards now flow into as many
-     columns as the width allows instead: the page spans the full width, and
-     each card stays a readable measure. Collapses to one column on its own
-     when the room for a second drops below the minimum. */
-  /* min(440px, 100%), never a bare 440px: a bare minimum is still enforced on
-     a screen narrower than itself, so the cards would push a phone sideways. */
-  .span-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(min(440px, 100%), 1fr));gap:20px;align-items:start;}
-  .span-grid > .card{margin-bottom:0 !important;}
-  .span-grid > .span-full{grid-column:1 / -1;justify-self:start;}
+  /* Settings, Izin and the order detail used to cap <main> to keep paragraphs
+     a readable width, which left a wide empty band down the right of a desktop
+     screen. The cap is gone and the cards stay stacked one per row, so each box
+     simply runs the full width of the page. */
   /* Mobile-only bar carrying the brand and the hamburger. Hidden on desktop,
      where the full rail is always visible. */
   /* Fixed height (not padding-driven) so the drawer below can be positioned

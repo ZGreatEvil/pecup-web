@@ -1691,8 +1691,8 @@ function renderAdminIzin({ admin, target, catalog, presets, granted, grantable, 
               perannya menjadi Admin biasa di halaman Kelola Admin.
             </p>
           </div>`
-        : `<form method="post" action="/admin/akun/${target.id}/izin" data-warn-unsaved class="span-grid">
-      <div class="card span-full" style="margin-bottom:18px;width:100%;">
+        : `<form method="post" action="/admin/akun/${target.id}/izin" data-warn-unsaved>
+      <div class="card" style="margin-bottom:18px;">
         <h3 style="font-size:14px;font-weight:800;margin-bottom:4px;">Mulai dari contoh</h3>
         <p style="font-size:12.5px;color:var(--text-muted);line-height:1.7;margin-bottom:14px;">
           Ini hanya mengisi centang di bawah — silakan ubah lagi sebelum disimpan.
@@ -1702,7 +1702,7 @@ function renderAdminIzin({ admin, target, catalog, presets, granted, grantable, 
 
       ${groups}
 
-      <div class="span-full" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:40px;">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:40px;">
         <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Izin</button>
         <a class="btn-outline" href="/admin/akun" style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;">Batal</a>
         <span style="font-size:12.5px;color:var(--text-muted);">Perubahan berlaku begitu dia memuat halaman berikutnya.</span>
@@ -3056,7 +3056,7 @@ function renderPengaturan({
     ${flash ? `<div class="flash flash-ok">${escapeHtml(flash)}</div>` : ''}
     ${error ? `<div class="flash flash-error">${escapeHtml(error)}</div>` : ''}
 
-    <form method="post" action="/admin/pengaturan/toko" data-warn-unsaved class="span-grid">
+    <form method="post" action="/admin/pengaturan/toko" data-warn-unsaved>
       <div class="card" style="margin-bottom:20px;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
           <div style="flex:1 1 300px;">
@@ -3304,7 +3304,7 @@ function renderPengaturan({
         </div>
       </div>
 
-      <button class="btn-primary span-full" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Pengaturan</button>
+      <button class="btn-primary" type="submit" style="padding:13px 26px;border-radius:11px;font-size:14px;font-weight:700;">Simpan Pengaturan</button>
     </form>
   </main>
 </div>`;
