@@ -233,7 +233,7 @@ function renderProdukList({ products, stats, flash, admin, view = {}, categories
         isActive ? '19px 21px' : '20px 22px'
       };display:flex;align-items:center;gap:16px;transition:border-color 0.18s ease, transform 0.15s ease;" class="stat-card">
         <div style="width:44px;height:44px;border-radius:12px;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="1.8">${iconPath}</svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg>
         </div>
         <div><div style="font-size:22px;font-weight:800;">${value}</div><div style="font-size:12.5px;color:var(--text-muted);">${label}</div></div>
       </div>
