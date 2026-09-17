@@ -735,7 +735,7 @@ function renderCheckout({
 
           <div class="card">
             <h3 style="font-size:17px;font-weight:800;margin-bottom:20px;">Data Pemesan</h3>
-            <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Kezia Sharent"></div>
+            <div class="field"><label>Nama Lengkap <span class="req">*</span></label><input type="text" name="customerName" required value="${escapeAttr(formValues.customerName || '')}" placeholder="Contoh: Yanuar Sahrul"></div>
             <div class="field">
               <label>Nomor WhatsApp <span class="req">*</span></label>
               <input type="tel" name="whatsapp" required inputmode="numeric" autocomplete="tel" pattern="[0-9+][0-9 .()\\-]{8,19}" title="Masukkan nomor WhatsApp yang valid, contoh: 081234567890" value="${escapeAttr(formValues.whatsapp || '')}" placeholder="Contoh: 081234567890">
@@ -782,7 +782,7 @@ function renderCheckout({
             </div>
             <div style="margin-bottom:0;">
               <label>Lokasi Pengantaran <span class="req">*</span></label>
-              <input type="text" name="address" required maxlength="200" value="${escapeAttr(formValues.address || '')}" placeholder="Contoh: Menara Batavia lt. 26, atau Kos Melati no. 12">
+              <input type="text" name="address" required maxlength="200" value="${escapeAttr(formValues.address || '')}" placeholder="Contoh: Nama Gedung/Kantor, Lantai">
               <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Cukup nama kantor/tempat dan patokannya — tidak perlu alamat lengkap.</span>
             </div>
           </div>
