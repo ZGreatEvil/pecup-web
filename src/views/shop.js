@@ -100,7 +100,9 @@ function shopBanner(shop) {
     </div>`;
   }
   if (shop.notice) {
-    return `<div style="background:var(--orange-soft);color:#7a4a1f;padding:13px 20px;text-align:center;font-size:13.5px;font-weight:600;line-height:1.6;">
+    return `<div style="background:var(--orange-soft);color:#7a4a1f;padding:13px 20px;text-align:center;font-size:${
+      Number(shop.noticeSize) || 14
+    }px;font-weight:600;line-height:1.6;">
       ${escapeHtml(shop.notice)}
     </div>`;
   }
@@ -399,7 +401,7 @@ function renderProdukDetail({ product, related, cartCount, comboOptions = [], cu
   <div class="px-page" style="padding-top:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
     ${backButton('/#menu', 'Kembali ke Menu')}
     <div style="font-size:13.5px;color:var(--text-muted);">
-      <a href="/">Beranda</a> &nbsp;/&nbsp; <a href="/#menu">Menu</a> &nbsp;/&nbsp; <span style="color:var(--text);">${escapeHtml(product.name)}</span>
+      <a class="tap-link" href="/">Beranda</a> &nbsp;/&nbsp; <a class="tap-link" href="/#menu">Menu</a> &nbsp;/&nbsp; <span style="color:var(--text);">${escapeHtml(product.name)}</span>
     </div>
   </div>
 
@@ -594,7 +596,7 @@ function renderCheckout({
   // Whether the loyalty programme is running. Defaults to on, so a caller that
   // hasn't been told behaves the way the shop always has.
   loyaltyOn = true,
-  shop = { open: true, notice: '', minOrder: 0, deliveryFee: 0, freeDeliveryOver: 0, sameDayCutoff: '' },
+  shop = { open: true, notice: '', minOrder: 0, deliveryFee: 0, freeDeliveryOver: 0 },
   voucher = { applied: false, code: '', discount: 0, error: '', label: '' },
   totals = null,
   deliveryFee = 0,
@@ -675,6 +677,9 @@ function renderCheckout({
     ? `<div class="flash flash-error">${errors.map((e) => escapeHtml(e)).join('<br>')}</div>`
     : '';
   const todayKey = toDateKey(new Date());
+  // Pre-order only: the earliest date a shopper may pick is tomorrow, the same
+  // rule the server enforces in settings.isDeliveryDateOpen.
+  const firstDeliveryKey = toDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
   // A closed shop gets a wall, not a form. The server already refuses the
   // order, but letting someone fill in their details, upload a transfer proof
@@ -770,7 +775,7 @@ function renderCheckout({
                       </select>
                       <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;">Pecup hanya mengantar di tanggal-tanggal ini.</span>`
                     : `<div class="flash flash-error" style="margin:0;">Belum ada tanggal pengantaran yang dibuka. Hubungi kami dulu ya.</div>`
-                  : `<input type="date" name="deliveryDate" required min="${todayKey}" value="${escapeAttr(
+                  : `<input type="date" name="deliveryDate" required min="${firstDeliveryKey}" value="${escapeAttr(
                       formValues.deliveryDate || ''
                     )}">
                      ${
@@ -810,7 +815,11 @@ function renderCheckout({
               <input type="text" name="voucherCode" id="voucherInput" value="${escapeAttr(formValues.voucherCode || '')}"
                      placeholder="Contoh: HEMAT10" maxlength="24" autocapitalize="characters" autocomplete="off"
                      style="flex:1 1 180px;text-transform:uppercase;">
-              <button type="button" id="applyVoucherBtn" class="btn-outline"
+              <!-- A real submit of this same form, so the server keeps every
+                   typed value through the reload (see aksi=voucher in the
+                   checkout route). formnovalidate: trying a code must not
+                   demand the transfer proof first. Works with JS switched off. -->
+              <button type="submit" name="aksi" value="voucher" formnovalidate id="applyVoucherBtn" class="btn-outline"
                       style="padding:13px 22px;border-radius:11px;font-size:14px;font-weight:700;white-space:nowrap;">Pakai</button>
             </div>
             ${
@@ -927,24 +936,17 @@ function renderCheckout({
   ${customerFooter(loyaltyOn)}
 </div></div>
 <script>
-// "Pakai" re-loads checkout with ?voucher=CODE so the server can validate the
-// code and price it. Deliberately a round-trip, not a client-side guess: the
+// "Pakai" is an ordinary submit of the checkout form (aksi=voucher), which the
+// server answers by re-rendering checkout with the code applied and everything
+// typed still in place. Deliberately a round-trip, not a client-side guess: the
 // discount rules live in one place.
 (function(){
   var btn = document.getElementById('applyVoucherBtn');
   var input = document.getElementById('voucherInput');
   if(!btn || !input) return;
-  function apply(){
-    var code = (input.value || '').trim().toUpperCase();
-    var url = new URL(window.location.href);
-    if(code) url.searchParams.set('voucher', code);
-    else url.searchParams.delete('voucher');
-    window.location.href = url.toString();
-  }
-  btn.addEventListener('click', apply);
-  // Enter inside the code field applies it rather than submitting the order.
+  // Enter inside the code field applies the code rather than sending the order.
   input.addEventListener('keydown', function(e){
-    if(e.key === 'Enter'){ e.preventDefault(); apply(); }
+    if(e.key === 'Enter'){ e.preventDefault(); btn.click(); }
   });
 })();
 </script>
@@ -1046,6 +1048,15 @@ function renderSukses({ order, items, emailOk, customer = null, loyaltyOn = true
       <p style="font-size:15px;color:var(--text-muted);line-height:1.75;max-width:420px;">
         ${state.lead(escapeHtml(order.customer_name))}
       </p>
+      ${
+        // Only a note an admin deliberately ticked as shareable.
+        order.admin_note && order.admin_note_public
+          ? `<div style="width:100%;background:var(--orange-soft);border-radius:14px;padding:16px 20px;text-align:left;">
+              <div style="font-size:11.5px;font-weight:800;color:#7a4a1f;letter-spacing:0.4px;margin-bottom:6px;">CATATAN DARI PECUP</div>
+              <div style="font-size:13.5px;color:#7a4a1f;line-height:1.7;white-space:pre-wrap;">${escapeHtml(order.admin_note)}</div>
+            </div>`
+          : ''
+      }
       <div style="width:100%;background:var(--surface-2);border-radius:14px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;text-align:left;">
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">No. Pesanan</span><span style="font-weight:700;">${escapeHtml(order.order_number)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--text-muted);">Jumlah Produk</span><span style="font-weight:700;">${items.length} produk</span></div>

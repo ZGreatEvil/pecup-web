@@ -13,6 +13,7 @@ loadEnv(); // no-op on Vercel (env vars are injected directly); useful for `verc
 
 const Router = require('../src/router');
 const { parseCookies, setCookie, clearCookie } = require('../src/cookies');
+const { saveFormFlash, takeFormFlash } = require('../src/formFlash');
 const cartLib = require('../src/cart');
 const adminSession = require('../src/adminSession');
 const customerSession = require('../src/customerSession');
@@ -231,7 +232,11 @@ router.get('/produk/:id', async (req, res) => {
 
 router.post('/keranjang/tambah', async (req, res) => {
   const { fields } = await parseBody(req);
-  const productId = Number(fields.productId);
+  // A posted id is whatever the sender typed: anything that isn't a plain
+  // positive integer is "no such product", not a database error.
+  const productId = /^\d{1,15}$/.test(String(fields.productId || '').trim())
+    ? Number(fields.productId)
+    : 0;
   const qty = Math.max(1, Number(fields.qty) || 1);
   // The add-to-cart forms are progressively enhanced client-side (see the
   // inline script in layout.js) to fetch() with this header instead of doing
@@ -372,11 +377,15 @@ function safeNext(value) {
 
 router.get('/masuk', async (req, res, { query }) => {
   if (req.customer) return redirect(res, '/akun');
+  // What a rejected sign-in left behind, if anything.
+  const flash = takeFormFlash(req, res, 'masuk');
   sendHtml(
     res,
     accountViews.renderMasuk({
       cartCount: cartLib.cartCount(req.cart),
       next: query.get('next') || '',
+      errors: flash ? flash.errors || [] : [],
+      values: (flash && flash.values) || {},
       loyaltyOn: req.loyaltyOn,
     })
   );
@@ -389,6 +398,12 @@ router.post('/masuk', async (req, res) => {
 
   const customer = await customerAuth.checkCredentials(whatsapp, password);
   if (!customer) {
+    // Redirect rather than draw the page here, so refreshing the rejected form
+    // reloads the sign-in page instead of re-sending the password.
+    if (saveFormFlash(res, 'masuk', { errors: ['Nomor WhatsApp atau password salah.'], values: { whatsapp } })) {
+      const next = fields.next || '';
+      return redirect(res, '/masuk' + (next ? `?next=${encodeURIComponent(next)}` : ''));
+    }
     return sendHtml(
       res,
       accountViews.renderMasuk({
@@ -533,7 +548,16 @@ router.post('/lupa-sandi/kode', async (req, res) => {
 
 router.get('/daftar', async (req, res) => {
   if (req.customer) return redirect(res, '/akun');
-  sendHtml(res, accountViews.renderDaftar({ cartCount: cartLib.cartCount(req.cart), loyaltyOn: req.loyaltyOn }));
+  const flash = takeFormFlash(req, res, 'daftar');
+  sendHtml(
+    res,
+    accountViews.renderDaftar({
+      cartCount: cartLib.cartCount(req.cart),
+      errors: flash ? flash.errors || [] : [],
+      values: (flash && flash.values) || {},
+      loyaltyOn: req.loyaltyOn,
+    })
+  );
 });
 
 // What every tier is worth, for a shopper deciding whether to come back.
@@ -582,6 +606,15 @@ router.post('/daftar', async (req, res) => {
   }
 
   if (errors.length) {
+    // Same reason as sign-in: a refresh must not re-post the registration.
+    if (
+      saveFormFlash(res, 'daftar', {
+        errors,
+        values: { name, whatsapp, address, birthday: (fields.birthday || '').trim() },
+      })
+    ) {
+      return redirect(res, '/daftar');
+    }
     return sendHtml(
       res,
       accountViews.renderDaftar({
@@ -633,6 +666,7 @@ function requireCustomer(handler) {
 }
 
 router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
+  const akunFlash = takeFormFlash(req, res, 'akun');
   // Only the latest few here — the full list lives at /akun/pesanan so the
   // profile stays short for a long-standing customer.
   const [loyaltyStatus, recent, stampHistory] = await Promise.all([
@@ -649,6 +683,8 @@ router.get('/akun', requireCustomer(async (req, res, { customer, query }) => {
       totalOrders: recent.total,
       stampHistory,
       cartCount: cartLib.cartCount(req.cart),
+      // Anything a rejected password change left behind on its way here.
+      errors: akunFlash ? akunFlash.errors || [] : [],
       flash: query && query.get('ok') ? 'Perubahan tersimpan.' : '',
     })
   );
@@ -707,6 +743,9 @@ router.post('/akun/password', requireCustomer(async (req, res, { customer }) => 
   if (newPassword.length < 6) errors.push('Password baru minimal 6 karakter.');
 
   if (errors.length) {
+    // The account page redraws itself from the database on the way back, so the
+    // errors are all that has to survive the redirect.
+    if (saveFormFlash(res, 'akun', { errors })) return redirect(res, '/akun');
     const [loyaltyStatus, recent, stampHistory] = await Promise.all([
       loyalty.statusFor(customer.id),
       queries.queryOrders({ customerId: customer.id, page: 1, perPage: 5 }),
@@ -738,6 +777,8 @@ router.get('/checkout', async (req, res, { query }) => {
   // that's the whole point of having an account.
   // The birthday cup is keyed to the delivery date, so the date already in
   // the form (if any) decides whether it shows up in the preview.
+  // Anything a rejected submit stashed on its way here (see checkoutFailed).
+  const checkoutFlash = takeFormFlash(req, res, 'checkout');
   const deliveryDateKey = (query.get('deliveryDate') || '').trim();
   const [saved, benefits, shop] = await Promise.all([
     req.customer ? customerAuth.findById(req.customer.customerId) : null,
@@ -768,14 +809,21 @@ router.get('/checkout', async (req, res, { query }) => {
       deliveryMode: shop.deliveryMode,
       openDates: settings.openDeliveryDates(shop),
       closedNote: closedDatesNote(shop),
-      formValues: saved
-        ? {
-            customerName: saved.name,
-            whatsapp: formatWhatsapp(saved.whatsapp),
-            address: saved.address,
-            voucherCode: code,
-          }
-        : { voucherCode: code },
+      // What a rejected submit (or a voucher try) left behind: the errors to
+      // show, the values to put back, and whether the free cup was ticked.
+      errors: checkoutFlash ? checkoutFlash.errors || [] : [],
+      useReward: Boolean(checkoutFlash && checkoutFlash.values && checkoutFlash.values.useReward) && reward.available > 0,
+      formValues: {
+        ...(saved
+          ? {
+              customerName: saved.name,
+              whatsapp: formatWhatsapp(saved.whatsapp),
+              address: saved.address,
+              voucherCode: code,
+            }
+          : { voucherCode: code }),
+        ...(checkoutFlash && checkoutFlash.values ? checkoutFlash.values : {}),
+      },
     })
   );
 });
@@ -800,6 +848,27 @@ router.post('/checkout', async (req, res) => {
       }),
       413
     );
+  }
+
+  // "Pakai" on the promo box submits this same form with aksi=voucher. That is
+  // not an order: everything typed is stashed and the page is reloaded with the
+  // code applied, so trying a code — valid or not — never costs a guest the
+  // details they have already filled in.
+  if (fields.aksi === 'voucher') {
+    const code = vouchers.normalizeCode(fields.voucherCode || '');
+    saveFormFlash(res, 'checkout', {
+      errors: [],
+      values: {
+        customerName: (fields.customerName || '').trim(),
+        whatsapp: (fields.whatsapp || '').trim(),
+        notes: (fields.notes || '').trim(),
+        address: (fields.address || '').trim(),
+        deliveryDate: (fields.deliveryDate || '').trim(),
+        voucherCode: code,
+        useReward: Boolean(fields.useReward),
+      },
+    });
+    return redirect(res, '/checkout' + (code ? `?voucher=${encodeURIComponent(code)}` : ''));
   }
 
   // Re-derived here, never taken from the request: the form can only ask to
@@ -846,10 +915,10 @@ router.post('/checkout', async (req, res) => {
     errors.push('Tanggal pengantaran tidak valid.');
   } else if (deliveryDate < toDateKey(new Date())) {
     errors.push('Tanggal pengantaran tidak boleh di masa lalu.');
-  } else if (deliveryDate === toDateKey(new Date()) && pastSameDayCutoff(shop.sameDayCutoff)) {
-    errors.push(
-      `Pesanan untuk hari ini sudah ditutup pukul ${shop.sameDayCutoff} WIB. Pilih tanggal besok atau setelahnya.`
-    );
+  } else if (deliveryDate === toDateKey(new Date())) {
+    // Everything is pre-order: nothing ordered today can be delivered today,
+    // even on a day the calendar has open.
+    errors.push('Pesanan untuk diantar hari ini sudah tidak bisa. Pilih tanggal besok atau setelahnya.');
   } else if (!settings.isDeliveryDateOpen(shop, deliveryDate)) {
     // Checked whichever way the date was picked: the list only offers open
     // days, but a hand-posted form must be refused just the same.
@@ -872,7 +941,20 @@ router.post('/checkout', async (req, res) => {
     }
   }
 
-  if (errors.length) {
+  // A rejected checkout is answered with a redirect, not a page drawn inside
+  // this POST response: refreshing the latter re-sends the form (and the file
+  // with it), which is how a half-filled checkout used to vanish. The typed
+  // values ride along in a one-minute cookie; the proof file cannot, so it has
+  // to be attached again — the page says so.
+  const checkoutFailed = (list) => {
+    const stored = saveFormFlash(res, 'checkout', {
+      errors: list,
+      values: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
+    });
+    if (stored) {
+      return redirect(res, '/checkout' + (voucherCode ? `?voucher=${encodeURIComponent(voucherCode)}` : ''));
+    }
+    // Too big for a cookie: fall back to drawing it here, as before.
     return sendHtml(
       res,
       shopViews.renderCheckout({
@@ -891,12 +973,14 @@ router.post('/checkout', async (req, res) => {
         deliveryMode: shop.deliveryMode,
         openDates: settings.openDeliveryDates(shop),
         closedNote: closedDatesNote(shop),
-        errors,
+        errors: list,
         loyaltyOn: req.loyaltyOn,
         formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
       })
     );
-  }
+  };
+
+  if (errors.length) return checkoutFailed(errors);
 
   let proofFilename;
   let order;
@@ -938,29 +1022,7 @@ router.post('/checkout', async (req, res) => {
     // insert leaves a file nothing points at. Take it back out: the shopper is
     // about to be shown the form again and will upload afresh if they retry.
     if (proofFilename) await deleteProofFile(proofFilename);
-    return sendHtml(
-      res,
-      shopViews.renderCheckout({
-        items,
-        subtotal,
-        cartCount: cartLib.cartCount(req.cart),
-        customer: req.customer,
-        reward,
-        membership,
-        useReward,
-        shop,
-        voucher,
-        totals,
-        deliveryFee,
-        taxPercent,
-        deliveryMode: shop.deliveryMode,
-        openDates: settings.openDeliveryDates(shop),
-        closedNote: closedDatesNote(shop),
-        errors: [extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.'],
-        loyaltyOn: req.loyaltyOn,
-        formValues: { customerName, whatsapp, notes, address, deliveryDate, voucherCode },
-      })
-    );
+    return checkoutFailed([extractPgErrorMessage(err) || 'Gagal memproses pesanan. Coba lagi.']);
   }
 
   // A website order can only get here with a transfer proof attached (or
@@ -1062,25 +1124,26 @@ router.get('/tugas/pembersihan', async (req, res) => {
 
 router.get('/admin/login', (req, res) => {
   if (req.isAdmin) return redirect(res, '/admin/produk');
-  sendHtml(res, adminViews.renderLogin({ error: null }));
+  const flash = takeFormFlash(req, res, 'adminLogin');
+  sendHtml(res, adminViews.renderLogin({ error: (flash && flash.error) || null }));
 });
 
 router.post('/admin/login', async (req, res) => {
   const { fields } = await parseBody(req);
   const admin = await adminAuth.checkCredentials(fields.username, fields.password);
   if (admin && admin.lockedOut) {
-    return sendHtml(
-      res,
-      adminViews.renderLogin({
-        error: 'Terlalu banyak percobaan gagal. Tunggu 15 menit lalu coba lagi.',
-      }),
-      429
-    );
+    // Redirected, not drawn here: a refresh on a rejected login should reload
+    // the login page, not re-send the password.
+    const message = 'Terlalu banyak percobaan gagal. Tunggu 15 menit lalu coba lagi.';
+    if (saveFormFlash(res, 'adminLogin', { error: message })) return redirect(res, '/admin/login');
+    return sendHtml(res, adminViews.renderLogin({ error: message }), 429);
   }
   if (admin) {
     setCookie(res, adminSession.COOKIE_NAME, adminSession.issueToken(admin), { maxAge: adminSession.MAX_AGE_SECONDS });
     await logAdminAction(admin, 'login', null);
     redirect(res, '/admin/produk');
+  } else if (saveFormFlash(res, 'adminLogin', { error: 'Username atau password salah.' })) {
+    redirect(res, '/admin/login');
   } else {
     sendHtml(res, adminViews.renderLogin({ error: 'Username atau password salah.' }), 401);
   }
@@ -1191,6 +1254,8 @@ router.post('/admin/media/video/presign', requirePermission('produk.kelola', asy
 }));
 
 router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req, res) => {
+  // What a rejected save left behind, if anything (see its bounce()).
+  const flash = takeFormFlash(req, res, 'produkTambah');
   const [categories, inventoryItems, comboOptions, allProducts] = await Promise.all([
     queries.listCategories(),
     // Only fetched for an admin who may manage the stockroom — for anyone else
@@ -1203,14 +1268,15 @@ router.get('/admin/produk/tambah', requirePermission('produk.kelola', async (req
   sendHtml(
     res,
     adminViews.renderProdukForm({
-      product: null,
-      error: null,
+      product: (flash && flash.product) || null,
+      error: (flash && flash.error) || null,
       categories,
       admin: req.admin,
       inventoryItems,
+      pendingVideos: (flash && flash.pendingVideos) || [],
       comboOptions,
       allProducts,
-      comboChoices: [],
+      comboChoices: (flash && flash.comboChoices) || [],
     })
   );
 }));
@@ -1221,8 +1287,20 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
   // carried back through every failure path — bouncing the form must not cost
   // the admin the upload.
   const pendingVideos = (fieldLists.videoBaru || []).filter((url) => media.isProductVideoUrl(String(url || '').trim()));
-  const bounce = async (message) =>
-    sendHtml(
+  const bounce = async (message) => {
+    // Redirect-and-redraw, so refreshing a rejected form is a plain page load
+    // rather than a resubmission that loses everything typed.
+    if (
+      saveFormFlash(res, 'produkTambah', {
+        error: message,
+        product: fields,
+        pendingVideos,
+        comboChoices: (fieldLists.comboChoice || []).map(Number),
+      })
+    ) {
+      return redirect(res, '/admin/produk/tambah');
+    }
+    return sendHtml(
       res,
       adminViews.renderProdukForm({
         product: fields,
@@ -1235,6 +1313,7 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
         comboChoices: (fieldLists.comboChoice || []).map(Number),
       })
     );
+  };
 
   const error = validateProductFields(fields);
   if (error) return bounce(error);
@@ -1285,6 +1364,9 @@ router.post('/admin/produk/tambah', requirePermission('produk.kelola', async (re
 router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (req, res) => {
   const product = await queries.getProduct(Number(req.params.id));
   if (!product) return notFound(res);
+  // Typed values from a rejected save sit on top of the stored product, so the
+  // photos and videos already on it are kept.
+  const flash = takeFormFlash(req, res, `produkEdit${Number(req.params.id)}`);
   const [categories, inventoryItems, materials, comboOptions, allProducts, comboChoices] = await Promise.all([
     queries.listCategories(),
     req.can('inventaris.kelola') ? inventory.listItems({ includeInactive: false }) : [],
@@ -1296,15 +1378,16 @@ router.get('/admin/produk/:id/edit', requirePermission('produk.kelola', async (r
   sendHtml(
     res,
     adminViews.renderProdukForm({
-      product,
-      error: null,
+      product: flash && flash.product ? { ...product, ...flash.product } : product,
+      error: (flash && flash.error) || null,
       categories,
       admin: req.admin,
       inventoryItems,
       materials,
+      pendingVideos: (flash && flash.pendingVideos) || [],
       comboOptions,
       allProducts,
-      comboChoices,
+      comboChoices: flash && flash.comboChoices ? flash.comboChoices : comboChoices,
     })
   );
 }));
@@ -1316,8 +1399,19 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
 
   const { fields, fieldLists, fileLists } = await parseBody(req);
   const pendingVideos = (fieldLists.videoBaru || []).filter((url) => media.isProductVideoUrl(String(url || '').trim()));
-  const bounce = async (message) =>
-    sendHtml(
+  const bounce = async (message) => {
+    // As on the add form: bounce through a redirect so a refresh is harmless.
+    if (
+      saveFormFlash(res, `produkEdit${id}`, {
+        error: message,
+        product: { ...fields, id },
+        pendingVideos,
+        comboChoices: (fieldLists.comboChoice || []).map(Number),
+      })
+    ) {
+      return redirect(res, `/admin/produk/${id}/edit`);
+    }
+    return sendHtml(
       res,
       adminViews.renderProdukForm({
         product: { ...fields, id, image: existing.image, images: existing.images },
@@ -1330,6 +1424,7 @@ router.post('/admin/produk/:id/edit', requirePermission('produk.kelola', async (
         comboChoices: (fieldLists.comboChoice || []).map(Number),
       })
     );
+  };
 
   const error = validateProductFields(fields);
   if (error) return bounce(error);
@@ -1493,6 +1588,8 @@ router.get('/admin/pesanan', requirePermission('pesanan.lihat', async (req, res,
     '30-hari': { jenisTanggal: 'dipesan', dari: shiftDateKey(todayKey, -29), sampai: todayKey, urut: 'dipesan', arah: 'desc' },
     'kirim-hari-ini': { jenisTanggal: 'dikirim', dari: todayKey, sampai: todayKey, urut: 'dikirim', arah: 'asc' },
     'kirim-mendatang': { jenisTanggal: 'dikirim', dari: todayKey, sampai: '', urut: 'dikirim', arah: 'asc' },
+    // Everything still owing, at any stage and on any date.
+    'belum-bayar': { jenisTanggal: 'dipesan', dari: '', sampai: '', urut: 'dipesan', arah: 'desc', bayar: 'belum' },
     semua: { jenisTanggal: 'dipesan', dari: '', sampai: '', urut: 'dipesan', arah: 'desc' },
   };
 
@@ -1500,7 +1597,7 @@ router.get('/admin/pesanan', requirePermission('pesanan.lihat', async (req, res,
   // ?tanggal= is the old single-day link; keep it working.
   const legacyDate = query.get('tanggal') || '';
   // With no parameters at all, open on today rather than dumping everything.
-  const hasExplicitView = ['jenisTanggal', 'dari', 'sampai', 'status', 'q', 'urut'].some((k) => query.get(k) !== null);
+  const hasExplicitView = ['jenisTanggal', 'dari', 'sampai', 'status', 'bayar', 'q', 'urut'].some((k) => query.get(k) !== null);
   const preset = presets[requested] || (!hasExplicitView && !legacyDate ? presets['hari-ini'] : null);
   const activePreset = presets[requested] ? requested : !hasExplicitView && !legacyDate ? 'hari-ini' : '';
 
@@ -1516,6 +1613,11 @@ router.get('/admin/pesanan', requirePermission('pesanan.lihat', async (req, res,
       arah: query.get('arah') === 'asc' ? 'asc' : 'desc',
     }),
     status: query.get('status') || '',
+    // Payment state filter: '' (all), 'belum' or 'sudah'. A preset may set it,
+    // the dropdown always can.
+    bayar: ['belum', 'sudah'].includes(query.get('bayar') || '')
+      ? query.get('bayar')
+      : (preset && preset.bayar) || '',
     q: (query.get('q') || '').trim(),
   };
 
@@ -1525,6 +1627,7 @@ router.get('/admin/pesanan', requirePermission('pesanan.lihat', async (req, res,
     from: view.dari,
     to: view.sampai,
     status: view.status,
+    paid: view.bayar,
     search: view.q,
     dateField: view.jenisTanggal,
     sort: view.urut,
@@ -1565,6 +1668,7 @@ router.get('/admin/pesanan/unduh', requirePermission('pesanan.unduh', async (req
     from: dari,
     to: sampai,
     status: query.get('status') || '',
+    paid: ['belum', 'sudah'].includes(query.get('bayar') || '') ? query.get('bayar') : '',
     search: (query.get('q') || '').trim(),
     dateField: query.get('jenisTanggal') === 'dikirim' ? 'dikirim' : 'dipesan',
     sort: 'dipesan',
@@ -1653,6 +1757,8 @@ router.post('/admin/pelanggan/tambah', requirePermission('pelanggan.tambah', asy
 }));
 
 router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (req, res, { query }) => {
+  // What a rejected save left behind, if anything (see its rerender()).
+  const manualFlash = takeFormFlash(req, res, 'pesananTambah');
   // Only the one account that was linked to (from the customer page), if any.
   // The picker searches the server as you type, so the page no longer carries
   // the customer table with it — that list only ever grows.
@@ -1688,9 +1794,15 @@ router.get('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (r
             address: picked.address || '',
           }
         : null,
-      values: picked
-        ? { customerId: picked.id, customerName: picked.name, whatsapp: formatWhatsapp(picked.whatsapp) }
-        : {},
+      // A rejected save redirects back here rather than drawing itself inside
+      // the POST response, so refreshing this page is always safe.
+      errors: manualFlash ? manualFlash.errors || [] : [],
+      mixLines: (manualFlash && manualFlash.mixLines) || {},
+      values:
+        (manualFlash && manualFlash.values) ||
+        (picked
+          ? { customerId: picked.id, customerName: picked.name, whatsapp: formatWhatsapp(picked.whatsapp) }
+          : {}),
     })
   );
 }));
@@ -1783,8 +1895,13 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
         address: pickedCustomer.address || '',
       }
     : null;
-  const rerender = (errors) =>
-    sendHtml(
+  const rerender = (errors) => {
+    // Redirect-and-redraw, so a refresh on the rejected form is an ordinary
+    // page load instead of a form resubmission.
+    if (saveFormFlash(res, 'pesananTambah', { errors, values, mixLines })) {
+      return redirect(res, '/admin/pesanan/tambah');
+    }
+    return sendHtml(
       res,
       adminViews.renderPesananTambah({
         admin: req.admin,
@@ -1802,6 +1919,7 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
         mixLines,
       })
     );
+  };
 
   const errors = [];
   if (customerId && !pickedCustomer) errors.push('Akun pelanggan yang dipilih tidak ditemukan.');
@@ -1964,6 +2082,215 @@ router.post('/admin/pesanan/tambah', requirePermission('pesanan.manual', async (
   );
 }));
 
+// Bulk entry for one delivery day: a row per customer, saved in one go. Every
+// row goes through the same create_order path a single manual sale uses, so
+// stock, tiers, stamps and order numbers behave identically — the only thing
+// this page changes is how much typing it takes.
+//
+// Registered before '/admin/pesanan/:id' so "harian" is never read as an id.
+router.get('/admin/pesanan/harian', requirePermission('pesanan.manual', async (req, res, { query }) => {
+  const harianFlash = takeFormFlash(req, res, 'pesananHarian');
+  const [products, shop] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    settings.shopConfig(),
+  ]);
+  sendHtml(
+    res,
+    adminViews.renderPesananHarian({
+      admin: req.admin,
+      products,
+      // Rows and errors from a rejected save, if it bounced through here.
+      rows: (harianFlash && harianFlash.rows) || [],
+      values: (harianFlash && harianFlash.values) || {},
+      errors: harianFlash ? harianFlash.errors || [] : [],
+      minDate: toDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000)),
+      openDates: settings.openDeliveryDates(shop),
+      flash: query.get('flash') || '',
+    })
+  );
+}));
+
+router.post('/admin/pesanan/harian', requirePermission('pesanan.manual', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const [products, shop] = await Promise.all([
+    queries.listProducts({ onlyActive: true }),
+    settings.shopConfig(),
+  ]);
+  const taxPercent = settings.taxRateFor(shop);
+  const minDate = toDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+  const deliveryDate = (fields.deliveryDate || '').trim();
+  const deliveryFee = Math.max(0, Math.round(Number(fields.deliveryFee) || 0));
+  const status = ORDER_STATUSES.some((s) => s.value === fields.status && s.value !== 'dibatalkan')
+    ? fields.status
+    : 'menunggu';
+  const buatAkun = fields.buatAkun === '1';
+
+  // Rows are read by index. A row with nothing in it at all is simply skipped,
+  // so the spare blank rows at the bottom of the page cost nothing.
+  const rows = [];
+  for (let i = 0; i < 400; i += 1) {
+    const name = (fields[`nama_${i}`] || '').trim();
+    const whatsapp = (fields[`wa_${i}`] || '').trim();
+    const note = (fields[`catatan_${i}`] || '').trim();
+    const paid = fields[`lunas_${i}`] === '1';
+    const qty = {};
+    let cups = 0;
+    for (const p of products) {
+      const n = Math.max(0, Math.round(Number(fields[`qty_${i}_${p.id}`]) || 0));
+      if (n > 0) {
+        qty[p.id] = n;
+        cups += n;
+      }
+    }
+    if (!name && !whatsapp && !note && !cups) continue;
+    rows.push({ name, whatsapp, note, paid, qty, cups });
+  }
+
+  const values = {
+    deliveryDate,
+    status,
+    deliveryFee: String(deliveryFee),
+    buatAkun,
+  };
+  const rerender = (errors, flash = '') => {
+    // Redirect where the typed rows fit in a cookie; a very long day's worth of
+    // rows falls back to drawing the page here.
+    if (saveFormFlash(res, 'pesananHarian', { errors, rows, values })) {
+      return redirect(res, '/admin/pesanan/harian');
+    }
+    return sendHtml(
+      res,
+      adminViews.renderPesananHarian({
+        admin: req.admin,
+        products,
+        rows,
+        values,
+        errors,
+        flash,
+        minDate,
+        openDates: settings.openDeliveryDates(shop),
+      })
+    );
+  };
+
+  const errors = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) errors.push('Tanggal antar wajib diisi.');
+  else if (deliveryDate < minDate) errors.push('Tanggal antar paling cepat besok — pesanan hari ini sudah ditutup.');
+  else if (!settings.isDeliveryDateOpen(shop, deliveryDate)) {
+    const next = settings.openDeliveryDates(shop).slice(0, 3);
+    errors.push(
+      'Pecup tidak mengantar di tanggal itu.' +
+        (next.length ? ` Tanggal terdekat yang bisa: ${next.map((d) => formatDateID(d)).join(', ')}.` : '')
+    );
+  }
+  if (!rows.length) errors.push('Belum ada baris yang diisi.');
+  rows.forEach((row, n) => {
+    if (!row.name) errors.push(`Baris ${n + 1}: nama pemesan wajib diisi.`);
+    if (!row.cups) errors.push(`Baris ${n + 1}: isi minimal satu jumlah cup.`);
+    if (row.whatsapp && !normalizeWhatsapp(row.whatsapp)) errors.push(`Baris ${n + 1}: nomor WhatsApp tidak valid.`);
+  });
+
+  // Stock is checked across the whole page, not row by row: ten rows of one cup
+  // still need ten cups.
+  const wantedPerProduct = new Map();
+  for (const row of rows) {
+    for (const [productId, n] of Object.entries(row.qty)) {
+      wantedPerProduct.set(Number(productId), (wantedPerProduct.get(Number(productId)) || 0) + n);
+    }
+  }
+  for (const [productId, wanted] of wantedPerProduct) {
+    const product = products.find((p) => Number(p.id) === productId);
+    if (product && !product.unlimited_stock && wanted > Number(product.stock)) {
+      errors.push(`Stok ${product.name} tidak mencukupi (diminta ${wanted}, sisa ${product.stock}).`);
+    }
+  }
+  if (errors.length) return rerender(errors);
+
+  const created = [];
+  const failed = [];
+  for (const [n, row] of rows.entries()) {
+    const normalized = normalizeWhatsapp(row.whatsapp) || '';
+    // An existing account is always reused; a new one is only created when the
+    // box is ticked, so stamps land on the right card either way.
+    let linkedCustomerId = null;
+    if (normalized) {
+      const existing = await customerAuth.findByWhatsapp(normalized);
+      if (existing) linkedCustomerId = Number(existing.id);
+      else if (buatAkun) {
+        const password = crypto.randomBytes(24).toString('hex');
+        const account = await customerAuth.createCustomer({
+          whatsapp: normalized,
+          name: row.name,
+          password,
+          address: '',
+          birthday: null,
+        });
+        linkedCustomerId = Number(account.id);
+        await logAdminAction(
+          req.admin,
+          'customer.create',
+          `${row.name} (${formatWhatsapp(normalized)}) — dibuat otomatis dari input pesanan harian`
+        );
+      }
+    }
+
+    const items = Object.entries(row.qty).map(([productId, qty]) => {
+      const product = products.find((p) => Number(p.id) === Number(productId));
+      return { productId: Number(productId), name: product.name, price: Number(product.price), qty };
+    });
+    const session = linkedCustomerId ? { customerId: linkedCustomerId } : null;
+    const cartItems = items.map((it) => ({
+      product: products.find((p) => Number(p.id) === it.productId),
+      qty: it.qty,
+      unitPrice: it.price,
+    }));
+    // Tier pricing exactly as the website would apply it. The stamp-card free
+    // cup is deliberately not spent here — that is a decision per order, and
+    // this page is for speed.
+    const { membership } = await customerBenefits(session, cartItems, deliveryDate);
+
+    try {
+      const order = await queries.createOrder({
+        customerName: row.name,
+        whatsapp: normalized,
+        notes: row.note,
+        items,
+        proofFilename: null,
+        address: '',
+        deliveryDate,
+        customerId: linkedCustomerId,
+        useReward: false,
+        voucherCode: null,
+        deliveryFee,
+        tier: membership.tier || {},
+        taxPercent,
+      });
+      await queries.setOrderPaid(order.id, row.paid);
+      if (status !== 'menunggu') await queries.updateOrderStatus(order.id, status);
+      if (linkedCustomerId && status === 'selesai') await loyalty.grantForOrder(linkedCustomerId, order.id);
+      created.push(order.orderNumber);
+    } catch (err) {
+      console.error(err);
+      failed.push(`Baris ${n + 1} (${row.name}): ${extractPgErrorMessage(err) || 'gagal disimpan'}`);
+    }
+  }
+
+  if (created.length) {
+    await logAdminAction(
+      req.admin,
+      'order.bulk_create',
+      `${created.length} pesanan untuk ${deliveryDate} (${status}): ${created.join(', ')}`
+    );
+  }
+  // Rows that were saved must not come back in the form — re-submitting the
+  // page would double them. Only the failures are reported back.
+  const summary =
+    `${created.length} pesanan dibuat untuk ${formatDateID(deliveryDate)}.` +
+    (failed.length ? ` ${failed.length} baris gagal: ${failed.join(' · ')}` : '');
+  redirect(res, '/admin/pesanan/harian?flash=' + encodeURIComponent(summary));
+}));
+
 // Marking the money as received (or not). Its own permission-checked route
 // rather than part of the status form: fulfilment and payment move
 // independently, and conflating them is how "selesai but never paid" gets lost.
@@ -1984,6 +2311,31 @@ router.post('/admin/pesanan/:id/bayar', requirePermission('pesanan.status', asyn
     } (${formatRupiah(order.total)})`
   );
   redirect(res, `/admin/pesanan/${id}?flash=` + encodeURIComponent(paid ? 'Ditandai sudah dibayar.' : 'Ditandai belum dibayar.'));
+}));
+
+// The admin's note on an order. Saved on its own, so jotting something down
+// never touches status or payment. An empty note can never be public: the tick
+// is stored together with the text it was ticked for.
+router.post('/admin/pesanan/:id/catatan', requirePermission('pesanan.status', async (req, res) => {
+  const { fields } = await parseBody(req);
+  const id = Number(req.params.id);
+  const order = await queries.getOrder(id);
+  if (!order) return notFound(res, req);
+
+  const note = (fields.adminNote || '').trim();
+  const isPublic = Boolean(fields.adminNotePublic) && note !== '';
+  await queries.setAdminNote(id, note, isPublic);
+  await logAdminAction(
+    req.admin,
+    'order.note',
+    `${order.order_number} (${order.customer_name}): ${
+      note ? (isPublic ? 'catatan disimpan — tampil ke pelanggan' : 'catatan disimpan — khusus admin') : 'catatan dihapus'
+    }`
+  );
+  redirect(
+    res,
+    `/admin/pesanan/${id}?flash=` + encodeURIComponent(note ? 'Catatan admin disimpan.' : 'Catatan admin dihapus.')
+  );
 }));
 
 router.get('/admin/pesanan/:id', requirePermission('pesanan.lihat', async (req, res, { query }) => {
@@ -2115,7 +2467,6 @@ router.get('/admin/pengaturan', requirePermission('pengaturan.kelola', async (re
 router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', async (req, res) => {
   const { fields, fieldLists } = await parseBody(req);
   const num = (value) => Math.max(0, Math.round(Number(value) || 0));
-  const cutoff = (fields.sameDayCutoff || '').trim();
   const openTime = (fields.openTime || '').trim();
   const closeTime = (fields.closeTime || '').trim();
   const validTime = (value) => !value || /^\d{2}:\d{2}$/.test(value);
@@ -2130,11 +2481,11 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
   const settingsAfter = {
     shop_open: fields.shopOpen ? '1' : '0',
     shop_notice: (fields.shopNotice || '').trim().slice(0, 200),
+    shop_notice_size: String(Math.min(30, Math.max(12, num(fields.shopNoticeSize) || 14))),
     shop_whatsapp: normalizeWhatsapp(fields.shopWhatsapp || '') || '',
     min_order: num(fields.minOrder),
     delivery_fee: num(fields.deliveryFee),
     free_delivery_over: num(fields.freeDeliveryOver),
-    same_day_cutoff: cutoff,
     open_time: openTime,
     close_time: closeTime,
     // PPN. The rate is kept even while the box is off, so switching it back on
@@ -2171,11 +2522,11 @@ router.post('/admin/pengaturan/toko', requirePermission('pengaturan.kelola', asy
   const summary = changeSummary(settingsBefore, settingsAfter, [
     { key: 'shop_open', label: 'toko', format: (v) => (String(v) === '1' ? 'buka' : 'tutup') },
     { key: 'shop_notice', label: 'pengumuman' },
+    { key: 'shop_notice_size', label: 'ukuran font pengumuman', format: (v) => `${v}px` },
     { key: 'shop_whatsapp', label: 'WhatsApp toko' },
     { key: 'min_order', label: 'min. belanja', format: rupiah },
     { key: 'delivery_fee', label: 'ongkir', format: rupiah },
     { key: 'free_delivery_over', label: 'gratis ongkir di atas', format: rupiah },
-    { key: 'same_day_cutoff', label: 'batas pesan hari ini' },
     {
       key: 'delivery_days',
       label: 'hari antar',
@@ -3581,19 +3932,6 @@ function resolveRange(key, todayKey) {
   }
 }
 
-// Whether "today" is already past the shop's same-day cut-off. Compared in
-// WIB, not the server's timezone — the function runs in Singapore and the
-// shop runs on Jakarta time.
-function pastSameDayCutoff(cutoff) {
-  if (!cutoff) return false;
-  const nowWib = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Jakarta',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(new Date());
-  return nowWib > cutoff;
-}
 
 // XML has a different escaping set from HTML — & < > " ' all need entities,
 // and a stray one makes the whole sitemap unparseable.
@@ -3665,6 +4003,9 @@ module.exports = async (req, res) => {
     const pathname = decodeURIComponent(url.pathname);
 
     const cookies = parseCookies(req);
+    // Kept on the request so a route can pick up a form flash (src/formFlash.js)
+    // without parsing the header a second time.
+    req.cookies = cookies;
     req.cart = cartLib.parseCart(cookies[cartLib.COOKIE_NAME]);
     req.admin = adminSession.verify(cookies[adminSession.COOKIE_NAME]);
     if (req.admin) {

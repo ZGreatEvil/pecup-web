@@ -22,6 +22,9 @@ const DEFAULTS = {
   // same-day delivery isn't offered any more.
   shop_open: '1',
   shop_notice: '',
+  // How big that announcement is shown, in px. A holiday notice sometimes has
+  // to shout; the ordinary one shouldn't.
+  shop_notice_size: '14',
   // The shop's own WhatsApp number, in 62xxxxxxxxx form. Used for the
   // "contact admin" links (password resets, order questions).
   shop_whatsapp: '',
@@ -34,7 +37,6 @@ const DEFAULTS = {
   // stored value rather than a constant because it has moved before (10 → 11).
   tax_enabled: '0',
   tax_percent: '11',
-  same_day_cutoff: '', // 'HH:MM' in WIB; empty = same-day always allowed
   // Which days the shop actually delivers on — a pre-order shop that only
   // makes cups on, say, Wednesday and Saturday sets those here and the
   // storefront offers nothing else. Empty = every day, which is how it ships,
@@ -83,7 +85,6 @@ async function shopConfig() {
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
   };
   const time = (key) => (/^\d{2}:\d{2}$/.test(all[key] || '') ? all[key] : '');
-  const cutoff = time('same_day_cutoff');
   const openTime = time('open_time');
   const closeTime = time('close_time');
 
@@ -108,11 +109,13 @@ async function shopConfig() {
     closeTime,
     hoursLabel: openTime && closeTime ? `${openTime}-${closeTime} WIB` : '',
     notice: all.shop_notice || '',
+    // Clamped either way, so a bad value in the table can't blow the banner up
+    // or shrink it to nothing.
+    noticeSize: Math.min(30, Math.max(12, num('shop_notice_size') || 14)),
     whatsapp: all.shop_whatsapp || '',
     minOrder: num('min_order'),
     deliveryFee: num('delivery_fee'),
     freeDeliveryOver: num('free_delivery_over'),
-    sameDayCutoff: cutoff,
     // taxEnabled is the tick itself; taxPercent is the rate it would charge.
     // Everything that prices an order uses taxRateFor() below instead, which
     // is 0 whenever the box is off — so one place decides, not each caller.
@@ -192,6 +195,10 @@ function deliveryRules(all) {
 function isDeliveryDateOpen(config, dateKey) {
   const rules = config.delivery || deliveryRules({});
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return false;
+  // Never today, and never the past. Everything is pre-order: a cup ordered
+  // now is made for tomorrow at the earliest, however the day is otherwise
+  // marked — so this sits above the open-dates rule rather than beside it.
+  if (dateKey <= dateKeyWIB()) return false;
   if (rules.open.has(dateKey)) return true;
   if (rules.closed.has(dateKey)) return false;
   // No weekday ticked: every day in 'tutup' mode, none at all in 'buka' mode.
@@ -206,17 +213,14 @@ function isDeliveryDateOpen(config, dateKey) {
 function openDeliveryDates(config, { from = dateKeyWIB(), max = 0 } = {}) {
   const rules = config.delivery || deliveryRules({});
   const limit = max > 0 ? max : rules.horizon;
-  const todayKey = dateKeyWIB();
-  const cutoffPassed =
-    Boolean(config.sameDayCutoff) && nowWIB() >= config.sameDayCutoff;
 
+  // Today and the past are refused by isDeliveryDateOpen itself, so there is
+  // nothing to filter out here — one rule, applied in one place.
   const out = [];
   const start = new Date(`${from}T00:00:00Z`);
   for (let i = 0; i <= limit && out.length < 60; i += 1) {
     const day = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
     const key = day.toISOString().slice(0, 10);
-    if (key < todayKey) continue;
-    if (key === todayKey && cutoffPassed) continue;
     if (isDeliveryDateOpen(config, key)) out.push(key);
   }
   return out;

@@ -361,6 +361,17 @@ async function getOrderItems(orderId) {
   return db.query('select * from order_items where order_id = $1', [orderId]);
 }
 
+// The admin's note on an order, and whether the buyer may see it. Both are
+// written together so a note can never be left showing with the wrong text.
+async function setAdminNote(orderId, note, isPublic) {
+  const rows = await db.query(
+    `update orders set admin_note = $2, admin_note_public = $3 where id = $1
+     returning admin_note, admin_note_public`,
+    [Number(orderId), String(note || '').slice(0, 2000), Boolean(isPublic)]
+  );
+  return rows[0] || null;
+}
+
 // Items for many orders in one round-trip, keyed by order id. The CSV export
 // used to issue one query per order, which is fine for a day's orders and
 // very much not fine for a year's.
@@ -405,7 +416,7 @@ const ORDER_SORTS = {
 // Shared WHERE builder for every order listing and report, so the admin
 // table, the customer's own history, the CSV and the revenue report all
 // filter by exactly the same rules.
-function orderFilterSql({ from = '', to = '', status = '', search = '', customerId = null, dateField = 'dipesan' }) {
+function orderFilterSql({ from = '', to = '', status = '', paid = '', search = '', customerId = null, dateField = 'dipesan' }) {
   // Which column a date range applies to. Delivery date is a real date
   // column; the order date uses date_key, already stored in WIB.
   const rangeColumn = dateField === 'dikirim' ? 'o.delivery_date' : 'o.date_key';
@@ -425,6 +436,10 @@ function orderFilterSql({ from = '', to = '', status = '', search = '', customer
     params.push(status);
     clauses.push(`o.status = $${params.length}`);
   }
+  // Payment is its own axis, not a status: an order can be "diproses" and
+  // still unpaid. A cancelled order owes nothing, so it never counts as unpaid.
+  if (paid === 'sudah') clauses.push('o.paid = true');
+  else if (paid === 'belum') clauses.push("o.paid = false and o.status <> 'dibatalkan'");
   if (customerId) {
     params.push(customerId);
     clauses.push(`o.customer_id = $${params.length}`);
@@ -508,7 +523,9 @@ async function dashboardData({ todayKey, monthStart }) {
               coalesce(sum(oi.qty), 0)::int as cups
        from orders o left join order_items oi on oi.order_id = o.id
        where o.delivery_date >= $1::date and o.delivery_date <= ($1::date + 7)
-         and o.status in ('menunggu', 'diproses')
+         -- Everything that is still a real order, so the count is what will
+         -- actually be handed over: only a cancelled one drops out.
+         and o.status <> 'dibatalkan'
        group by o.delivery_date order by o.delivery_date asc limit 7`,
       [todayKey]
     ),
@@ -567,7 +584,7 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
   };
   const grouping = groupings[groupBy] || groupings.hari;
 
-  const [totals, cups, series, byProduct, byStatus] = await Promise.all([
+  const [totals, cups, series, byProduct, byStatus, periodProducts] = await Promise.all([
     db.query(
       `select count(*)::int as orders,
               coalesce(sum(o.subtotal), 0)::bigint as gross,
@@ -616,6 +633,17 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
        from orders o ${where} group by o.status`,
       params
     ),
+    // What each day actually consisted of — the cups behind that day's orders,
+    // so a day can be prepared (or checked off) from a single list.
+    db.query(
+      `select ${grouping.expr} as periode, oi.product_name,
+              coalesce(sum(oi.qty), 0)::int as cups,
+              coalesce(sum(oi.subtotal), 0)::bigint as gross
+       from orders o join order_items oi on oi.order_id = o.id ${where}
+       group by ${grouping.expr}, oi.product_name
+       order by ${grouping.expr} desc, cups desc limit 2000`,
+      params
+    ),
   ]);
 
   const t = totals[0] || {};
@@ -657,6 +685,20 @@ async function revenueReport({ from = '', to = '', statuses = ['selesai'], group
       gross: Number(r.gross) || 0,
     })),
     byStatus: byStatus.map((r) => ({ status: r.status, orders: Number(r.orders) || 0, net: Number(r.net) || 0 })),
+    // One entry per day (or month), each carrying that period's product list.
+    byPeriodProduct: [
+      ...periodProducts
+        .reduce((map, r) => {
+          if (!map.has(r.periode)) map.set(r.periode, []);
+          map.get(r.periode).push({
+            name: r.product_name,
+            cups: Number(r.cups) || 0,
+            gross: Number(r.gross) || 0,
+          });
+          return map;
+        }, new Map())
+        .entries(),
+    ].map(([periode, items]) => ({ periode, items })),
   };
 }
 
@@ -803,6 +845,7 @@ module.exports = {
   setOrderPaid,
   getOrder,
   getOrderItems,
+  setAdminNote,
   getOrderItemsForOrders,
   listOrdersByDate,
   listOrdersByDateRange,

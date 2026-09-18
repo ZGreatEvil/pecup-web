@@ -663,7 +663,9 @@ function renderAkun({
             <div class="field"><label>Lokasi Pengantaran Utama</label><input type="text" name="address" maxlength="200" value="${escapeAttr(customer.address || '')}" placeholder="Contoh: Menara Batavia lt. 26"></div>
             <div class="field" style="margin-bottom:8px;">
               <label>Tanggal Lahir <span style="font-weight:500;color:var(--text-muted);">(opsional)</span></label>
-              <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? String(customer.birthday).slice(0, 10) : '')}" max="${toDateKey(new Date())}">
+              <!-- toDateKey, not String().slice(): the driver hands back a Date
+                   object, whose default text ("Wed Sep 16") a date input drops. -->
+              <input type="date" name="birthday" value="${escapeAttr(customer.birthday ? toDateKey(customer.birthday) : '')}" max="${toDateKey(new Date())}">
               <span style="font-size:12px;color:var(--text-muted);display:block;margin-top:6px;line-height:1.6;">
                 ${
                   // Promising a birthday cup while the programme is off would be

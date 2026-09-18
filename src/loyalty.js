@@ -185,9 +185,10 @@ function todayKeyWIB(at = new Date()) {
 function dateKeyOf(value) {
   if (!value) return '';
   if (value instanceof Date) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
-      value.getDate()
-    ).padStart(2, '0')}`;
+    // Read in Jakarta, not in the server's own zone: a `date` column comes back
+    // as that midnight in UTC (16 Sept → 15 Sept 17:00Z), so reading it in GMT
+    // lands a day early and the birthday cup would open a day too soon.
+    return new Date(value.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
   }
   return String(value).slice(0, 10);
 }

@@ -154,6 +154,13 @@ alter table orders add column if not exists paid_at timestamptz;
 update orders set paid = true, paid_at = created_at
  where paid = false and status <> 'dibatalkan' and proof_filename is not null;
 
+-- The admin's own note on an order: the real name behind a nickname, a Drive
+-- link to a transfer proof that arrived by hand, anything worth remembering.
+-- Private by default — admin_note_public is a deliberate act, so nothing an
+-- admin jots down can reach the buyer by accident.
+alter table orders add column if not exists admin_note text not null default '';
+alter table orders add column if not exists admin_note_public boolean not null default false;
+
 -- PPN charged on this order. A snapshot like the fields above: turning the
 -- tax on or changing its rate later must not rewrite what a past customer
 -- actually paid. Both stay 0 while the setting is off, which is how it ships.

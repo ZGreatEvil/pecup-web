@@ -171,7 +171,7 @@ const SHARED_STYLE = `
   .account-avatar{width:28px;height:28px;border-radius:50%;background:var(--green);color:#fff;font-size:12.5px;font-weight:800;
     display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .account-text{display:flex;flex-direction:column;line-height:1.2;min-width:0;}
-  .account-hint{font-size:9.5px;font-weight:700;letter-spacing:0.5px;color:var(--text-muted);text-transform:uppercase;}
+  .account-hint{font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-muted);text-transform:uppercase;}
   .account-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   /* On a phone the row is already tight — keep the avatar, drop the wording. */
   /* The name stays on a phone. Hiding it left a bare circle that read as a
@@ -304,7 +304,7 @@ const SHARED_STYLE = `
   /* The last slot says GRATIS rather than a digit. At the stamp size a phone
      gives us (~44px across) that word is wider than the circle and spilled out
      over both edges, so it gets its own size. */
-  .stamp-free-label{font-size:9px;letter-spacing:0.2px;line-height:1;text-align:center;padding:0 1px;}
+  .stamp-free-label{font-size:10px;letter-spacing:0.2px;line-height:1;text-align:center;padding:0 1px;}
   .stamp-filled{border:2px solid var(--green-soft);background:var(--green-soft);}
   .stamp-filled img{width:72%;height:72%;object-fit:contain;transform:rotate(-30deg);}
   .stamp-reward{border:2px solid var(--orange);background:var(--orange-soft);}
@@ -494,7 +494,7 @@ const SHARED_STYLE = `
      data-label so no header row is needed. */
   .adm-cell{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0;
     padding:5px 0;flex-wrap:wrap;}
-  .adm-cell::before{content:attr(data-label);flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:0.5px;
+  .adm-cell::before{content:attr(data-label);flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:0.5px;
     text-transform:uppercase;color:var(--text-muted);}
   /* The lead cell (and any actions cell) carries no label and spans the row. */
   .adm-cell[data-label=""]{display:block;padding-bottom:9px;}
@@ -722,7 +722,7 @@ const SHARED_STYLE = `
     .p-card-foot > div{margin-left:auto;}
     .p-card-foot .add-btn{width:36px !important;height:36px !important;}
     .p-card-foot a.add-btn{width:auto !important;padding:0 11px !important;font-size:11.5px !important;}
-    .p-card .badge-float{font-size:10px !important;padding:4px 9px !important;}
+    .p-card .badge-float{font-size:11px !important;padding:4px 9px !important;}
     /* The hero is a full-height billboard on desktop; on a phone it's just
        delaying the menu. */
     .hero{padding-top:46px !important;padding-bottom:40px !important;}
@@ -745,6 +745,40 @@ const SHARED_STYLE = `
     .split-layout{gap:28px;}
     .split-main{flex-basis:360px;}
     .split-side{flex-basis:280px;}
+  }
+
+  /* Touch targets. A finger needs roughly 40px; a mouse pointer does not, so
+     this only applies where the screen is small enough to be a touch device.
+     Padding rather than height, so nothing is stretched or re-centred — the
+     tappable area grows around the text that is already there. */
+  @media (max-width: 860px){
+    .nav-link{display:inline-flex;align-items:center;min-height:40px;}
+    .brand-link{min-height:44px;}
+    #cartLink{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;}
+    footer a{display:inline-block;padding-block:7px;}
+    /* Row actions in the admin tables ("Ubah", "Hapus", "Detail"), and the
+       small links that sit under a heading. */
+    .adm-cell a, .icon-action, table a, table button{min-height:38px;display:inline-flex;
+      align-items:center;justify-content:inherit;}
+    /* Tick boxes are typed at 15-20px inline all over the admin forms; a thumb
+       needs more. !important because those sizes are inline attributes. The
+       label around them is the real target, and that is already row-sized. */
+    input[type="checkbox"], input[type="radio"]{width:22px !important;height:22px !important;}
+    /* The label wrapped around a tick box is the real target — tapping the words
+       toggles it — so the whole row gets thumb height, not just the box.
+       Height only: every one of these labels already lays itself out (flex, or a
+       flex item), so nothing is re-flowed by asking for more room. */
+    label:has(> input[type="checkbox"]), label:has(> input[type="radio"]){min-height:40px;}
+    /* A link that acts as a button ("Semua pesanan →", "Lihat profil ›") rather
+       than sitting inside a sentence. */
+    .tap-link{display:inline-flex;align-items:center;min-height:40px;}
+    /* The − and + on a product card: 28px is fine under a mouse, not under a
+       thumb, and mis-tapping one changes what the customer buys. */
+    .qty-stepper button{width:34px;height:34px;}
+    .qty-stepper .qty-value{min-width:28px;}
+    /* Calendar days: seven across 320px leaves them short, so give the cell the
+       height back without widening the grid. */
+    .dcal-day{min-height:38px;}
   }
 `;
 
@@ -867,7 +901,7 @@ function customerHeader(cartCount = 0, activeStepLabel = null, customer = null) 
       ${accountLink(customer)}
       <a href="/keranjang" id="cartLink" style="position:relative;display:flex;align-items:center;">
         <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="#2b2b2f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/><circle cx="10" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/><circle cx="18" cy="21" r="1.4" fill="#2b2b2f" stroke="none"/></svg>
-        <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:10px;font-weight:700;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
+        <span id="cartBadge" style="position:absolute;top:-8px;right:-9px;background:var(--orange);color:#fff;font-size:11px;font-weight:700;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;display:${cartCount > 0 ? 'flex' : 'none'};">${cartCount}</span>
       </a>
     </div>
   </header>`;
@@ -1699,7 +1733,7 @@ function adminSidebar(active, { isSuperadmin = false, username = 'Admin', can = 
         <div style="width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${escapeHtml(username.charAt(0).toUpperCase())}</div>
         <div style="min-width:0;">
           <div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(username)}</div>
-          <div style="font-size:10.5px;color:oklch(65% 0.02 255);">${isSuperadmin ? 'Superadmin' : 'Admin'}</div>
+          <div style="font-size:11px;color:oklch(65% 0.02 255);">${isSuperadmin ? 'Superadmin' : 'Admin'}</div>
         </div>
       </div>
       <form method="post" action="/admin/logout">

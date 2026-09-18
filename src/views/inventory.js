@@ -51,7 +51,7 @@ function renderInventaris({ admin, items, units, totalValue, flash = '', error =
           <span style="font-size:11.5px;color:var(--text-muted);"> ${escapeHtml(it.unit)}</span>
           ${
             state
-              ? `<div style="font-size:10px;font-weight:800;color:${state.color};background:${state.bg};padding:2px 8px;border-radius:99px;display:inline-block;margin-top:4px;">${state.label}</div>`
+              ? `<div style="font-size:11px;font-weight:800;color:${state.color};background:${state.bg};padding:2px 8px;border-radius:99px;display:inline-block;margin-top:4px;">${state.label}</div>`
               : ''
           }
         </td>
